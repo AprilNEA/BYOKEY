@@ -1,0 +1,129 @@
+//! Translates Codex (OpenAI Responses API) responses into `OpenAI` chat completion format.
+//!
+//! The Codex Responses API returns a `response` object (extracted from the
+//! `response.completed` SSE event). This translator converts it to the standard
+//! `OpenAI` chat completion response format.
+
+use byokey_types::{ResponseTranslator, traits::Result};
+use serde_json::{Value, json};
+
+/// Translator from Codex Responses API `response` object to `OpenAI` chat completion format.
+pub struct CodexToOpenAI;
+
+impl ResponseTranslator for CodexToOpenAI {
+    /// Translates a Codex `response` object (the value of `response.completed.response`)
+    /// into an `OpenAI` chat completion response.
+    ///
+    /// # Errors
+    ///
+    /// Currently infallible; returns a best-effort translation even for unexpected shapes.
+    fn translate_response(&self, res: Value) -> Result<Value> {
+        // Extract text from output items
+        let text = res
+            .get("output")
+            .and_then(Value::as_array)
+            .and_then(|arr| {
+                arr.iter()
+                    .find(|item| item.get("type").and_then(Value::as_str) == Some("message"))
+            })
+            .and_then(|msg| msg.get("content").and_then(Value::as_array))
+            .and_then(|parts| {
+                parts
+                    .iter()
+                    .find(|p| p.get("type").and_then(Value::as_str) == Some("output_text"))
+            })
+            .and_then(|p| p.get("text").and_then(Value::as_str))
+            .unwrap_or("");
+
+        let id = res
+            .get("id")
+            .and_then(Value::as_str)
+            .map(|s| format!("chatcmpl-{s}"))
+            .unwrap_or_else(|| "chatcmpl-codex".to_string());
+
+        let model = res
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+
+        let input_tokens = res
+            .pointer("/usage/input_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let output_tokens = res
+            .pointer("/usage/output_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+
+        Ok(json!({
+            "id": id,
+            "object": "chat.completion",
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": text},
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": input_tokens,
+                "completion_tokens": output_tokens,
+                "total_tokens": input_tokens + output_tokens
+            }
+        }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sample() -> Value {
+        json!({
+            "id": "resp_abc123",
+            "model": "o4-mini",
+            "output": [{
+                "id": "item_1",
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Hello there!"}]
+            }],
+            "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+        })
+    }
+
+    #[test]
+    fn test_basic() {
+        let out = CodexToOpenAI.translate_response(sample()).unwrap();
+        assert_eq!(out["choices"][0]["message"]["content"], "Hello there!");
+        assert_eq!(out["choices"][0]["finish_reason"], "stop");
+    }
+
+    #[test]
+    fn test_id_prefixed() {
+        let out = CodexToOpenAI.translate_response(sample()).unwrap();
+        assert!(out["id"].as_str().unwrap().starts_with("chatcmpl-"));
+    }
+
+    #[test]
+    fn test_usage() {
+        let out = CodexToOpenAI.translate_response(sample()).unwrap();
+        assert_eq!(out["usage"]["prompt_tokens"], 10);
+        assert_eq!(out["usage"]["completion_tokens"], 5);
+        assert_eq!(out["usage"]["total_tokens"], 15);
+    }
+
+    #[test]
+    fn test_model_forwarded() {
+        let out = CodexToOpenAI.translate_response(sample()).unwrap();
+        assert_eq!(out["model"], "o4-mini");
+    }
+
+    #[test]
+    fn test_empty_output() {
+        let res = json!({"id": "resp_x", "model": "o4-mini", "output": []});
+        let out = CodexToOpenAI.translate_response(res).unwrap();
+        assert_eq!(out["choices"][0]["message"]["content"], "");
+    }
+}

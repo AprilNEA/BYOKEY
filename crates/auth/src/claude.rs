@@ -17,15 +17,11 @@ pub const AUTH_URL: &str = "https://claude.ai/oauth/authorize";
 /// Claude OAuth token endpoint.
 pub const TOKEN_URL: &str = "https://console.anthropic.com/v1/oauth/token";
 
-// Only request user-level scopes; org:create_api_key triggers an API Key
-// creation flow that requires Anthropic Console billing, which is unavailable
-// for regular Claude Pro subscriptions.
-
 /// OAuth scopes requested during authorization.
-pub const SCOPES: &[&str] = &["user:profile", "user:inference"];
+pub const SCOPES: &[&str] = &["org:create_api_key", "user:profile", "user:inference"];
 
 // Scope encoding: `:` -> %3A, space -> +
-const SCOPE_ENCODED: &str = "user%3Aprofile+user%3Ainference";
+const SCOPE_ENCODED: &str = "org%3Acreate_api_key+user%3Aprofile+user%3Ainference";
 const REDIRECT_URI_ENCODED: &str = "http%3A%2F%2Flocalhost%3A54545%2Fcallback";
 const REDIRECT_URI: &str = "http://localhost:54545/callback";
 

@@ -18,11 +18,17 @@ use rquest::Client;
 use serde_json::Value;
 use std::sync::Arc;
 
-/// Anthropic Messages API endpoint.
-const API_URL: &str = "https://api.anthropic.com/v1/messages";
+/// Anthropic Messages API endpoint (with beta flag required by the API).
+const API_URL: &str = "https://api.anthropic.com/v1/messages?beta=true";
 
 /// Required Anthropic API version header value.
 const ANTHROPIC_VERSION: &str = "2023-06-01";
+
+/// Beta features to enable; `oauth-2025-04-20` is required for OAuth Bearer tokens.
+const ANTHROPIC_BETA: &str = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,prompt-caching-2024-07-31";
+
+/// User-Agent matching the Claude CLI SDK version.
+const USER_AGENT: &str = "claude-cli/2.1.44 (external, sdk-cli)";
 
 /// Authentication mode for the Claude API.
 enum AuthMode {
@@ -71,6 +77,10 @@ impl ProviderExecutor for ClaudeExecutor {
             .http
             .post(API_URL)
             .header("anthropic-version", ANTHROPIC_VERSION)
+            .header("anthropic-beta", ANTHROPIC_BETA)
+            .header("anthropic-dangerous-direct-browser-access", "true")
+            .header("x-app", "cli")
+            .header("user-agent", USER_AGENT)
             .header("content-type", "application/json");
 
         let builder = match &auth {

@@ -413,6 +413,7 @@ dependencies = [
  "eventsource-stream",
  "futures-core",
  "futures-util",
+ "rand 0.8.5",
  "rquest",
  "serde",
  "serde_json",

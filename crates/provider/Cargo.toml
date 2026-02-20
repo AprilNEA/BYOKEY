@@ -17,6 +17,7 @@ byokey-config.workspace = true
 byokey-auth.workspace = true
 byokey-translate.workspace = true
 rquest.workspace = true
+rand.workspace = true
 eventsource-stream.workspace = true
 serde.workspace = true
 serde_json.workspace = true
