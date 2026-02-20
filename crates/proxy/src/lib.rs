@@ -6,6 +6,7 @@
 mod amp;
 mod chat;
 mod error;
+mod messages;
 mod models;
 
 pub use error::ApiError;
@@ -42,7 +43,8 @@ impl AppState {
 /// Build the full axum router.
 ///
 /// Routes:
-/// - POST /v1/chat/completions
+/// - POST /v1/chat/completions        OpenAI-compatible
+/// - POST /v1/messages                Anthropic native passthrough
 /// - GET  /v1/models
 /// - GET  /amp/v1/login
 /// - ANY  /amp/v0/management/{*path}
@@ -50,6 +52,7 @@ impl AppState {
 pub fn make_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/v1/chat/completions", post(chat::chat_completions))
+        .route("/v1/messages", post(messages::anthropic_messages))
         .route("/v1/models", get(models::list_models))
         .route("/amp/v1/login", get(amp::login_redirect))
         .route("/amp/v0/management/{*path}", any(amp::management_proxy))
