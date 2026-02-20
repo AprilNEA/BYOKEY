@@ -1,0 +1,110 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/types",
+    "crates/config",
+    "crates/store",
+    "crates/auth",
+    "crates/translate",
+    "crates/provider",
+    "crates/proxy",
+]
+
+[workspace.package]
+edition     = "2024"
+version     = "0.1.0"
+authors     = ["AprilNEA <github@sku.moe>"]
+description = "Bring Your Own Keys — AI subscription-to-API proxy gateway"
+license     = "MIT OR Apache-2.0"
+repository  = "https://github.com/AprilNEA/BYOKEY"
+homepage    = "https://github.com/AprilNEA/BYOKEY"
+keywords    = ["ai", "proxy", "openai", "claude", "llm"]
+categories  = ["web-programming::http-server", "network-programming"]
+readme      = "README.md"
+
+[workspace.dependencies]
+# Workspace crates
+byok-types     = { version = "0.1.0", path = "crates/types" }
+byok-config    = { version = "0.1.0", path = "crates/config" }
+byok-store     = { version = "0.1.0", path = "crates/store" }
+byok-auth      = { version = "0.1.0", path = "crates/auth" }
+byok-translate = { version = "0.1.0", path = "crates/translate" }
+byok-provider  = { version = "0.1.0", path = "crates/provider" }
+byok-proxy     = { version = "0.1.0", path = "crates/proxy" }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+# HTTP
+axum = { version = "0.8", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+rquest = { version = "5", features = ["full"] }
+eventsource-stream = "0.2"
+# Serde
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Error
+thiserror = "2"
+anyhow = "1"
+# Config & hot reload
+figment = { version = "0.10", features = ["yaml", "env"] }
+notify = "7"
+arc-swap = "1"
+# Auth
+oauth2 = "5"
+rand = { version = "0.8", features = ["std"] }
+sha2 = "0.10"
+base64 = "0.22"
+open = "5"
+# Storage
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+# Token counting
+tiktoken-rs = "0.6"
+# JSON path
+jsonptr = "0.4"
+# Async trait
+async-trait = "0.1"
+# URL encoding
+serde_urlencoded = "0.7"
+# CLI
+clap = { version = "4", features = ["derive"] }
+# Futures
+futures-core = "0.3"
+futures-util = "0.3"
+bytes = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+pedantic = "warn"
+
+# ── Root package (cargo install byok) ────────────────────────────────────────
+
+[package]
+name        = "byok"
+version.workspace    = true
+edition.workspace    = true
+authors.workspace    = true
+description.workspace = true
+license.workspace    = true
+repository.workspace = true
+homepage.workspace   = true
+keywords.workspace   = true
+categories.workspace = true
+readme.workspace     = true
+
+[[bin]]
+name = "byok"
+path = "src/main.rs"
+
+[dependencies]
+byok-proxy.workspace  = true
+byok-config.workspace = true
+byok-auth.workspace   = true
+byok-store.workspace  = true
+byok-types.workspace  = true
+axum.workspace        = true
+clap.workspace        = true
+anyhow.workspace      = true
+tokio.workspace       = true

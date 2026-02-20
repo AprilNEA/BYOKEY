@@ -1,0 +1,31 @@
+[package]
+name = "byok-proxy"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+byok-types.workspace = true
+byok-config.workspace = true
+byok-auth.workspace = true
+byok-provider.workspace = true
+byok-store.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+rquest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true
+bytes.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

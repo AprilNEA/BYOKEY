@@ -1,0 +1,15 @@
+[package]
+name = "byok-types"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+futures-core.workspace = true
+bytes.workspace = true

@@ -1,0 +1,28 @@
+[package]
+name = "byok-provider"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+byok-types.workspace = true
+byok-config.workspace = true
+byok-auth.workspace = true
+byok-translate.workspace = true
+rquest.workspace = true
+eventsource-stream.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+futures-core.workspace = true
+futures-util.workspace = true
+bytes.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+byok-store.workspace = true

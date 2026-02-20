@@ -1,0 +1,28 @@
+[package]
+name = "byok-auth"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+byok-types.workspace = true
+byok-store.workspace = true
+byok-config.workspace = true
+oauth2.workspace = true
+rquest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_urlencoded.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+rand.workspace = true
+sha2.workspace = true
+base64.workspace = true
+open.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
