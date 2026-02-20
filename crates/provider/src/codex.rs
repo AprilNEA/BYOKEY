@@ -312,8 +312,8 @@ mod tests {
     }
 
     #[test]
-    fn test_supported_models_contains_gpt4o() {
+    fn test_supported_models_contains_o4_mini() {
         let ex = make_executor();
-        assert!(ex.supported_models().iter().any(|m| m == "gpt-4o"));
+        assert!(ex.supported_models().iter().any(|m| m == "o4-mini"));
     }
 }

@@ -14,14 +14,13 @@ pub fn claude_models() -> Vec<String> {
 }
 
 /// Returns the list of supported `OpenAI` (Codex) model identifiers.
+///
+/// Only reasoning models are listed here: the Codex Responses API (used for
+/// OAuth / ChatGPT-account tokens) does not support GPT-4o variants.
+/// GPT-4o models are served via GitHub Copilot instead.
 #[must_use]
 pub fn codex_models() -> Vec<String> {
-    vec![
-        "o4-mini".into(),
-        "o3".into(),
-        "gpt-4o".into(),
-        "gpt-4o-mini".into(),
-    ]
+    vec!["o4-mini".into(), "o3".into()]
 }
 
 /// Returns the list of supported Gemini model identifiers.
@@ -64,10 +63,9 @@ pub fn resolve_provider(model: &str) -> Option<ProviderId> {
         Some(ProviderId::Gemini)
     } else if model.starts_with("kiro-") {
         Some(ProviderId::Kiro)
-    } else if matches!(
-        model,
-        "o4-mini" | "o3" | "gpt-4o" | "gpt-4o-mini" | "gpt-4-turbo" | "gpt-4"
-    ) {
+    } else if matches!(model, "gpt-4o" | "gpt-4o-mini" | "o3-mini") {
+        Some(ProviderId::Copilot)
+    } else if matches!(model, "o4-mini" | "o3" | "gpt-4-turbo" | "gpt-4") {
         Some(ProviderId::Codex)
     } else {
         None
@@ -106,9 +104,15 @@ mod tests {
 
     #[test]
     fn test_resolve_codex() {
-        assert_eq!(resolve_provider("gpt-4o"), Some(ProviderId::Codex));
         assert_eq!(resolve_provider("o4-mini"), Some(ProviderId::Codex));
         assert_eq!(resolve_provider("o3"), Some(ProviderId::Codex));
+    }
+
+    #[test]
+    fn test_resolve_gpt4o_to_copilot() {
+        assert_eq!(resolve_provider("gpt-4o"), Some(ProviderId::Copilot));
+        assert_eq!(resolve_provider("gpt-4o-mini"), Some(ProviderId::Copilot));
+        assert_eq!(resolve_provider("o3-mini"), Some(ProviderId::Copilot));
     }
 
     #[test]
