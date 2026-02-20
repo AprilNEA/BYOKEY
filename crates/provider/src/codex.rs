@@ -197,6 +197,21 @@ fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStream {
                     if let Some(data) = line.strip_prefix("data: ") {
                         if let Ok(ev) = serde_json::from_str::<Value>(data) {
                             match ev["type"].as_str().unwrap_or("") {
+                                "response.reasoning_summary_text.delta" => {
+                                    let delta =
+                                        ev["delta"].as_str().unwrap_or("").to_string();
+                                    let chunk = serde_json::json!({
+                                        "object": "chat.completion.chunk",
+                                        "model": &s.model,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {"reasoning_content": delta},
+                                            "finish_reason": null
+                                        }]
+                                    });
+                                    let line = format!("data: {chunk}\n\n");
+                                    return Ok(Some((Bytes::from(line), s)));
+                                }
                                 "response.output_text.delta" => {
                                     let delta =
                                         ev["delta"].as_str().unwrap_or("").to_string();

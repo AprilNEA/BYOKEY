@@ -107,6 +107,8 @@ impl RequestTranslator for OpenAIToCodex {
             "model": model,
             "input": input,
             "instructions": instructions,
+            // Request reasoning content so reasoning models return their thinking.
+            "include": ["reasoning.encrypted_content"],
         });
 
         if let Some(tokens) = req.get("max_tokens").and_then(Value::as_u64) {

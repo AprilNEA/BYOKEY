@@ -18,10 +18,10 @@ impl ResponseTranslator for CodexToOpenAI {
     ///
     /// Currently infallible; returns a best-effort translation even for unexpected shapes.
     fn translate_response(&self, res: Value) -> Result<Value> {
-        // Extract text from output items
-        let text = res
-            .get("output")
-            .and_then(Value::as_array)
+        let output = res.get("output").and_then(Value::as_array);
+
+        // Extract visible text from the first "message" output item.
+        let text = output
             .and_then(|arr| {
                 arr.iter()
                     .find(|item| item.get("type").and_then(Value::as_str) == Some("message"))
@@ -34,6 +34,20 @@ impl ResponseTranslator for CodexToOpenAI {
             })
             .and_then(|p| p.get("text").and_then(Value::as_str))
             .unwrap_or("");
+
+        // Extract reasoning summary from the "reasoning" output item (o4-mini, o3).
+        let reasoning = output
+            .and_then(|arr| {
+                arr.iter()
+                    .find(|item| item.get("type").and_then(Value::as_str) == Some("reasoning"))
+            })
+            .and_then(|item| item.get("summary").and_then(Value::as_array))
+            .and_then(|parts| {
+                parts
+                    .iter()
+                    .find(|p| p.get("type").and_then(Value::as_str) == Some("summary_text"))
+            })
+            .and_then(|p| p.get("text").and_then(Value::as_str));
 
         let id = res
             .get("id")
@@ -56,13 +70,19 @@ impl ResponseTranslator for CodexToOpenAI {
             .and_then(Value::as_u64)
             .unwrap_or(0);
 
+        let message = if let Some(r) = reasoning {
+            json!({"role": "assistant", "content": text, "reasoning_content": r})
+        } else {
+            json!({"role": "assistant", "content": text})
+        };
+
         Ok(json!({
             "id": id,
             "object": "chat.completion",
             "model": model,
             "choices": [{
                 "index": 0,
-                "message": {"role": "assistant", "content": text},
+                "message": message,
                 "finish_reason": "stop"
             }],
             "usage": {
