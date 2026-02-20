@@ -4,7 +4,8 @@ use byok_types::{ByokError, ProviderId, traits::Result};
 use std::time::Duration;
 
 use crate::{
-    AuthManager, antigravity, callback, claude, codex, copilot, gemini, iflow, kimi, pkce, qwen,
+    AuthManager, antigravity, callback, claude, codex, copilot, credentials, gemini, iflow, kimi,
+    pkce, qwen,
 };
 
 /// Run the full interactive login flow for the given provider.
@@ -193,9 +194,14 @@ async fn login_copilot(auth: &AuthManager, http: &rquest::Client) -> Result<()> 
 // ── Gemini PKCE flow ──────────────────────────────────────────────────────────
 
 async fn login_gemini(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
+    let creds = credentials::fetch("gemini", http).await?;
+    let client_secret = creds.client_secret.as_deref().ok_or_else(|| {
+        ByokError::Auth("gemini credentials missing client_secret".into())
+    })?;
+
     let (verifier, challenge) = pkce::generate_pkce();
     let state = pkce::random_state();
-    let auth_url = gemini::build_auth_url(&challenge, &state);
+    let auth_url = gemini::build_auth_url(&creds.client_id, &challenge, &state);
 
     let listener = callback::bind_callback(gemini::CALLBACK_PORT).await?;
     open_browser(&auth_url);
@@ -213,7 +219,7 @@ async fn login_gemini(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
         .get("code")
         .ok_or_else(|| ByokError::Auth("missing code parameter in callback".into()))?;
 
-    let token_params = gemini::token_form_params(code, &verifier);
+    let token_params = gemini::token_form_params(&creds.client_id, client_secret, code, &verifier);
     let resp = http
         .post(gemini::TOKEN_URL)
         .form(&token_params)
@@ -235,9 +241,14 @@ async fn login_gemini(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
 // ── Antigravity (Google Cloud Code Assist) PKCE flow ─────────────────────────
 
 async fn login_antigravity(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
+    let creds = credentials::fetch("antigravity", http).await?;
+    let client_secret = creds.client_secret.as_deref().ok_or_else(|| {
+        ByokError::Auth("antigravity credentials missing client_secret".into())
+    })?;
+
     let (verifier, challenge) = pkce::generate_pkce();
     let state = pkce::random_state();
-    let auth_url = antigravity::build_auth_url(&challenge, &state);
+    let auth_url = antigravity::build_auth_url(&creds.client_id, &challenge, &state);
 
     let listener = callback::bind_callback(antigravity::CALLBACK_PORT).await?;
     open_browser(&auth_url);
@@ -255,7 +266,8 @@ async fn login_antigravity(auth: &AuthManager, http: &rquest::Client) -> Result<
         .get("code")
         .ok_or_else(|| ByokError::Auth("missing code parameter in callback".into()))?;
 
-    let token_params = antigravity::token_form_params(code, &verifier);
+    let token_params =
+        antigravity::token_form_params(&creds.client_id, client_secret, code, &verifier);
     let resp = http
         .post(antigravity::TOKEN_URL)
         .form(&token_params)
@@ -425,8 +437,13 @@ async fn login_kimi(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
 // ── iFlow (Z.ai / GLM) auth code flow ────────────────────────────────────────
 
 async fn login_iflow(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
+    let creds = credentials::fetch("iflow", http).await?;
+    let client_secret = creds.client_secret.as_deref().ok_or_else(|| {
+        ByokError::Auth("iflow credentials missing client_secret".into())
+    })?;
+
     let state = pkce::random_state();
-    let auth_url = iflow::build_auth_url(&state);
+    let auth_url = iflow::build_auth_url(&creds.client_id, &state);
 
     let listener = callback::bind_callback(iflow::CALLBACK_PORT).await?;
     open_browser(&auth_url);
@@ -444,10 +461,13 @@ async fn login_iflow(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
         .get("code")
         .ok_or_else(|| ByokError::Auth("missing code parameter in callback".into()))?;
 
-    let token_params = iflow::token_form_params(code);
+    let token_params = iflow::token_form_params(&creds.client_id, code);
     let resp = http
         .post(iflow::TOKEN_URL)
-        .header("Authorization", iflow::basic_auth_header())
+        .header(
+            "Authorization",
+            iflow::basic_auth_header(&creds.client_id, client_secret),
+        )
         .form(&token_params)
         .send()
         .await

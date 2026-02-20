@@ -5,6 +5,7 @@
 //! lifecycle across providers.
 
 pub mod antigravity;
+pub mod credentials;
 pub mod callback;
 pub mod claude;
 pub mod codex;

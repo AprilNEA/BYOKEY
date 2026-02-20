@@ -2,15 +2,11 @@
 //!
 //! Uses Google's OAuth 2.0 endpoint with PKCE (S256) and offline access.
 //! Callback port: 51121.
+//!
+//! Credentials (`client_id` / `client_secret`) are fetched at login time from
+//! `https://assets.byokey.io/oauth/antigravity.json`.
 
 use byok_types::{ByokError, OAuthToken, traits::Result};
-
-/// OAuth 2.0 client ID for Antigravity.
-pub const CLIENT_ID: &str =
-    "REDACTED_ANTIGRAVITY_CLIENT_ID";
-
-/// OAuth 2.0 client secret for Antigravity.
-pub const CLIENT_SECRET: &str = "REDACTED_ANTIGRAVITY_CLIENT_SECRET";
 
 /// Local callback port for the OAuth redirect.
 pub const CALLBACK_PORT: u16 = 51121;
@@ -34,25 +30,25 @@ const REDIRECT_URI_ENCODED: &str = "http%3A%2F%2Flocalhost%3A51121%2Fcallback";
 
 /// Build the authorization URL with PKCE S256 parameters.
 #[must_use]
-pub fn build_auth_url(code_challenge: &str, state: &str) -> String {
+pub fn build_auth_url(client_id: &str, code_challenge: &str, state: &str) -> String {
+    let scope = SCOPES.join("%20");
     format!(
-        "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&code_challenge={}&code_challenge_method=S256&access_type=offline&prompt=consent",
-        AUTH_URL,
-        CLIENT_ID,
-        REDIRECT_URI_ENCODED,
-        SCOPES.join("%20"),
-        state,
-        code_challenge,
+        "{AUTH_URL}?response_type=code&client_id={client_id}&redirect_uri={REDIRECT_URI_ENCODED}&scope={scope}&state={state}&code_challenge={code_challenge}&code_challenge_method=S256&access_type=offline&prompt=consent",
     )
 }
 
 /// Build the form parameters for the token exchange request.
 #[must_use]
-pub fn token_form_params(code: &str, code_verifier: &str) -> Vec<(String, String)> {
+pub fn token_form_params(
+    client_id: &str,
+    client_secret: &str,
+    code: &str,
+    code_verifier: &str,
+) -> Vec<(String, String)> {
     vec![
         ("grant_type".into(), "authorization_code".into()),
-        ("client_id".into(), CLIENT_ID.into()),
-        ("client_secret".into(), CLIENT_SECRET.into()),
+        ("client_id".into(), client_id.into()),
+        ("client_secret".into(), client_secret.into()),
         ("code".into(), code.into()),
         ("redirect_uri".into(), REDIRECT_URI.into()),
         ("code_verifier".into(), code_verifier.into()),
@@ -89,10 +85,13 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    const TEST_CLIENT_ID: &str = "test-client-id.apps.googleusercontent.com";
+    const TEST_CLIENT_SECRET: &str = "test-client-secret";
+
     #[test]
     fn test_build_auth_url_contains_required_params() {
-        let url = build_auth_url("challenge123", "state456");
-        assert!(url.contains(CLIENT_ID));
+        let url = build_auth_url(TEST_CLIENT_ID, "challenge123", "state456");
+        assert!(url.contains(TEST_CLIENT_ID));
         assert!(url.contains("challenge123"));
         assert!(url.contains("state456"));
         assert!(url.contains("code_challenge_method=S256"));
@@ -104,17 +103,16 @@ mod tests {
 
     #[test]
     fn test_build_auth_url_scopes_encoded() {
-        let url = build_auth_url("ch", "st");
+        let url = build_auth_url(TEST_CLIENT_ID, "ch", "st");
         for scope in SCOPES {
             assert!(url.contains(scope), "URL should contain scope: {scope}");
         }
-        // Scopes are joined with %20.
         assert!(url.contains("%20"));
     }
 
     #[test]
     fn test_token_form_params_fields() {
-        let params = token_form_params("mycode", "myverifier");
+        let params = token_form_params(TEST_CLIENT_ID, TEST_CLIENT_SECRET, "mycode", "myverifier");
         assert_eq!(params.len(), 6);
 
         let map: std::collections::HashMap<&str, &str> = params
@@ -122,8 +120,8 @@ mod tests {
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
         assert_eq!(map["grant_type"], "authorization_code");
-        assert_eq!(map["client_id"], CLIENT_ID);
-        assert_eq!(map["client_secret"], CLIENT_SECRET);
+        assert_eq!(map["client_id"], TEST_CLIENT_ID);
+        assert_eq!(map["client_secret"], TEST_CLIENT_SECRET);
         assert_eq!(map["code"], "mycode");
         assert_eq!(map["redirect_uri"], REDIRECT_URI);
         assert_eq!(map["code_verifier"], "myverifier");
