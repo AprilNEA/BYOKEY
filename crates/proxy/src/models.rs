@@ -2,6 +2,7 @@
 
 use axum::{Json, extract::State};
 use byokey_provider::make_executor;
+use byokey_types::ProviderId;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -10,11 +11,17 @@ use crate::AppState;
 /// Handles `GET /v1/models` requests.
 ///
 /// Returns an OpenAI-compatible model list containing all models from
-/// enabled providers in the configuration.
+/// enabled providers. Providers absent from the config are enabled by default.
 pub async fn list_models(State(state): State<Arc<AppState>>) -> Json<Value> {
     let mut data = Vec::new();
 
-    for (provider_id, config) in &state.config.providers {
+    for provider_id in ProviderId::all() {
+        let config = state
+            .config
+            .providers
+            .get(provider_id)
+            .cloned()
+            .unwrap_or_default();
         if !config.enabled {
             continue;
         }

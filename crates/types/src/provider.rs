@@ -59,6 +59,23 @@ impl std::str::FromStr for ProviderId {
     }
 }
 
+impl ProviderId {
+    /// Returns all known provider variants.
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::Claude,
+            Self::Codex,
+            Self::Gemini,
+            Self::Kiro,
+            Self::Copilot,
+            Self::Antigravity,
+            Self::Qwen,
+            Self::Kimi,
+            Self::IFlow,
+        ]
+    }
+}
+
 /// The wire protocol format used by a provider's native API.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

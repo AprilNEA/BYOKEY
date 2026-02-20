@@ -1,56 +1,56 @@
 # Contributing to byokey
 
-## 环境要求
+## Requirements
 
-- Rust stable（推荐通过 [rustup](https://rustup.rs/) 安装）
-- SQLite 3（系统级，macOS 自带）
+- Rust stable (recommended via [rustup](https://rustup.rs/))
+- SQLite 3 (system-level; pre-installed on macOS)
 
-## 常用命令
+## Common Commands
 
 ```bash
-# 全量编译
+# Build everything
 cargo build --workspace
 
-# 运行测试
+# Run tests
 cargo test --workspace
-cargo test -p byokey-types          # 单 crate 测试（-p 使用 package 名）
-cargo test -p byokey-translate      # 纯逻辑测试（无 IO，最快）
+cargo test -p byokey-types          # single crate (-p uses package name)
+cargo test -p byokey-translate      # pure logic tests (no I/O, fastest)
 
-# Lint（CI 以 -D warnings 运行，本地同理）
+# Lint (CI runs with -D warnings, same locally)
 cargo clippy --workspace -- -D warnings
 
-# 格式化
+# Format
 cargo fmt --all
 
-# 启动 CLI 服务器
+# Start the CLI server
 cargo run -- serve --config config.yaml
 ```
 
-## 编码规范
+## Coding Guidelines
 
-- `unsafe` 代码在 workspace 级别被禁止（`forbid`）
-- 启用 `clippy::pedantic`，提交前确保零 warning
+- `unsafe` code is forbidden at the workspace level (`forbid`)
+- `clippy::pedantic` is enabled; ensure zero warnings before committing
 - edition 2024
-- 所有 async trait 使用 `async-trait` 宏
-- 错误类型：跨 crate 边界用 `ByokError`，crate 内部用 `anyhow`
+- All async traits use the `async-trait` macro
+- Error types: use `ByokError` across crate boundaries, `anyhow` within a crate
 
-## Workspace 分层规则
+## Workspace Layering Rules
 
-严格 DAG，禁止跨层反向依赖：
+Strict DAG — no reverse cross-layer dependencies:
 
 ```
-Layer 0  byokey-types     — 核心类型 & trait，零工作区内依赖
-Layer 1  byokey-config    — 配置解析
-         byokey-store     — token 持久化
-Layer 2  byokey-auth      — OAuth 流程（不依赖 translate / provider）
-         byokey-translate — 格式转换（纯函数，不依赖 auth）
+Layer 0  byokey-types     — core types & traits, zero intra-workspace deps
+Layer 1  byokey-config    — configuration parsing
+         byokey-store     — token persistence
+Layer 2  byokey-auth      — OAuth flows (does not depend on translate / provider)
+         byokey-translate — format conversion (pure functions, does not depend on auth)
 Layer 3  byokey-provider  — Provider Executor
-Layer 4  byokey-proxy     — axum HTTP 服务器
+Layer 4  byokey-proxy     — axum HTTP server
 ```
 
-## 提交规范
+## Commit Convention
 
-使用 [Conventional Commits](https://www.conventionalcommits.org/)：
+Use [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```
 feat(auth): add Kiro device code flow
