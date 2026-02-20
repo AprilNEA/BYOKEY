@@ -7,8 +7,8 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use byok_provider::make_executor_for_model;
-use byok_types::{ProviderId, traits::ProviderResponse};
+use byokey_provider::make_executor_for_model;
+use byokey_types::{ProviderId, traits::ProviderResponse};
 use futures_util::TryStreamExt as _;
 use serde_json::Value;
 use std::sync::Arc;

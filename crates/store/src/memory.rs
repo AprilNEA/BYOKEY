@@ -1,7 +1,7 @@
 //! In-memory token store backed by a `HashMap` behind a `Mutex`.
 
 use async_trait::async_trait;
-use byok_types::{OAuthToken, ProviderId, TokenStore, traits::Result};
+use byokey_types::{OAuthToken, ProviderId, TokenStore, traits::Result};
 use std::collections::HashMap;
 use std::sync::Mutex;
 

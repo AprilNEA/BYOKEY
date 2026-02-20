@@ -4,8 +4,8 @@
 //! Auth: `Authorization: Bearer {token}` for OAuth, `x-goog-api-key` for API key.
 use crate::registry;
 use async_trait::async_trait;
-use byok_auth::AuthManager;
-use byok_types::{
+use byokey_auth::AuthManager;
+use byokey_types::{
     ByokError, ProviderId,
     traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
 };
@@ -91,7 +91,7 @@ impl ProviderExecutor for GeminiExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use byok_store::InMemoryTokenStore;
+    use byokey_store::InMemoryTokenStore;
 
     fn make_executor() -> GeminiExecutor {
         let store = Arc::new(InMemoryTokenStore::new());

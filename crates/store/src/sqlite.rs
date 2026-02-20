@@ -1,7 +1,7 @@
 //! SQLite-backed token store using sqlx.
 
 use async_trait::async_trait;
-use byok_types::{ByokError, OAuthToken, ProviderId, TokenStore, traits::Result};
+use byokey_types::{ByokError, OAuthToken, ProviderId, TokenStore, traits::Result};
 use sqlx::{
     SqlitePool,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},

@@ -2,7 +2,7 @@
 //!
 //! Auth endpoint: `prod.us-east-1.auth.desktop.kiro.dev`.
 //! Callback port: 9876.
-use byok_types::{ByokError, OAuthToken, traits::Result};
+use byokey_types::{ByokError, OAuthToken, traits::Result};
 
 pub const CALLBACK_PORT: u16 = 9876;
 pub const AUTH_HOST: &str = "prod.us-east-1.auth.desktop.kiro.dev";

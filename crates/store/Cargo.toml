@@ -1,5 +1,5 @@
 [package]
-name = "byok-store"
+name = "byokey-store"
 version.workspace = true
 edition.workspace = true
 
@@ -7,7 +7,7 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
-byok-types.workspace = true
+byokey-types.workspace = true
 sqlx.workspace = true
 serde.workspace = true
 serde_json.workspace = true

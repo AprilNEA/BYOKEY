@@ -4,7 +4,7 @@
 //! `https://assets.byokey.io/oauth/{provider}.json` at login time so that no
 //! secrets are baked into the binary.
 
-use byok_types::ByokError;
+use byokey_types::ByokError;
 use serde::Deserialize;
 
 const BASE_URL: &str = "https://assets.byokey.io/oauth";

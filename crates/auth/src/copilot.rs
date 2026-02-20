@@ -3,7 +3,7 @@
 //! Implements the OAuth 2.0 Device Authorization Grant used by GitHub Copilot.
 //! No local callback port is needed for this flow.
 
-use byok_types::{ByokError, OAuthToken, traits::Result};
+use byokey_types::{ByokError, OAuthToken, traits::Result};
 
 /// GitHub device code request endpoint.
 pub const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";

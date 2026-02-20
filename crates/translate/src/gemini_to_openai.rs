@@ -1,6 +1,6 @@
 //! Translates Gemini API responses into OpenAI-compatible format.
 
-use byok_types::{ResponseTranslator, traits::Result};
+use byokey_types::{ResponseTranslator, traits::Result};
 use serde_json::{Value, json};
 
 /// Translator from Gemini response format to `OpenAI` chat completion format.

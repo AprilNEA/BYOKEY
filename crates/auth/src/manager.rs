@@ -5,7 +5,7 @@
 //! - Detect expiration and trigger refresh.
 //! - Cooldown duration to prevent excessive refresh attempts (30 s).
 //! - Background async refresh (non-blocking on the request path).
-use byok_types::{ByokError, OAuthToken, ProviderId, TokenState, TokenStore, traits::Result};
+use byokey_types::{ByokError, OAuthToken, ProviderId, TokenState, TokenStore, traits::Result};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -114,7 +114,7 @@ impl AuthManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use byok_store::InMemoryTokenStore;
+    use byokey_store::InMemoryTokenStore;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn make_manager() -> AuthManager {

@@ -1,6 +1,6 @@
 //! Model registry: static model lists and provider resolution.
 
-use byok_types::ProviderId;
+use byokey_types::ProviderId;
 
 /// Returns the list of supported Claude model identifiers.
 #[must_use]

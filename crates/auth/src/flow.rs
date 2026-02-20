@@ -1,6 +1,6 @@
 //! Interactive login flow dispatcher for all supported providers.
 
-use byok_types::{ByokError, ProviderId, traits::Result};
+use byokey_types::{ByokError, ProviderId, traits::Result};
 use std::time::Duration;
 
 use crate::{

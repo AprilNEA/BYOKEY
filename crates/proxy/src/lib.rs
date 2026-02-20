@@ -14,8 +14,8 @@ use axum::{
     Router,
     routing::{any, get, post},
 };
-use byok_auth::AuthManager;
-use byok_config::Config;
+use byokey_auth::AuthManager;
+use byokey_config::Config;
 use std::sync::Arc;
 
 /// Shared application state passed to all route handlers.
@@ -61,7 +61,7 @@ pub fn make_router(state: Arc<AppState>) -> Router {
 mod tests {
     use super::*;
     use axum::{body::Body, http::Request};
-    use byok_store::InMemoryTokenStore;
+    use byokey_store::InMemoryTokenStore;
     use http_body_util::BodyExt as _;
     use serde_json::Value;
     use tower::ServiceExt as _;

@@ -1,5 +1,5 @@
 [package]
-name = "byok-auth"
+name = "byokey-auth"
 version.workspace = true
 edition.workspace = true
 
@@ -7,9 +7,9 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
-byok-types.workspace = true
-byok-store.workspace = true
-byok-config.workspace = true
+byokey-types.workspace = true
+byokey-store.workspace = true
+byokey-config.workspace = true
 oauth2.workspace = true
 rquest.workspace = true
 serde.workspace = true

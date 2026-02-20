@@ -346,30 +346,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 
 [[package]]
-name = "byok"
+name = "byokey"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
- "byok-auth",
- "byok-config",
- "byok-proxy",
- "byok-store",
- "byok-types",
+ "byokey-auth",
+ "byokey-config",
+ "byokey-proxy",
+ "byokey-store",
+ "byokey-types",
  "clap",
  "tokio",
 ]
 
 [[package]]
-name = "byok-auth"
+name = "byokey-auth"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64",
- "byok-config",
- "byok-store",
- "byok-types",
+ "byokey-config",
+ "byokey-store",
+ "byokey-types",
  "oauth2",
  "open",
  "rand 0.8.5",
@@ -383,12 +383,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "byok-config"
+name = "byokey-config"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
- "byok-types",
+ "byokey-types",
  "figment",
  "notify",
  "serde",
@@ -399,16 +399,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "byok-provider"
+name = "byokey-provider"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "byok-auth",
- "byok-config",
- "byok-store",
- "byok-translate",
- "byok-types",
+ "byokey-auth",
+ "byokey-config",
+ "byokey-store",
+ "byokey-translate",
+ "byokey-types",
  "bytes",
  "eventsource-stream",
  "futures-core",
@@ -421,17 +421,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "byok-proxy"
+name = "byokey-proxy"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "axum",
- "byok-auth",
- "byok-config",
- "byok-provider",
- "byok-store",
- "byok-types",
+ "byokey-auth",
+ "byokey-config",
+ "byokey-provider",
+ "byokey-store",
+ "byokey-types",
  "bytes",
  "futures-util",
  "http-body-util",
@@ -445,12 +445,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "byok-store"
+name = "byokey-store"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "byok-types",
+ "byokey-types",
  "serde",
  "serde_json",
  "sqlx",
@@ -459,18 +459,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "byok-translate"
+name = "byokey-translate"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "byok-types",
+ "byokey-types",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
 ]
 
 [[package]]
-name = "byok-types"
+name = "byokey-types"
 version = "0.1.0"
 dependencies = [
  "async-trait",

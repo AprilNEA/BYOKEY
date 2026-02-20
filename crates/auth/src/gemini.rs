@@ -6,7 +6,7 @@
 //! Credentials (`client_id` / `client_secret`) are fetched at login time from
 //! `https://assets.byokey.io/oauth/gemini.json`.
 
-use byok_types::{ByokError, OAuthToken, traits::Result};
+use byokey_types::{ByokError, OAuthToken, traits::Result};
 
 /// Local callback port for the OAuth redirect.
 pub const CALLBACK_PORT: u16 = 8085;

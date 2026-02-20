@@ -4,8 +4,8 @@
 //! Auth: `Authorization: Bearer {key_or_token}`.
 use crate::registry;
 use async_trait::async_trait;
-use byok_auth::AuthManager;
-use byok_types::{
+use byokey_auth::AuthManager;
+use byokey_types::{
     ByokError, ProviderId,
     traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
 };
@@ -90,7 +90,7 @@ impl ProviderExecutor for CodexExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use byok_store::InMemoryTokenStore;
+    use byokey_store::InMemoryTokenStore;
 
     fn make_executor() -> CodexExecutor {
         let store = Arc::new(InMemoryTokenStore::new());

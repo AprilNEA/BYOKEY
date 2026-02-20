@@ -8,7 +8,7 @@
 //! `https://assets.byokey.io/oauth/iflow.json`.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use byok_types::{ByokError, OAuthToken, traits::Result};
+use byokey_types::{ByokError, OAuthToken, traits::Result};
 
 /// Local callback port for the OAuth redirect.
 pub const CALLBACK_PORT: u16 = 11451;

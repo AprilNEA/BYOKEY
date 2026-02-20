@@ -3,7 +3,7 @@
 //! Implements the Authorization Code + PKCE (S256) flow extracted from the
 //! Codex CLI binary. Callback port: 1455.
 
-use byok_types::{ByokError, OAuthToken, traits::Result};
+use byokey_types::{ByokError, OAuthToken, traits::Result};
 
 /// OAuth 2.0 client ID for Codex CLI.
 pub const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";

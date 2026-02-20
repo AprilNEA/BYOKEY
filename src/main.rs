@@ -1,9 +1,9 @@
 use anyhow::Result;
-use byok_auth::AuthManager;
-use byok_config::Config;
-use byok_proxy::AppState;
-use byok_store::SqliteTokenStore;
-use byok_types::ProviderId;
+use byokey_auth::AuthManager;
+use byokey_config::Config;
+use byokey_proxy::AppState;
+use byokey_store::SqliteTokenStore;
+use byokey_types::ProviderId;
 use clap::{Parser, Subcommand};
 use std::{path::PathBuf, sync::Arc};
 
@@ -94,7 +94,7 @@ async fn cmd_serve(
     let addr = format!("{}:{}", config.host, config.port);
     let auth = Arc::new(AuthManager::new(Arc::new(open_store(db).await?)));
     let state = AppState::new(config, auth);
-    let app = byok_proxy::make_router(state);
+    let app = byokey_proxy::make_router(state);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     eprintln!("byok listening on http://{addr}");
@@ -107,7 +107,7 @@ async fn cmd_login(provider_str: String, db: Option<PathBuf>) -> Result<()> {
         .parse::<ProviderId>()
         .map_err(|e| anyhow::anyhow!("unknown provider '{provider_str}': {e}"))?;
     let auth = AuthManager::new(Arc::new(open_store(db).await?));
-    byok_auth::flow::login(&provider, &auth)
+    byokey_auth::flow::login(&provider, &auth)
         .await
         .map_err(|e| anyhow::anyhow!("login failed: {e}"))?;
     Ok(())

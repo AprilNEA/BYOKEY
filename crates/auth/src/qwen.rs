@@ -2,7 +2,7 @@
 //!
 //! The device code request also includes a PKCE `code_challenge`.
 //! Slow-down multiplier: 1.5x.
-use byok_types::{ByokError, OAuthToken, traits::Result};
+use byokey_types::{ByokError, OAuthToken, traits::Result};
 
 pub const CLIENT_ID: &str = "f0304373b74a44d2b584a3fb70ca9e56";
 pub const DEVICE_CODE_URL: &str = "https://chat.qwen.ai/api/v1/oauth2/device/code";

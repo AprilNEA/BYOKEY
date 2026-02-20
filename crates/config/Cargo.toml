@@ -1,5 +1,5 @@
 [package]
-name = "byok-config"
+name = "byokey-config"
 version.workspace = true
 edition.workspace = true
 
@@ -7,7 +7,7 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
-byok-types.workspace = true
+byokey-types.workspace = true
 figment.workspace = true
 notify.workspace = true
 arc-swap.workspace = true

@@ -3,7 +3,7 @@
 //! Implements the Authorization Code + PKCE (S256) flow used by the Claude CLI.
 //! Callback port: 54545.
 
-use byok_types::{ByokError, OAuthToken, traits::Result};
+use byokey_types::{ByokError, OAuthToken, traits::Result};
 
 /// OAuth 2.0 client ID for Claude.
 pub const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";

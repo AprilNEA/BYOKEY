@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use byok_types::ByokError;
+use byokey_types::ByokError;
 use serde_json::json;
 
 /// Wrapper around [`ByokError`] that implements [`IntoResponse`].
@@ -31,7 +31,7 @@ impl IntoResponse for ApiError {
         };
         (
             code,
-            Json(json!({"error": {"message": msg, "type": "byok_error"}})),
+            Json(json!({"error": {"message": msg, "type": "byokey_error"}})),
         )
             .into_response()
     }
@@ -46,7 +46,7 @@ impl From<ByokError> for ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use byok_types::ProviderId;
+    use byokey_types::ProviderId;
 
     #[test]
     fn test_unsupported_model_is_bad_request() {

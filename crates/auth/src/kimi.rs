@@ -1,7 +1,7 @@
 //! Moonshot AI (Kimi) Device Code flow.
 //!
 //! Requires additional `X-Msh-*` request headers for platform information.
-use byok_types::{ByokError, OAuthToken, traits::Result};
+use byokey_types::{ByokError, OAuthToken, traits::Result};
 use rand::RngCore as _;
 
 pub const CLIENT_ID: &str = "17e5f671-d194-4dfb-9706-5516cb48c098";

@@ -4,7 +4,7 @@
 //! to redirect the browser back, and extracts the query parameters (e.g.
 //! `code` and `state`) from the request.
 
-use byok_types::{ByokError, traits::Result};
+use byokey_types::{ByokError, traits::Result};
 use std::{collections::HashMap, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;

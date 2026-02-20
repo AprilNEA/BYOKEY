@@ -4,9 +4,9 @@
 //! Format: `OpenAI` -> Anthropic (translate), Anthropic -> `OpenAI` (translate).
 use crate::registry;
 use async_trait::async_trait;
-use byok_auth::AuthManager;
-use byok_translate::{ClaudeToOpenAI, OpenAIToClaude};
-use byok_types::{
+use byokey_auth::AuthManager;
+use byokey_translate::{ClaudeToOpenAI, OpenAIToClaude};
+use byokey_types::{
     ByokError, ProviderId,
     traits::{
         ByteStream, ProviderExecutor, ProviderResponse, RequestTranslator, ResponseTranslator,
@@ -99,7 +99,7 @@ impl ProviderExecutor for KiroExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use byok_store::InMemoryTokenStore;
+    use byokey_store::InMemoryTokenStore;
 
     fn make_executor() -> KiroExecutor {
         let store = Arc::new(InMemoryTokenStore::new());

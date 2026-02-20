@@ -1,7 +1,7 @@
 //! Models listing handler — returns available models in `OpenAI` format.
 
 use axum::{Json, extract::State};
-use byok_provider::make_executor;
+use byokey_provider::make_executor;
 use serde_json::{Value, json};
 use std::sync::Arc;
 

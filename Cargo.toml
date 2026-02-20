@@ -11,26 +11,26 @@ members = [
 ]
 
 [workspace.package]
-edition     = "2024"
-version     = "0.1.0"
-authors     = ["AprilNEA <github@sku.moe>"]
+edition = "2024"
+version = "0.1.0"
+authors = ["AprilNEA <github@sku.moe>"]
 description = "Bring Your Own Keys — AI subscription-to-API proxy gateway"
-license     = "MIT OR Apache-2.0"
-repository  = "https://github.com/AprilNEA/BYOKEY"
-homepage    = "https://github.com/AprilNEA/BYOKEY"
-keywords    = ["ai", "proxy", "openai", "claude", "llm"]
-categories  = ["web-programming::http-server", "network-programming"]
-readme      = "README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AprilNEA/BYOKEY"
+homepage = "https://github.com/AprilNEA/BYOKEY"
+keywords = ["ai", "proxy", "openai", "claude", "llm"]
+categories = ["web-programming::http-server", "network-programming"]
+readme = "README.md"
 
 [workspace.dependencies]
 # Workspace crates
-byok-types     = { version = "0.1.0", path = "crates/types" }
-byok-config    = { version = "0.1.0", path = "crates/config" }
-byok-store     = { version = "0.1.0", path = "crates/store" }
-byok-auth      = { version = "0.1.0", path = "crates/auth" }
-byok-translate = { version = "0.1.0", path = "crates/translate" }
-byok-provider  = { version = "0.1.0", path = "crates/provider" }
-byok-proxy     = { version = "0.1.0", path = "crates/proxy" }
+byokey-types = { version = "0.1.0", path = "crates/types" }
+byokey-config = { version = "0.1.0", path = "crates/config" }
+byokey-store = { version = "0.1.0", path = "crates/store" }
+byokey-auth = { version = "0.1.0", path = "crates/auth" }
+byokey-translate = { version = "0.1.0", path = "crates/translate" }
+byokey-provider = { version = "0.1.0", path = "crates/provider" }
+byokey-proxy = { version = "0.1.0", path = "crates/proxy" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -79,32 +79,32 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 pedantic = "warn"
 
-# ── Root package (cargo install byok) ────────────────────────────────────────
+# ── Root package (cargo install byokey) ──────────────────────────────────────
 
 [package]
-name        = "byok"
-version.workspace    = true
-edition.workspace    = true
-authors.workspace    = true
+name = "byokey"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 description.workspace = true
-license.workspace    = true
+license.workspace = true
 repository.workspace = true
-homepage.workspace   = true
-keywords.workspace   = true
+homepage.workspace = true
+keywords.workspace = true
 categories.workspace = true
-readme.workspace     = true
+readme.workspace = true
 
 [[bin]]
-name = "byok"
+name = "byokey"
 path = "src/main.rs"
 
 [dependencies]
-byok-proxy.workspace  = true
-byok-config.workspace = true
-byok-auth.workspace   = true
-byok-store.workspace  = true
-byok-types.workspace  = true
-axum.workspace        = true
-clap.workspace        = true
-anyhow.workspace      = true
-tokio.workspace       = true
+byokey-proxy.workspace = true
+byokey-config.workspace = true
+byokey-auth.workspace = true
+byokey-store.workspace = true
+byokey-types.workspace = true
+axum.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tokio.workspace = true

@@ -18,8 +18,8 @@ pub use gemini::GeminiExecutor;
 pub use kiro::KiroExecutor;
 pub use registry::resolve_provider;
 
-use byok_auth::AuthManager;
-use byok_types::{ByokError, ProviderId, traits::ProviderExecutor};
+use byokey_auth::AuthManager;
+use byokey_types::{ByokError, ProviderId, traits::ProviderExecutor};
 use std::sync::Arc;
 
 /// Create a boxed executor for the given provider.
@@ -60,7 +60,7 @@ pub fn make_executor_for_model(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use byok_store::InMemoryTokenStore;
+    use byokey_store::InMemoryTokenStore;
 
     fn make_auth() -> Arc<AuthManager> {
         Arc::new(AuthManager::new(Arc::new(InMemoryTokenStore::new())))

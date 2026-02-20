@@ -1,5 +1,5 @@
 [package]
-name = "byok-types"
+name = "byokey-types"
 version.workspace = true
 edition.workspace = true
 
