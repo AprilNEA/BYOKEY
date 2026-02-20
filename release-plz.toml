@@ -1,0 +1,37 @@
+[workspace]
+# Conventional commits are used for changelog generation.
+# Merge commits are excluded from changelogs.
+git_release_enable = true
+git_tag_enable = true
+
+# Internal library crates — track versions and changelogs but do not publish
+# to crates.io independently; the root `byokey` binary crate is the public
+# release artefact.
+
+[[package]]
+name = "byokey-types"
+publish = false
+
+[[package]]
+name = "byokey-config"
+publish = false
+
+[[package]]
+name = "byokey-store"
+publish = false
+
+[[package]]
+name = "byokey-auth"
+publish = false
+
+[[package]]
+name = "byokey-translate"
+publish = false
+
+[[package]]
+name = "byokey-provider"
+publish = false
+
+[[package]]
+name = "byokey-proxy"
+publish = false
