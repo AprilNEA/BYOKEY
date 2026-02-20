@@ -13,7 +13,8 @@ use byokey_types::{
         Result,
     },
 };
-use futures_util::StreamExt as _;
+use bytes::Bytes;
+use futures_util::{StreamExt as _, stream::try_unfold};
 use rquest::Client;
 use serde_json::Value;
 use std::sync::Arc;
@@ -105,7 +106,7 @@ impl ProviderExecutor for ClaudeExecutor {
                 resp.bytes_stream()
                     .map(|r| r.map_err(|e| ByokError::Http(e.to_string()))),
             );
-            Ok(ProviderResponse::Stream(byte_stream))
+            Ok(ProviderResponse::Stream(translate_claude_sse(byte_stream)))
         } else {
             let json: Value = resp
                 .json()
@@ -119,6 +120,139 @@ impl ProviderExecutor for ClaudeExecutor {
     fn supported_models(&self) -> Vec<String> {
         registry::claude_models()
     }
+}
+
+/// Wraps a raw Claude SSE `ByteStream` and translates its events to
+/// `OpenAI` chat completion chunk SSE format line-by-line.
+///
+/// Claude SSE events used:
+/// - `message_start`       → extract `id` and `model`; emit empty first chunk with `role`
+/// - `content_block_delta` → emit content chunk for `text_delta` events
+/// - `message_delta`       → emit finish chunk with mapped `finish_reason`
+/// - `message_stop`        → emit `data: [DONE]`
+fn translate_claude_sse(inner: ByteStream) -> ByteStream {
+    struct State {
+        inner: ByteStream,
+        buf: Vec<u8>,
+        id: String,
+        model: String,
+        done: bool,
+    }
+
+    Box::pin(try_unfold(
+        State {
+            inner,
+            buf: Vec::new(),
+            id: "chatcmpl-claude".to_string(),
+            model: "claude".to_string(),
+            done: false,
+        },
+        |mut s| async move {
+            loop {
+                if let Some(nl) = s.buf.iter().position(|&b| b == b'\n') {
+                    let raw: Vec<u8> = s.buf.drain(..=nl).collect();
+                    let line = String::from_utf8_lossy(&raw);
+                    let line = line.trim_end_matches(['\r', '\n']);
+
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        if let Ok(ev) = serde_json::from_str::<Value>(data) {
+                            match ev["type"].as_str().unwrap_or("") {
+                                "message_start" => {
+                                    if let Some(id) =
+                                        ev.pointer("/message/id").and_then(Value::as_str)
+                                    {
+                                        s.id = format!("chatcmpl-{id}");
+                                    }
+                                    if let Some(model) =
+                                        ev.pointer("/message/model").and_then(Value::as_str)
+                                    {
+                                        s.model = model.to_string();
+                                    }
+                                    let chunk = serde_json::json!({
+                                        "id": &s.id,
+                                        "object": "chat.completion.chunk",
+                                        "model": &s.model,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {"role": "assistant", "content": ""},
+                                            "finish_reason": null
+                                        }]
+                                    });
+                                    return Ok(Some((
+                                        Bytes::from(format!("data: {chunk}\n\n")),
+                                        s,
+                                    )));
+                                }
+                                "content_block_delta" => {
+                                    if ev.pointer("/delta/type").and_then(Value::as_str)
+                                        == Some("text_delta")
+                                    {
+                                        let text = ev
+                                            .pointer("/delta/text")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("");
+                                        let chunk = serde_json::json!({
+                                            "id": &s.id,
+                                            "object": "chat.completion.chunk",
+                                            "model": &s.model,
+                                            "choices": [{
+                                                "index": 0,
+                                                "delta": {"content": text},
+                                                "finish_reason": null
+                                            }]
+                                        });
+                                        return Ok(Some((
+                                            Bytes::from(format!("data: {chunk}\n\n")),
+                                            s,
+                                        )));
+                                    }
+                                }
+                                "message_delta" => {
+                                    let finish_reason = match ev
+                                        .pointer("/delta/stop_reason")
+                                        .and_then(Value::as_str)
+                                    {
+                                        Some("max_tokens") => "length",
+                                        _ => "stop",
+                                    };
+                                    let chunk = serde_json::json!({
+                                        "id": &s.id,
+                                        "object": "chat.completion.chunk",
+                                        "model": &s.model,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {},
+                                            "finish_reason": finish_reason
+                                        }]
+                                    });
+                                    return Ok(Some((
+                                        Bytes::from(format!("data: {chunk}\n\n")),
+                                        s,
+                                    )));
+                                }
+                                "message_stop" => {
+                                    s.done = true;
+                                    return Ok(Some((Bytes::from("data: [DONE]\n\n"), s)));
+                                }
+                                _ => {} // ping, content_block_start, content_block_stop
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                if s.done {
+                    return Ok(None);
+                }
+
+                match s.inner.next().await {
+                    Some(Ok(b)) => s.buf.extend_from_slice(&b),
+                    Some(Err(e)) => return Err(e),
+                    None => return Ok(None),
+                }
+            }
+        },
+    ))
 }
 
 #[cfg(test)]
