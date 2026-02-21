@@ -1,4 +1,4 @@
-//! Configuration loading and hot-reloading for the byok proxy.
+//! Configuration loading and hot-reloading for the byokey proxy.
 //!
 //! Uses figment for YAML-based configuration with sensible defaults,
 //! and notify + arc-swap for live file watching.

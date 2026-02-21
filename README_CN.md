@@ -5,7 +5,7 @@
 
 ```
 Claude Pro  ─┐
-OpenAI Plus ─┤  byok serve  ─►  http://localhost:8018/v1/chat/completions
+OpenAI Plus ─┤  byokey serve  ─►  http://localhost:8018/v1/chat/completions
 Copilot     ─┘                  (OpenAI 兼容，支持流式输出)
 ```
 
@@ -13,7 +13,7 @@ Copilot     ─┘                  (OpenAI 兼容，支持流式输出)
 
 - **OpenAI 兼容 API** — 直接替换，只需修改 base URL
 - **OAuth 登录流程** — 自动处理 PKCE、设备码、授权码等流程
-- **SQLite Token 存储** — Token 持久化，重启后依然有效，存储于 `~/.byok/tokens.db`
+- **SQLite Token 存储** — Token 持久化，重启后依然有效，存储于 `~/.byokey/tokens.db`
 - **API Key 直通** — 更喜欢原始 API Key？在配置文件中设置即可
 - **Amp CLI 兼容** — 内置 `/amp/*` 路由，开箱即用支持 [Amp](https://ampcode.com)
 - **YAML 配置** — 热重载友好，所有选项均有合理默认值
@@ -37,7 +37,7 @@ Copilot     ─┘                  (OpenAI 兼容，支持流式输出)
 ### 从 crates.io 安装
 
 ```sh
-cargo install byok
+cargo install byokey
 ```
 
 ### 从源码安装
@@ -54,12 +54,12 @@ cargo install --path .
 
 ```sh
 # 1. 认证（会打开浏览器或显示设备码）
-byok login claude
-byok login codex
-byok login copilot
+byokey login claude
+byokey login codex
+byokey login copilot
 
 # 2. 启动代理
-byok serve
+byokey serve
 
 # 3. 将工具指向代理地址
 export OPENAI_BASE_URL=http://localhost:8018/v1
@@ -78,7 +78,7 @@ export OPENAI_API_KEY=any          # byok 忽略 key 的值
 ## CLI 参考
 
 ```
-byok <COMMAND>
+byokey <COMMAND>
 
 Commands:
   serve    启动代理服务器
@@ -88,17 +88,17 @@ Commands:
   help     打印帮助信息
 ```
 
-### `byok serve`
+### `byokey serve`
 
 ```
 Options:
   -c, --config <FILE>   YAML 配置文件 [默认: 无]
   -p, --port <PORT>     监听端口     [默认: 8018]
       --host <HOST>     监听地址     [默认: 127.0.0.1]
-      --db <PATH>       SQLite 数据库路径 [默认: ~/.byok/tokens.db]
+      --db <PATH>       SQLite 数据库路径 [默认: ~/.byokey/tokens.db]
 ```
 
-### `byok login <PROVIDER>`
+### `byokey login <PROVIDER>`
 
 为指定 Provider 运行相应的 OAuth 流程。
 支持的名称：`claude`、`codex`、`copilot`、`gemini`、`kiro`、
@@ -106,23 +106,23 @@ Options:
 
 ```
 Options:
-      --db <PATH>   SQLite 数据库路径 [默认: ~/.byok/tokens.db]
+      --db <PATH>   SQLite 数据库路径 [默认: ~/.byokey/tokens.db]
 ```
 
-### `byok logout <PROVIDER>`
+### `byokey logout <PROVIDER>`
 
 删除指定 Provider 的已存储 Token。
 
-### `byok status`
+### `byokey status`
 
 打印所有已知 Provider 的认证状态。
 
 ## 配置
 
-创建 YAML 文件（例如 `~/.byok/config.yaml`），通过 `--config` 传入：
+创建 YAML 文件（例如 `~/.byokey/config.yaml`），通过 `--config` 传入：
 
 ```yaml
-# ~/.byok/config.yaml
+# ~/.byokey/config.yaml
 port: 8018
 host: 127.0.0.1
 
@@ -135,7 +135,7 @@ providers:
   gemini:
     enabled: false
 
-  # 仅 OAuth（无 api_key）— 先运行 `byok login codex`
+  # 仅 OAuth（无 api_key）— 先运行 `byokey login codex`
   codex:
     enabled: true
 ```
@@ -179,13 +179,13 @@ byok-auth  (AuthManager + OAuth 流程)
 
 | Crate | 说明 |
 |---|---|
-| `byok-types` | 共享类型、Trait、错误定义 |
-| `byok-config` | YAML 配置 + 文件监听 |
-| `byok-store` | SQLite（及内存）Token 持久化 |
-| `byok-auth` | 各 Provider 的 OAuth 2.0 登录流程 |
-| `byok-translate` | 请求/响应格式转换 |
-| `byok-provider` | Provider 执行器与模型注册表 |
-| `byok-proxy` | axum HTTP 服务器与路由 |
+| `byokey-types` | 共享类型、Trait、错误定义 |
+| `byokey-config` | YAML 配置 + 文件监听 |
+| `byokey-store` | SQLite（及内存）Token 持久化 |
+| `byokey-auth` | 各 Provider 的 OAuth 2.0 登录流程 |
+| `byokey-translate` | 请求/响应格式转换 |
+| `byokey-provider` | Provider 执行器与模型注册表 |
+| `byokey-proxy` | axum HTTP 服务器与路由 |
 
 ## 构建与测试
 

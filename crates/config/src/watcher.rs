@@ -77,7 +77,7 @@ impl ConfigWatcher {
 
             for () in rx {
                 if let Err(e) = watcher_self.reload() {
-                    eprintln!("[byok-config] reload error: {e}");
+                    eprintln!("[byokey-config] reload error: {e}");
                 }
             }
         });

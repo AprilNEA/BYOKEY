@@ -1,8 +1,8 @@
-//! Unified error type for the byok workspace.
+//! Unified error type for the byokey workspace.
 
 use thiserror::Error;
 
-/// Enumerates all error kinds that can occur across byok crates.
+/// Enumerates all error kinds that can occur across byokey crates.
 #[derive(Debug, Error)]
 pub enum ByokError {
     /// OAuth or credential authentication failure.

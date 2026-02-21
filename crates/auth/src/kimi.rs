@@ -51,7 +51,7 @@ pub fn device_id() -> String {
 
 #[must_use]
 pub fn device_name() -> String {
-    "byok-client".to_string()
+    "byokey-client".to_string()
 }
 
 #[must_use]
@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn test_device_name() {
-        assert_eq!(device_name(), "byok-client");
+        assert_eq!(device_name(), "byokey-client");
     }
 
     #[test]
@@ -189,7 +189,7 @@ mod tests {
         assert_eq!(headers[1].0, "X-Msh-Version");
         assert_eq!(headers[1].1, "0.13.0");
         assert_eq!(headers[2].0, "X-Msh-Device-Name");
-        assert_eq!(headers[2].1, "byok-client");
+        assert_eq!(headers[2].1, "byokey-client");
         assert_eq!(headers[3].0, "X-Msh-Device-Model");
         assert_eq!(headers[3].1, "MacBookPro");
         assert_eq!(headers[4].0, "X-Msh-Device-Id");

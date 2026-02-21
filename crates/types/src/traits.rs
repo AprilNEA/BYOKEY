@@ -1,7 +1,7 @@
-//! Async traits shared across all byok crates.
+//! Async traits shared across all byokey crates.
 //!
 //! Every cross-crate abstraction is defined here so that higher layers depend
-//! only on `byok-types`, not on each other.
+//! only on `byokey-types`, not on each other.
 
 use crate::{ByokError, OAuthToken, ProviderId};
 use async_trait::async_trait;

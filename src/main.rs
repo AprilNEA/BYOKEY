@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use std::{path::PathBuf, sync::Arc};
 
 #[derive(Parser, Debug)]
-#[command(name = "byok", about = "BYOK — Bring Your Own Keys AI proxy")]
+#[command(name = "byokey", about = "byokey — Bring Your Own Keys AI proxy")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -27,7 +27,7 @@ enum Commands {
         /// Override the listening address (default: 127.0.0.1).
         #[arg(long)]
         host: Option<String>,
-        /// SQLite database path (default: ~/.byok/tokens.db).
+        /// SQLite database path (default: ~/.byokey/tokens.db).
         #[arg(long, value_name = "PATH")]
         db: Option<PathBuf>,
     },
@@ -35,7 +35,7 @@ enum Commands {
     Login {
         /// Provider name (claude / codex / copilot / gemini / qwen / kimi / iflow …).
         provider: String,
-        /// SQLite database path (default: ~/.byok/tokens.db).
+        /// SQLite database path (default: ~/.byokey/tokens.db).
         #[arg(long, value_name = "PATH")]
         db: Option<PathBuf>,
     },
@@ -43,13 +43,13 @@ enum Commands {
     Logout {
         /// Provider name.
         provider: String,
-        /// SQLite database path (default: ~/.byok/tokens.db).
+        /// SQLite database path (default: ~/.byokey/tokens.db).
         #[arg(long, value_name = "PATH")]
         db: Option<PathBuf>,
     },
     /// Show authentication status for all providers.
     Status {
-        /// SQLite database path (default: ~/.byok/tokens.db).
+        /// SQLite database path (default: ~/.byokey/tokens.db).
         #[arg(long, value_name = "PATH")]
         db: Option<PathBuf>,
     },
@@ -97,7 +97,7 @@ async fn cmd_serve(
     let app = byokey_proxy::make_router(state);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    eprintln!("byok listening on http://{addr}");
+    eprintln!("byokey listening on http://{addr}");
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -162,5 +162,5 @@ async fn open_store(db: Option<PathBuf>) -> Result<SqliteTokenStore> {
 
 fn default_db_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".byok").join("tokens.db")
+    PathBuf::from(home).join(".byokey").join("tokens.db")
 }

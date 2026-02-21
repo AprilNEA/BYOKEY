@@ -1,11 +1,11 @@
-# byok — Bring Your Own Keys
+# BYOKEY — Bring Your Own Keys
 
 A local proxy that turns AI **subscriptions** into **OpenAI-compatible API endpoints**,
 so any OpenAI-compatible tool (Amp, Cursor, Continue, etc.) can use them without a paid API key.
 
 ```
 Claude Pro  ─┐
-OpenAI Plus ─┤  byok serve  ─►  http://localhost:8018/v1/chat/completions
+OpenAI Plus ─┤  byokey serve  ─►  http://localhost:8018/v1/chat/completions
 Copilot     ─┘                  (OpenAI-compatible, streaming)
 ```
 
@@ -13,7 +13,7 @@ Copilot     ─┘                  (OpenAI-compatible, streaming)
 
 - **OpenAI-compatible API** — drop-in replacement, just change the base URL
 - **OAuth login flows** — PKCE, device code, and auth-code flows handled for you
-- **SQLite token store** — tokens survive restarts; stored in `~/.byok/tokens.db`
+- **SQLite token store** — tokens survive restarts; stored in `~/.byokey/tokens.db`
 - **API key passthrough** — prefer raw API keys? Set them in the config file
 - **Amp CLI compatibility** — `/amp/*` routes for [Amp](https://ampcode.com) out of the box
 - **YAML config** — hot-reload friendly, all options have sensible defaults
@@ -37,7 +37,7 @@ Copilot     ─┘                  (OpenAI-compatible, streaming)
 ### From crates.io
 
 ```sh
-cargo install byok
+cargo install byokey
 ```
 
 ### From source
@@ -54,16 +54,16 @@ cargo install --path .
 
 ```sh
 # 1. Authenticate (opens browser or shows a device code)
-byok login claude
-byok login codex
-byok login copilot
+byokey login claude
+byokey login codex
+byokey login copilot
 
 # 2. Start the proxy
-byok serve
+byokey serve
 
 # 3. Point your tool at it
 export OPENAI_BASE_URL=http://localhost:8018/v1
-export OPENAI_API_KEY=any          # byok ignores the key value
+export OPENAI_API_KEY=any          # byokey ignores the key value
 ```
 
 For Amp:
@@ -78,7 +78,7 @@ For Amp:
 ## CLI Reference
 
 ```
-byok <COMMAND>
+byokey <COMMAND>
 
 Commands:
   serve    Start the proxy server
@@ -88,17 +88,17 @@ Commands:
   help     Print help
 ```
 
-### `byok serve`
+### `byokey serve`
 
 ```
 Options:
   -c, --config <FILE>   YAML config file [default: none]
   -p, --port <PORT>     Listen port     [default: 8018]
       --host <HOST>     Listen address  [default: 127.0.0.1]
-      --db <PATH>       SQLite DB path  [default: ~/.byok/tokens.db]
+      --db <PATH>       SQLite DB path  [default: ~/.byokey/tokens.db]
 ```
 
-### `byok login <PROVIDER>`
+### `byokey login <PROVIDER>`
 
 Runs the appropriate OAuth flow for the given provider.
 Supported names: `claude`, `codex`, `copilot`, `gemini`, `kiro`,
@@ -106,23 +106,23 @@ Supported names: `claude`, `codex`, `copilot`, `gemini`, `kiro`,
 
 ```
 Options:
-      --db <PATH>   SQLite DB path [default: ~/.byok/tokens.db]
+      --db <PATH>   SQLite DB path [default: ~/.byokey/tokens.db]
 ```
 
-### `byok logout <PROVIDER>`
+### `byokey logout <PROVIDER>`
 
 Deletes the stored token for the given provider.
 
-### `byok status`
+### `byokey status`
 
 Prints authentication status for every known provider.
 
 ## Configuration
 
-Create a YAML file (e.g. `~/.byok/config.yaml`) and pass it with `--config`:
+Create a YAML file (e.g. `~/.byokey/config.yaml`) and pass it with `--config`:
 
 ```yaml
-# ~/.byok/config.yaml
+# ~/.byokey/config.yaml
 port: 8018
 host: 127.0.0.1
 
@@ -135,7 +135,7 @@ providers:
   gemini:
     enabled: false
 
-  # OAuth-only (no api_key) — use `byok login codex` first
+  # OAuth-only (no api_key) — use `byokey login codex` first
   codex:
     enabled: true
 ```
@@ -180,13 +180,13 @@ Client response  (JSON or SSE stream)
 
 | Crate | Description |
 |---|---|
-| `byok-types` | Shared types, traits, errors |
-| `byok-config` | YAML configuration + file watching |
-| `byok-store` | SQLite (and in-memory) token persistence |
-| `byok-auth` | OAuth 2.0 login flows for every provider |
-| `byok-translate` | Request/response format translation |
-| `byok-provider` | Provider executors and model registry |
-| `byok-proxy` | axum HTTP server and routing |
+| `byokey-types` | Shared types, traits, errors |
+| `byokey-config` | YAML configuration + file watching |
+| `byokey-store` | SQLite (and in-memory) token persistence |
+| `byokey-auth` | OAuth 2.0 login flows for every provider |
+| `byokey-translate` | Request/response format translation |
+| `byokey-provider` | Provider executors and model registry |
+| `byokey-proxy` | axum HTTP server and routing |
 
 ## Building & Testing
 
