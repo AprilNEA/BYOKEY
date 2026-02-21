@@ -1,7 +1,7 @@
 //! iFlow executor — Z.ai / GLM OpenAI-compatible API.
 //!
 //! Auth: Bearer API key (obtained via OAuth + userInfo exchange).
-//! Format: OpenAI passthrough (no translation needed).
+//! Format: `OpenAI` passthrough (no translation needed).
 
 use crate::registry;
 use async_trait::async_trait;
@@ -70,7 +70,9 @@ impl ProviderExecutor for IFlowExecutor {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_millis() as u64;
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX);
         let signature = create_signature(&api_key, &session_id, timestamp);
 
         let accept = if stream {
