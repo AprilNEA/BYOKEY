@@ -41,6 +41,44 @@ pub fn kiro_models() -> Vec<String> {
     vec!["kiro-default".into()]
 }
 
+/// Returns the list of supported Qwen (Alibaba) model identifiers.
+#[must_use]
+pub fn qwen_models() -> Vec<String> {
+    vec![
+        "qwen3-coder-plus".into(),
+        "qwen3-235b-a22b".into(),
+        "qwen3-32b".into(),
+        "qwen3-14b".into(),
+        "qwen3-8b".into(),
+        "qwen3-max".into(),
+        "qwen-plus".into(),
+        "qwen-turbo".into(),
+    ]
+}
+
+/// Returns the list of supported iFlow (Z.ai / GLM) model identifiers.
+#[must_use]
+pub fn iflow_models() -> Vec<String> {
+    vec![
+        "glm-4.5".into(),
+        "glm-4.5-air".into(),
+        "glm-z1-flash".into(),
+        "kimi-k2".into(),
+    ]
+}
+
+/// Returns the list of supported Antigravity model identifiers.
+///
+/// Prefixed with `ag-` to avoid conflicts with Claude/Gemini provider models.
+#[must_use]
+pub fn antigravity_models() -> Vec<String> {
+    vec![
+        "ag-gemini-2.5-flash".into(),
+        "ag-gemini-2.5-pro".into(),
+        "ag-claude-sonnet-4-5".into(),
+    ]
+}
+
 /// Returns the list of supported GitHub Copilot model identifiers.
 #[must_use]
 pub fn copilot_models() -> Vec<String> {
@@ -57,12 +95,18 @@ pub fn copilot_models() -> Vec<String> {
 /// Returns `None` if the model is not recognised.
 #[must_use]
 pub fn resolve_provider(model: &str) -> Option<ProviderId> {
-    if model.starts_with("claude-") {
+    if model.starts_with("ag-") {
+        Some(ProviderId::Antigravity)
+    } else if model.starts_with("claude-") {
         Some(ProviderId::Claude)
     } else if model.starts_with("gemini-") {
         Some(ProviderId::Gemini)
     } else if model.starts_with("kiro-") {
         Some(ProviderId::Kiro)
+    } else if model.starts_with("qwen") {
+        Some(ProviderId::Qwen)
+    } else if model.starts_with("glm-") || model.starts_with("kimi-") {
+        Some(ProviderId::IFlow)
     } else if matches!(model, "gpt-4o" | "gpt-4o-mini" | "o3-mini") {
         Some(ProviderId::Copilot)
     } else if matches!(model, "o4-mini" | "o3" | "gpt-4-turbo" | "gpt-4") {
@@ -116,6 +160,18 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_antigravity() {
+        assert_eq!(
+            resolve_provider("ag-gemini-2.5-pro"),
+            Some(ProviderId::Antigravity)
+        );
+        assert_eq!(
+            resolve_provider("ag-claude-sonnet-4-5"),
+            Some(ProviderId::Antigravity)
+        );
+    }
+
+    #[test]
     fn test_resolve_unknown() {
         assert_eq!(resolve_provider("unknown-model"), None);
         assert_eq!(resolve_provider(""), None);
@@ -128,6 +184,9 @@ mod tests {
         assert!(!gemini_models().is_empty());
         assert!(!kiro_models().is_empty());
         assert!(!copilot_models().is_empty());
+        assert!(!antigravity_models().is_empty());
+        assert!(!qwen_models().is_empty());
+        assert!(!iflow_models().is_empty());
     }
 
     #[test]
@@ -159,6 +218,17 @@ mod tests {
                 resolve_provider(&m),
                 Some(ProviderId::Gemini),
                 "model {m} should resolve to Gemini"
+            );
+        }
+    }
+
+    #[test]
+    fn test_antigravity_models_resolve_to_antigravity() {
+        for m in antigravity_models() {
+            assert_eq!(
+                resolve_provider(&m),
+                Some(ProviderId::Antigravity),
+                "model {m} should resolve to Antigravity"
             );
         }
     }

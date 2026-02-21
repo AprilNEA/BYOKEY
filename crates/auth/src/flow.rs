@@ -195,9 +195,10 @@ async fn login_copilot(auth: &AuthManager, http: &rquest::Client) -> Result<()> 
 
 async fn login_gemini(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
     let creds = credentials::fetch("gemini", http).await?;
-    let client_secret = creds.client_secret.as_deref().ok_or_else(|| {
-        ByokError::Auth("gemini credentials missing client_secret".into())
-    })?;
+    let client_secret = creds
+        .client_secret
+        .as_deref()
+        .ok_or_else(|| ByokError::Auth("gemini credentials missing client_secret".into()))?;
 
     let (verifier, challenge) = pkce::generate_pkce();
     let state = pkce::random_state();
@@ -242,9 +243,10 @@ async fn login_gemini(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
 
 async fn login_antigravity(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
     let creds = credentials::fetch("antigravity", http).await?;
-    let client_secret = creds.client_secret.as_deref().ok_or_else(|| {
-        ByokError::Auth("antigravity credentials missing client_secret".into())
-    })?;
+    let client_secret = creds
+        .client_secret
+        .as_deref()
+        .ok_or_else(|| ByokError::Auth("antigravity credentials missing client_secret".into()))?;
 
     let (verifier, challenge) = pkce::generate_pkce();
     let state = pkce::random_state();
@@ -438,9 +440,10 @@ async fn login_kimi(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
 
 async fn login_iflow(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
     let creds = credentials::fetch("iflow", http).await?;
-    let client_secret = creds.client_secret.as_deref().ok_or_else(|| {
-        ByokError::Auth("iflow credentials missing client_secret".into())
-    })?;
+    let client_secret = creds
+        .client_secret
+        .as_deref()
+        .ok_or_else(|| ByokError::Auth("iflow credentials missing client_secret".into()))?;
 
     let state = pkce::random_state();
     let auth_url = iflow::build_auth_url(&creds.client_id, &state);
@@ -479,6 +482,16 @@ async fn login_iflow(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
         .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
 
     let token = iflow::parse_token_response(&json)?;
+
+    // Exchange the OAuth access_token for an iFlow API key and store it as
+    // the token's access_token so the executor can use it directly.
+    let oauth_access = token.access_token.clone();
+    let api_key = iflow::fetch_api_key(&oauth_access, http).await?;
+    let token = byokey_types::OAuthToken {
+        access_token: api_key,
+        ..token
+    };
+
     auth.save_token(&ProviderId::IFlow, token).await?;
     eprintln!("iFlow (Z.ai/GLM) login successful");
     Ok(())

@@ -4,18 +4,24 @@
 //! The [`make_executor`] and [`make_executor_for_model`] functions create boxed
 //! executors based on provider or model identifiers.
 
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod copilot;
 pub mod gemini;
+pub mod iflow;
 pub mod kiro;
+pub mod qwen;
 pub mod registry;
 
+pub use antigravity::AntigravityExecutor;
 pub use claude::ClaudeExecutor;
 pub use codex::CodexExecutor;
 pub use copilot::CopilotExecutor;
 pub use gemini::GeminiExecutor;
+pub use iflow::IFlowExecutor;
 pub use kiro::KiroExecutor;
+pub use qwen::QwenExecutor;
 pub use registry::resolve_provider;
 
 use byokey_auth::AuthManager;
@@ -36,7 +42,10 @@ pub fn make_executor(
         ProviderId::Gemini => Some(Box::new(GeminiExecutor::new(api_key, auth))),
         ProviderId::Kiro => Some(Box::new(KiroExecutor::new(api_key, auth))),
         ProviderId::Copilot => Some(Box::new(CopilotExecutor::new(api_key, auth))),
-        ProviderId::Antigravity | ProviderId::Qwen | ProviderId::Kimi | ProviderId::IFlow => None, // executor not yet implemented; auth flow is ready
+        ProviderId::Antigravity => Some(Box::new(AntigravityExecutor::new(api_key, auth))),
+        ProviderId::Qwen => Some(Box::new(QwenExecutor::new(api_key, auth))),
+        ProviderId::IFlow => Some(Box::new(IFlowExecutor::new(api_key, auth))),
+        ProviderId::Kimi => None, // executor not yet implemented; auth flow is ready
     }
 }
 
@@ -101,10 +110,16 @@ mod tests {
     }
 
     #[test]
-    fn test_make_executor_antigravity_none() {
+    fn test_make_executor_antigravity() {
         let auth = make_auth();
         let ex = make_executor(&ProviderId::Antigravity, None, auth);
-        assert!(ex.is_none());
+        assert!(ex.is_some());
+        assert!(
+            ex.unwrap()
+                .supported_models()
+                .iter()
+                .all(|m| m.starts_with("ag-"))
+        );
     }
 
     #[test]

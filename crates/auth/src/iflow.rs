@@ -74,6 +74,41 @@ pub fn parse_token_response(json: &serde_json::Value) -> Result<OAuthToken> {
     Ok(token)
 }
 
+/// iFlow `userInfo` endpoint.
+pub const USER_INFO_URL: &str = "https://iflow.cn/api/oauth/getUserInfo";
+
+/// Fetch the iFlow API key by exchanging an OAuth access token via the `userInfo` endpoint.
+///
+/// # Errors
+///
+/// Returns [`ByokError::Http`] on network failure or [`ByokError::Auth`] if the
+/// response is missing the `apiKey` field.
+pub async fn fetch_api_key(oauth_token: &str, http: &rquest::Client) -> Result<String> {
+    let url = format!("{USER_INFO_URL}?accessToken={oauth_token}");
+    let resp = http
+        .get(&url)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| ByokError::Http(e.to_string()))?;
+
+    let status = resp.status();
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| ByokError::Auth(format!("iflow userinfo parse error: {e}")))?;
+
+    if !status.is_success() {
+        return Err(ByokError::Auth(format!("iflow userinfo {status}")));
+    }
+
+    json.pointer("/data/apiKey")
+        .and_then(serde_json::Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .ok_or_else(|| ByokError::Auth("iflow: missing apiKey in userinfo response".into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

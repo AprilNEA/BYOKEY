@@ -28,6 +28,10 @@ async-trait.workspace = true
 futures-core.workspace = true
 futures-util.workspace = true
 bytes.workspace = true
+hmac = "0.12"
+sha2.workspace = true
+hex = "0.4"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
