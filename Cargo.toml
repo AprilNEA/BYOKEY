@@ -8,7 +8,6 @@ members = [
     "crates/translate",
     "crates/provider",
     "crates/proxy",
-    "crates/gui",
 ]
 
 [workspace.package]

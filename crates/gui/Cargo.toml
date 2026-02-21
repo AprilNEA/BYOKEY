@@ -1,27 +1,34 @@
 [package]
 name = "byokey-gui"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
+version = "0.1.1"
+edition = "2024"
+authors = ["AprilNEA <github@sku.moe>"]
 description = "BYOKEY desktop client — macOS menu bar app"
-license.workspace = true
+license = "MIT OR Apache-2.0"
 
 [[bin]]
 name = "byokey-gui"
 path = "src/main.rs"
 
 [dependencies]
-byokey-types.workspace = true
-byokey-config.workspace = true
-byokey-store.workspace = true
-byokey-auth.workspace = true
-byokey-proxy.workspace = true
-gpui.workspace = true
-gpui-component.workspace = true
-tray-icon.workspace = true
-crossbeam-channel.workspace = true
-tokio.workspace = true
-anyhow.workspace = true
+byokey-types   = { version = "0.1.1", path = "../types" }
+byokey-config  = { version = "0.1.1", path = "../config" }
+byokey-store   = { version = "0.1.1", path = "../store" }
+byokey-auth    = { version = "0.1.1", path = "../auth" }
+byokey-proxy   = { version = "0.1.1", path = "../proxy" }
+gpui           = "0.2"
+gpui-component = "0.5"
+tray-icon      = "0.21"
+crossbeam-channel = "0.5"
+tokio          = { version = "1", features = ["full"] }
+anyhow         = "1"
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = "warn"
+
+# Declare an explicit workspace so Cargo doesn't pick up the parent workspace.
+# This keeps byokey-gui out of the main CI (macOS-only binary).
+[workspace]

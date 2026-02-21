@@ -19,18 +19,34 @@ use panel::PanelView;
 use std::sync::Arc;
 
 fn main() {
+    // Create the Tokio runtime before GPUI starts.
+    //
+    // sqlx (used by SqliteTokenStore) calls `tokio::runtime::Handle::current()` when
+    // executing queries. GPUI dispatches async tasks through the macOS Cocoa run loop
+    // (trampoline), which runs on the main thread but outside any Tokio context. By
+    // creating the runtime here and entering it with `_tokio_guard`, the thread-local
+    // Tokio context remains active on the main thread for the lifetime of `app.run()`.
+    //
+    // The runtime's multi-threaded worker pool processes sqlx blocking I/O in the
+    // background; `app.run()` blocks main(), so `rt` is never dropped while the app runs.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("failed to create tokio runtime");
+
+    let config = Arc::new(load_config());
+    let store = rt.block_on(open_store()).expect("failed to open token store");
+    let auth = Arc::new(AuthManager::new(Arc::new(store)));
+
     let app = Application::new();
+
+    // Enter the Tokio runtime context on the main thread and keep the guard alive
+    // for the duration of `app.run()`. Variables declared with a leading underscore
+    // but with a full name (not `_`) stay alive until end of scope.
+    let _tokio_guard = rt.enter();
 
     app.run(move |cx| {
         gpui_component::init(cx);
-
-        // Load config (best-effort, fall back to defaults).
-        let config = Arc::new(load_config());
-        let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-        let store = rt
-            .block_on(open_store())
-            .expect("failed to open token store");
-        let auth = Arc::new(AuthManager::new(Arc::new(store)));
 
         // Set up system tray.
         let tray_rx = tray::setup();
