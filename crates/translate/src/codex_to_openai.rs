@@ -1,11 +1,11 @@
-//! Translates Codex (OpenAI Responses API) responses into `OpenAI` chat completion format.
+//! Translates Codex (`OpenAI` Responses API) responses into `OpenAI` chat completion format.
 //!
 //! The Codex Responses API returns a `response` object (extracted from the
 //! `response.completed` SSE event). This translator converts it to the standard
 //! `OpenAI` chat completion response format.
 
-use byokey_types::{ResponseTranslator, traits::Result};
-use serde_json::{Value, json};
+use byokey_types::{traits::Result, ResponseTranslator};
+use serde_json::{json, Value};
 
 /// Translator from Codex Responses API `response` object to `OpenAI` chat completion format.
 pub struct CodexToOpenAI;
@@ -52,8 +52,7 @@ impl ResponseTranslator for CodexToOpenAI {
         let id = res
             .get("id")
             .and_then(Value::as_str)
-            .map(|s| format!("chatcmpl-{s}"))
-            .unwrap_or_else(|| "chatcmpl-codex".to_string());
+            .map_or_else(|| "chatcmpl-codex".to_string(), |s| format!("chatcmpl-{s}"));
 
         let model = res
             .get("model")
@@ -78,16 +77,9 @@ impl ResponseTranslator for CodexToOpenAI {
                         item.get("type").and_then(Value::as_str) == Some("function_call")
                     })
                     .map(|item| {
-                        let call_id = item
-                            .get("call_id")
-                            .and_then(Value::as_str)
-                            .unwrap_or("");
-                        let name =
-                            item.get("name").and_then(Value::as_str).unwrap_or("");
-                        let arguments = item
-                            .get("arguments")
-                            .and_then(Value::as_str)
-                            .unwrap_or("");
+                        let call_id = item.get("call_id").and_then(Value::as_str).unwrap_or("");
+                        let name = item.get("name").and_then(Value::as_str).unwrap_or("");
+                        let arguments = item.get("arguments").and_then(Value::as_str).unwrap_or("");
                         json!({
                             "id": call_id,
                             "type": "function",
@@ -211,6 +203,9 @@ mod tests {
         assert_eq!(tool_calls[0]["id"], "call_1");
         assert_eq!(tool_calls[0]["type"], "function");
         assert_eq!(tool_calls[0]["function"]["name"], "get_weather");
-        assert_eq!(tool_calls[0]["function"]["arguments"], "{\"city\":\"Tokyo\"}");
+        assert_eq!(
+            tool_calls[0]["function"]["arguments"],
+            "{\"city\":\"Tokyo\"}"
+        );
     }
 }

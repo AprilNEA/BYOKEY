@@ -15,33 +15,55 @@ impl ApiError {
     /// Returns `(status, error_type, error_code)` for the wrapped error.
     fn classify(&self) -> (StatusCode, &'static str, &'static str) {
         match &self.0 {
-            ByokError::Auth(_) => {
-                (StatusCode::UNAUTHORIZED, "authentication_error", "invalid_api_key")
-            }
-            ByokError::TokenNotFound(_) | ByokError::TokenExpired(_) => {
-                (StatusCode::UNAUTHORIZED, "authentication_error", "token_not_found")
-            }
-            ByokError::UnsupportedModel(_) => {
-                (StatusCode::BAD_REQUEST, "invalid_request_error", "model_not_found")
-            }
-            ByokError::Translation(_) => {
-                (StatusCode::BAD_REQUEST, "invalid_request_error", "translation_error")
-            }
+            ByokError::Auth(_) => (
+                StatusCode::UNAUTHORIZED,
+                "authentication_error",
+                "invalid_api_key",
+            ),
+            ByokError::TokenNotFound(_) | ByokError::TokenExpired(_) => (
+                StatusCode::UNAUTHORIZED,
+                "authentication_error",
+                "token_not_found",
+            ),
+            ByokError::UnsupportedModel(_) => (
+                StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+                "model_not_found",
+            ),
+            ByokError::Translation(_) => (
+                StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+                "translation_error",
+            ),
             ByokError::Http(m) => classify_http(m),
-            _ => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "server_error", "internal_error")
-            }
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "server_error",
+                "internal_error",
+            ),
         }
     }
 }
 
 fn classify_http(msg: &str) -> (StatusCode, &'static str, &'static str) {
     if msg.contains("429") {
-        (StatusCode::TOO_MANY_REQUESTS, "rate_limit_error", "rate_limit_exceeded")
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limit_error",
+            "rate_limit_exceeded",
+        )
     } else if msg.contains("401") {
-        (StatusCode::UNAUTHORIZED, "authentication_error", "invalid_api_key")
+        (
+            StatusCode::UNAUTHORIZED,
+            "authentication_error",
+            "invalid_api_key",
+        )
     } else if msg.contains("403") {
-        (StatusCode::FORBIDDEN, "permission_error", "insufficient_quota")
+        (
+            StatusCode::FORBIDDEN,
+            "permission_error",
+            "insufficient_quota",
+        )
     } else {
         (StatusCode::BAD_GATEWAY, "server_error", "upstream_error")
     }
@@ -87,7 +109,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_auth_error() {
-        let (status, body) = extract_error_body(ApiError(ByokError::Auth("bad creds".into()))).await;
+        let (status, body) =
+            extract_error_body(ApiError(ByokError::Auth("bad creds".into()))).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(body["error"]["type"], "authentication_error");
         assert_eq!(body["error"]["code"], "invalid_api_key");

@@ -1,4 +1,4 @@
-//! Translates `OpenAI` chat completion requests into Codex (OpenAI Responses API) format.
+//! Translates `OpenAI` chat completion requests into Codex (`OpenAI` Responses API) format.
 //!
 //! The Codex CLI uses a private Responses API at `chatgpt.com/backend-api/codex/responses`
 //! that differs from the public Chat Completions API:
@@ -7,8 +7,8 @@
 //! - `system` role → top-level `instructions` field
 //! - `max_tokens` → `max_output_tokens`
 
-use byokey_types::{ByokError, RequestTranslator, traits::Result};
-use serde_json::{Value, json};
+use byokey_types::{traits::Result, ByokError, RequestTranslator};
+use serde_json::{json, Value};
 
 /// Translator from `OpenAI` chat completion request format to Codex Responses API format.
 pub struct OpenAIToCodex;
@@ -58,6 +58,69 @@ fn to_codex_content(content: &Value, role: &str) -> Value {
     json!([])
 }
 
+/// Converts `OpenAI` messages array to Codex input items (skipping system messages).
+fn build_codex_input(messages: &[Value]) -> Vec<Value> {
+    let mut input: Vec<Value> = Vec::new();
+    for m in messages {
+        let role = m.get("role").and_then(Value::as_str).unwrap_or("user");
+        match role {
+            "system" => {}
+            "tool" => {
+                let call_id = m
+                    .get("tool_call_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let output = m
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                input.push(json!({
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": output,
+                }));
+            }
+            "assistant" if m.get("tool_calls").is_some() => {
+                if let Some(content) = m.get("content").filter(|c| !c.is_null()) {
+                    let content_parts = to_codex_content(content, role);
+                    input.push(json!({"type": "message", "role": role, "content": content_parts}));
+                }
+                if let Some(tool_calls) = m.get("tool_calls").and_then(Value::as_array) {
+                    for tc in tool_calls {
+                        let call_id = tc
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        let name = tc
+                            .pointer("/function/name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        let arguments = tc
+                            .pointer("/function/arguments")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        input.push(json!({"type": "function_call", "call_id": call_id, "name": name, "arguments": arguments}));
+                    }
+                }
+            }
+            _ => {
+                let content = m
+                    .get("content")
+                    .cloned()
+                    .unwrap_or(Value::String(String::new()));
+                let content_parts = to_codex_content(&content, role);
+                input.push(json!({"type": "message", "role": role, "content": content_parts}));
+            }
+        }
+    }
+    input
+}
+
 impl RequestTranslator for OpenAIToCodex {
     /// Translates an `OpenAI` chat completion request into a Codex Responses API request.
     ///
@@ -76,7 +139,6 @@ impl RequestTranslator for OpenAIToCodex {
             .and_then(Value::as_array)
             .ok_or_else(|| ByokError::Translation("missing 'messages'".into()))?;
 
-        // Extract system messages → instructions
         let instructions: String = messages
             .iter()
             .filter(|m| m.get("role").and_then(Value::as_str) == Some("system"))
@@ -84,80 +146,7 @@ impl RequestTranslator for OpenAIToCodex {
             .collect::<Vec<_>>()
             .join("\n");
 
-        // Convert non-system messages to Codex input items
-        let mut input: Vec<Value> = Vec::new();
-        for m in messages {
-            let role = m.get("role").and_then(Value::as_str).unwrap_or("user");
-            match role {
-                "system" => continue,
-                "tool" => {
-                    let call_id = m
-                        .get("tool_call_id")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string();
-                    let output = m
-                        .get("content")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string();
-                    input.push(json!({
-                        "type": "function_call_output",
-                        "call_id": call_id,
-                        "output": output,
-                    }));
-                }
-                "assistant" if m.get("tool_calls").is_some() => {
-                    // Emit content message if present
-                    if let Some(content) = m.get("content").filter(|c| !c.is_null()) {
-                        let content_parts = to_codex_content(content, role);
-                        input.push(json!({
-                            "type": "message",
-                            "role": role,
-                            "content": content_parts,
-                        }));
-                    }
-                    // Emit function_call items for each tool_call
-                    if let Some(tool_calls) = m.get("tool_calls").and_then(Value::as_array) {
-                        for tc in tool_calls {
-                            let call_id = tc
-                                .get("id")
-                                .and_then(Value::as_str)
-                                .unwrap_or("")
-                                .to_string();
-                            let name = tc
-                                .pointer("/function/name")
-                                .and_then(Value::as_str)
-                                .unwrap_or("")
-                                .to_string();
-                            let arguments = tc
-                                .pointer("/function/arguments")
-                                .and_then(Value::as_str)
-                                .unwrap_or("")
-                                .to_string();
-                            input.push(json!({
-                                "type": "function_call",
-                                "call_id": call_id,
-                                "name": name,
-                                "arguments": arguments,
-                            }));
-                        }
-                    }
-                }
-                _ => {
-                    let content = m
-                        .get("content")
-                        .cloned()
-                        .unwrap_or(Value::String(String::new()));
-                    let content_parts = to_codex_content(&content, role);
-                    input.push(json!({
-                        "type": "message",
-                        "role": role,
-                        "content": content_parts,
-                    }));
-                }
-            }
-        }
+        let input = build_codex_input(messages);
 
         let mut out = json!({
             "model": model,

@@ -128,10 +128,11 @@ impl ProviderExecutor for ClaudeExecutor {
 ///
 /// Claude SSE events handled:
 /// - `message_start`         → extract `id` and `model`; emit first chunk with `role`
-/// - `content_block_start`   → for `tool_use` blocks: emit tool_calls opening chunk
+/// - `content_block_start`   → for `tool_use` blocks: emit `tool_calls` opening chunk
 /// - `content_block_delta`   → `text_delta` → content; `input_json_delta` → tool arguments
 /// - `message_delta`         → emit finish chunk (`stop_reason` mapped to `finish_reason`)
 /// - `message_stop`          → emit `data: [DONE]`
+#[allow(clippy::too_many_lines)]
 fn translate_claude_sse(inner: ByteStream) -> ByteStream {
     struct State {
         inner: ByteStream,
@@ -139,7 +140,7 @@ fn translate_claude_sse(inner: ByteStream) -> ByteStream {
         id: String,
         model: String,
         done: bool,
-        /// Index of the most recently started tool_call, or -1 if not in a tool block.
+        /// Index of the most recently started `tool_call`, or -1 if not in a tool block.
         tool_call_index: i64,
         /// Whether the current content block is a `tool_use` block.
         in_tool_use: bool,
@@ -162,9 +163,10 @@ fn translate_claude_sse(inner: ByteStream) -> ByteStream {
                     let line = String::from_utf8_lossy(&raw);
                     let line = line.trim_end_matches(['\r', '\n']);
 
-                    if let Some(data) = line.strip_prefix("data: ") {
-                        if let Ok(ev) = serde_json::from_str::<Value>(data) {
-                            match ev["type"].as_str().unwrap_or("") {
+                    if let Some(data) = line.strip_prefix("data: ")
+                        && let Ok(ev) = serde_json::from_str::<Value>(data)
+                    {
+                        match ev["type"].as_str().unwrap_or("") {
                                 "message_start" => {
                                     if let Some(id) =
                                         ev.pointer("/message/id").and_then(Value::as_str)
@@ -222,9 +224,8 @@ fn translate_claude_sse(inner: ByteStream) -> ByteStream {
                                             Bytes::from(format!("data: {chunk}\n\n")),
                                             s,
                                         )));
-                                    } else {
-                                        s.in_tool_use = false;
                                     }
+                                    s.in_tool_use = false;
                                 }
                                 "content_block_delta" => {
                                     let delta_type = ev
@@ -300,7 +301,6 @@ fn translate_claude_sse(inner: ByteStream) -> ByteStream {
                                 }
                                 _ => {} // ping, content_block_stop
                             }
-                        }
                     }
                     continue;
                 }

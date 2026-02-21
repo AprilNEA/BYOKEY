@@ -36,8 +36,7 @@ const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 const CODEX_VERSION: &str = "0.101.0";
 
 /// User-Agent matching the Codex CLI binary.
-const CODEX_USER_AGENT: &str =
-    "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464";
+const CODEX_USER_AGENT: &str = "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464";
 
 /// Executor for the `OpenAI` (Codex) API.
 pub struct CodexExecutor {
@@ -101,10 +100,7 @@ impl CodexExecutor {
             return Err(ByokError::Http(format!("Codex API {status}: {text}")));
         }
 
-        let model = codex_body["model"]
-            .as_str()
-            .unwrap_or("codex")
-            .to_string();
+        let model = codex_body["model"].as_str().unwrap_or("codex").to_string();
 
         let raw: ByteStream = Box::pin(
             resp.bytes_stream()
@@ -137,14 +133,13 @@ impl CodexExecutor {
 
         // Find the response.completed SSE event
         for line in String::from_utf8_lossy(&all).lines() {
-            if let Some(data) = line.strip_prefix("data: ") {
-                if let Ok(ev) = serde_json::from_str::<Value>(data) {
-                    if ev["type"].as_str() == Some("response.completed") {
-                        let response = ev["response"].clone();
-                        let translated = CodexToOpenAI.translate_response(response)?;
-                        return Ok(ProviderResponse::Complete(translated));
-                    }
-                }
+            if let Some(data) = line.strip_prefix("data: ")
+                && let Ok(ev) = serde_json::from_str::<Value>(data)
+                && ev["type"].as_str() == Some("response.completed")
+            {
+                let response = ev["response"].clone();
+                let translated = CodexToOpenAI.translate_response(response)?;
+                return Ok(ProviderResponse::Complete(translated));
             }
         }
 
@@ -165,12 +160,15 @@ fn random_uuid() -> String {
         u16::from_be_bytes([bytes[4], bytes[5]]),
         u16::from_be_bytes([bytes[6], bytes[7]]) & 0x0fff,
         (u16::from_be_bytes([bytes[8], bytes[9]]) & 0x3fff) | 0x8000,
-        u64::from_be_bytes([bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15], 0, 0]) >> 16,
+        u64::from_be_bytes([
+            bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15], 0, 0
+        ]) >> 16,
     )
 }
 
 /// Wraps a raw Codex SSE `ByteStream` and translates its events to
 /// `OpenAI` chat completion chunk SSE format line-by-line.
+#[allow(clippy::too_many_lines)]
 fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStream {
     struct State {
         inner: ByteStream,
@@ -196,12 +194,12 @@ fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStream {
                     let line = String::from_utf8_lossy(&raw);
                     let line = line.trim_end_matches(['\r', '\n']);
 
-                    if let Some(data) = line.strip_prefix("data: ") {
-                        if let Ok(ev) = serde_json::from_str::<Value>(data) {
-                            match ev["type"].as_str().unwrap_or("") {
+                    if let Some(data) = line.strip_prefix("data: ")
+                        && let Ok(ev) = serde_json::from_str::<Value>(data)
+                    {
+                        match ev["type"].as_str().unwrap_or("") {
                                 "response.reasoning_summary_text.delta" => {
-                                    let delta =
-                                        ev["delta"].as_str().unwrap_or("").to_string();
+                                    let delta = ev["delta"].as_str().unwrap_or("").to_string();
                                     let chunk = serde_json::json!({
                                         "object": "chat.completion.chunk",
                                         "model": &s.model,
@@ -215,8 +213,7 @@ fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStream {
                                     return Ok(Some((Bytes::from(line), s)));
                                 }
                                 "response.output_text.delta" => {
-                                    let delta =
-                                        ev["delta"].as_str().unwrap_or("").to_string();
+                                    let delta = ev["delta"].as_str().unwrap_or("").to_string();
                                     let chunk = serde_json::json!({
                                         "object": "chat.completion.chunk",
                                         "model": &s.model,
@@ -256,8 +253,7 @@ fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStream {
                                     return Ok(Some((Bytes::from(line), s)));
                                 }
                                 "response.function_call_arguments.delta" => {
-                                    let delta =
-                                        ev["delta"].as_str().unwrap_or("").to_string();
+                                    let delta = ev["delta"].as_str().unwrap_or("").to_string();
                                     let idx = (s.tool_call_index - 1).max(0);
                                     let chunk = serde_json::json!({
                                         "object": "chat.completion.chunk",
@@ -288,7 +284,6 @@ fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStream {
                                 }
                                 _ => {}
                             }
-                        }
                     }
                     continue;
                 }

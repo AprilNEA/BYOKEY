@@ -3,7 +3,7 @@
 //! Some providers (Gemini, Codex) reject consecutive messages with the same role.
 //! This module provides a pure function to merge adjacent user/assistant messages.
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// Merges adjacent messages with the same role.
 ///
@@ -29,11 +29,12 @@ pub fn merge_adjacent_messages(messages: &[Value]) -> Vec<Value> {
             .is_some_and(|last_role| last_role == role);
 
         if should_merge {
-            let last = result.last_mut().unwrap();
-            let existing = to_content_array(last.get("content").unwrap_or(&Value::Null));
-            let incoming = to_content_array(msg.get("content").unwrap_or(&Value::Null));
-            let merged: Vec<Value> = existing.into_iter().chain(incoming).collect();
-            last["content"] = Value::Array(merged);
+            if let Some(last) = result.last_mut() {
+                let existing = to_content_array(last.get("content").unwrap_or(&Value::Null));
+                let incoming = to_content_array(msg.get("content").unwrap_or(&Value::Null));
+                let merged: Vec<Value> = existing.into_iter().chain(incoming).collect();
+                last["content"] = Value::Array(merged);
+            }
         } else {
             result.push(msg.clone());
         }

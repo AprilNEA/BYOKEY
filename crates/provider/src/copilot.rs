@@ -78,13 +78,13 @@ impl CopilotExecutor {
         // Check cache
         {
             let cache = self.cache.lock().unwrap();
-            if let Some(cached) = cache.get(&github_token) {
-                if cached.expires_at > Instant::now() {
-                    return Ok((
-                        cached.token.clone(),
-                        format!("{}/chat/completions", cached.api_endpoint),
-                    ));
-                }
+            if let Some(cached) = cache.get(&github_token)
+                && cached.expires_at > Instant::now()
+            {
+                return Ok((
+                    cached.token.clone(),
+                    format!("{}/chat/completions", cached.api_endpoint),
+                ));
             }
         }
 
@@ -120,17 +120,15 @@ impl CopilotExecutor {
             .ok_or_else(|| ByokError::Auth("missing token in Copilot response".into()))?
             .to_string();
 
-        let expires_at_unix = json
-            .get("expires_at")
-            .and_then(Value::as_i64)
-            .unwrap_or(0);
+        let expires_at_unix = json.get("expires_at").and_then(Value::as_i64).unwrap_or(0);
 
         let ttl = if expires_at_unix > 0 {
             let now_unix = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_secs() as i64;
-            let secs = (expires_at_unix - now_unix).max(0) as u64;
+                .as_secs()
+                .cast_signed();
+            let secs = (expires_at_unix - now_unix).max(0).cast_unsigned();
             Duration::from_secs(secs)
         } else {
             Duration::from_secs(1500) // default ~25 min
@@ -167,15 +165,14 @@ impl CopilotExecutor {
         let is_agent = body
             .get("messages")
             .and_then(Value::as_array)
-            .map(|msgs| {
+            .is_some_and(|msgs| {
                 msgs.iter().any(|m| {
                     matches!(
                         m.get("role").and_then(Value::as_str),
-                        Some("assistant") | Some("tool")
+                        Some("assistant" | "tool")
                     )
                 })
-            })
-            .unwrap_or(false);
+            });
         if is_agent { "agent" } else { "user" }
     }
 }

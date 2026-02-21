@@ -1,7 +1,7 @@
 //! Translates `OpenAI` chat completion requests into Gemini `generateContent` format.
 
-use byokey_types::{ByokError, RequestTranslator, traits::Result};
-use serde_json::{Value, json};
+use byokey_types::{traits::Result, ByokError, RequestTranslator};
+use serde_json::{json, Value};
 
 use crate::merge_messages::merge_adjacent_messages;
 
@@ -36,7 +36,7 @@ impl RequestTranslator for OpenAIToGemini {
         let contents: Vec<Value> = merged
             .iter()
             .filter(|m| m.get("role").and_then(Value::as_str) != Some("system"))
-            .map(|m| translate_message(m))
+            .map(translate_message)
             .collect();
 
         let mut generation_config = json!({});
@@ -99,45 +99,42 @@ impl RequestTranslator for OpenAIToGemini {
     }
 }
 
-/// Translates a single OpenAI message to Gemini content format.
+/// Translates a single `OpenAI` message to Gemini content format.
 fn translate_message(m: &Value) -> Value {
     let role = m.get("role").and_then(Value::as_str).unwrap_or("user");
 
     // assistant with tool_calls → model with functionCall parts
-    if role == "assistant" {
-        if let Some(tool_calls) = m.get("tool_calls").and_then(Value::as_array) {
-            let mut parts: Vec<Value> = Vec::new();
+    if role == "assistant"
+        && let Some(tool_calls) = m.get("tool_calls").and_then(Value::as_array)
+    {
+        let mut parts: Vec<Value> = Vec::new();
 
-            // Include text content if present
-            if let Some(text) = m.get("content").and_then(Value::as_str) {
-                if !text.is_empty() {
-                    parts.push(json!({"text": text}));
-                }
-            }
-
-            for tc in tool_calls {
-                let name = tc
-                    .pointer("/function/name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-                let args_str = tc
-                    .pointer("/function/arguments")
-                    .and_then(Value::as_str)
-                    .unwrap_or("{}");
-                let args: Value = serde_json::from_str(args_str).unwrap_or_else(|_| json!({}));
-                parts.push(json!({"functionCall": {"name": name, "args": args}}));
-            }
-
-            return json!({"role": "model", "parts": parts});
+        // Include text content if present
+        if let Some(text) = m.get("content").and_then(Value::as_str)
+            && !text.is_empty()
+        {
+            parts.push(json!({"text": text}));
         }
+
+        for tc in tool_calls {
+            let name = tc
+                .pointer("/function/name")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let args_str = tc
+                .pointer("/function/arguments")
+                .and_then(Value::as_str)
+                .unwrap_or("{}");
+            let args: Value = serde_json::from_str(args_str).unwrap_or_else(|_| json!({}));
+            parts.push(json!({"functionCall": {"name": name, "args": args}}));
+        }
+
+        return json!({"role": "model", "parts": parts});
     }
 
     // tool role → user with functionResponse part
     if role == "tool" {
-        let tool_call_id = m
-            .get("tool_call_id")
-            .and_then(Value::as_str)
-            .unwrap_or("");
+        let tool_call_id = m.get("tool_call_id").and_then(Value::as_str).unwrap_or("");
         let name = tool_call_id
             .split_once('-')
             .map_or(tool_call_id, |(prefix, _)| prefix);
@@ -155,17 +152,16 @@ fn translate_message(m: &Value) -> Value {
     };
 
     let parts = match m.get("content") {
-        Some(Value::Array(arr)) => {
-            arr.iter()
-                .map(|item| {
-                    if let Some(text) = item.get("text").and_then(Value::as_str) {
-                        json!({"text": text})
-                    } else {
-                        json!({"text": item.to_string()})
-                    }
-                })
-                .collect()
-        }
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .map(|item| {
+                if let Some(text) = item.get("text").and_then(Value::as_str) {
+                    json!({"text": text})
+                } else {
+                    json!({"text": item.to_string()})
+                }
+            })
+            .collect(),
         Some(Value::String(s)) => vec![json!({"text": s})],
         _ => vec![json!({"text": ""})],
     };

@@ -1,6 +1,6 @@
-//! Automatic cache_control injection for Claude Messages API requests.
+//! Automatic `cache_control` injection for Claude Messages API requests.
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// Injects `cache_control: {type: "ephemeral"}` into a Claude request body
 /// at up to three positions for optimal prompt caching:
@@ -8,7 +8,8 @@ use serde_json::{Value, json};
 /// 2. The last system content block
 /// 3. The second-to-last user message
 ///
-/// Positions that already have cache_control are skipped.
+/// Positions that already have `cache_control` are skipped.
+#[must_use]
 pub fn inject_cache_control(mut request: Value) -> Value {
     inject_tools_cache(&mut request);
     inject_system_cache(&mut request);
@@ -17,12 +18,11 @@ pub fn inject_cache_control(mut request: Value) -> Value {
 }
 
 fn inject_tools_cache(req: &mut Value) {
-    if let Some(tools) = req.get_mut("tools").and_then(Value::as_array_mut) {
-        if let Some(last) = tools.last_mut() {
-            if last.get("cache_control").is_none() {
-                last["cache_control"] = json!({"type": "ephemeral"});
-            }
-        }
+    if let Some(tools) = req.get_mut("tools").and_then(Value::as_array_mut)
+        && let Some(last) = tools.last_mut()
+        && last.get("cache_control").is_none()
+    {
+        last["cache_control"] = json!({"type": "ephemeral"});
     }
 }
 
@@ -39,12 +39,11 @@ fn inject_system_cache(req: &mut Value) {
             }]);
         }
         Some(system) if system.is_array() => {
-            if let Some(arr) = system.as_array_mut() {
-                if let Some(last) = arr.last_mut() {
-                    if last.get("cache_control").is_none() {
-                        last["cache_control"] = cache;
-                    }
-                }
+            if let Some(arr) = system.as_array_mut()
+                && let Some(last) = arr.last_mut()
+                && last.get("cache_control").is_none()
+            {
+                last["cache_control"] = cache;
             }
         }
         _ => {}
@@ -52,9 +51,8 @@ fn inject_system_cache(req: &mut Value) {
 }
 
 fn inject_messages_cache(req: &mut Value) {
-    let messages = match req.get_mut("messages").and_then(Value::as_array_mut) {
-        Some(m) => m,
-        None => return,
+    let Some(messages) = req.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
     };
 
     let user_indices: Vec<usize> = messages
@@ -76,12 +74,11 @@ fn inject_messages_cache(req: &mut Value) {
         msg["content"] = json!([{"type": "text", "text": text}]);
     }
 
-    if let Some(content) = msg.get_mut("content").and_then(Value::as_array_mut) {
-        if let Some(last) = content.last_mut() {
-            if last.get("cache_control").is_none() {
-                last["cache_control"] = json!({"type": "ephemeral"});
-            }
-        }
+    if let Some(content) = msg.get_mut("content").and_then(Value::as_array_mut)
+        && let Some(last) = content.last_mut()
+        && last.get("cache_control").is_none()
+    {
+        last["cache_control"] = json!({"type": "ephemeral"});
     }
 }
 
@@ -115,10 +112,7 @@ mod tests {
         // First user message should have cache_control injected
         let first_user = &result["messages"][0];
         let content = first_user["content"].as_array().expect("should be array");
-        assert_eq!(
-            content[0]["cache_control"],
-            json!({"type": "ephemeral"})
-        );
+        assert_eq!(content[0]["cache_control"], json!({"type": "ephemeral"}));
         // Second user message should be untouched
         let second_user = &result["messages"][2];
         assert!(second_user["content"].is_string());
@@ -153,10 +147,7 @@ mod tests {
         assert_eq!(system.len(), 1);
         assert_eq!(system[0]["type"], "text");
         assert_eq!(system[0]["text"], "You are helpful.");
-        assert_eq!(
-            system[0]["cache_control"],
-            json!({"type": "ephemeral"})
-        );
+        assert_eq!(system[0]["cache_control"], json!({"type": "ephemeral"}));
     }
 
     #[test]
@@ -171,10 +162,7 @@ mod tests {
         let result = inject_cache_control(req);
         let system = result["system"].as_array().unwrap();
         assert!(system[0].get("cache_control").is_none());
-        assert_eq!(
-            system[1]["cache_control"],
-            json!({"type": "ephemeral"})
-        );
+        assert_eq!(system[1]["cache_control"], json!({"type": "ephemeral"}));
     }
 
     #[test]
@@ -196,8 +184,14 @@ mod tests {
         });
         let result = inject_cache_control(req.clone());
         // Nothing should be modified — all already have cache_control
-        assert_eq!(result["tools"][0]["cache_control"], json!({"type": "ephemeral"}));
-        assert_eq!(result["system"][0]["cache_control"], json!({"type": "ephemeral"}));
+        assert_eq!(
+            result["tools"][0]["cache_control"],
+            json!({"type": "ephemeral"})
+        );
+        assert_eq!(
+            result["system"][0]["cache_control"],
+            json!({"type": "ephemeral"})
+        );
         assert_eq!(
             result["messages"][0]["content"][0]["cache_control"],
             json!({"type": "ephemeral"})

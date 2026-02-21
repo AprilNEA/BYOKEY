@@ -61,6 +61,7 @@ impl std::str::FromStr for ProviderId {
 
 impl ProviderId {
     /// Returns all known provider variants.
+    #[must_use]
     pub fn all() -> &'static [Self] {
         &[
             Self::Claude,
