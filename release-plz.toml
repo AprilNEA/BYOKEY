@@ -9,47 +9,40 @@ git_tag_name = "v{{ version }}"
 git_release_enable = true
 git_tag_enable = true
 
-# Internal library crates — version tracking and changelogs only;
-# no individual tags or GitHub releases, not published to crates.io.
+# Internal library crates — published to crates.io, but no individual
+# git tags or GitHub releases (only the root byokey tag is created).
 
 [[package]]
 name = "byokey-types"
-publish = false
 git_tag_enable = false
 git_release_enable = false
 
 [[package]]
 name = "byokey-config"
-publish = false
 git_tag_enable = false
 git_release_enable = false
 
 [[package]]
 name = "byokey-store"
-publish = false
 git_tag_enable = false
 git_release_enable = false
 
 [[package]]
 name = "byokey-auth"
-publish = false
 git_tag_enable = false
 git_release_enable = false
 
 [[package]]
 name = "byokey-translate"
-publish = false
 git_tag_enable = false
 git_release_enable = false
 
 [[package]]
 name = "byokey-provider"
-publish = false
 git_tag_enable = false
 git_release_enable = false
 
 [[package]]
 name = "byokey-proxy"
-publish = false
 git_tag_enable = false
 git_release_enable = false
