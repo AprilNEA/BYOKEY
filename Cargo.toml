@@ -8,6 +8,7 @@ members = [
     "crates/translate",
     "crates/provider",
     "crates/proxy",
+    "crates/gui",
 ]
 
 [workspace.package]
@@ -72,6 +73,11 @@ clap = { version = "4", features = ["derive"] }
 futures-core = "0.3"
 futures-util = "0.3"
 bytes = "1"
+# GUI
+gpui = "0.2"
+gpui-component = "0.5"
+tray-icon = "0.21"
+crossbeam-channel = "0.5"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -7,9 +7,9 @@
 pub mod antigravity;
 pub mod callback;
 pub mod claude;
-pub mod credentials;
 pub mod codex;
 pub mod copilot;
+pub mod credentials;
 pub mod flow;
 pub mod gemini;
 pub mod iflow;

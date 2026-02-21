@@ -1,0 +1,27 @@
+[package]
+name = "byokey-gui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "BYOKEY desktop client — macOS menu bar app"
+license.workspace = true
+
+[[bin]]
+name = "byokey-gui"
+path = "src/main.rs"
+
+[dependencies]
+byokey-types.workspace = true
+byokey-config.workspace = true
+byokey-store.workspace = true
+byokey-auth.workspace = true
+byokey-proxy.workspace = true
+gpui.workspace = true
+gpui-component.workspace = true
+tray-icon.workspace = true
+crossbeam-channel.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true

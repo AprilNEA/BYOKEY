@@ -58,6 +58,16 @@ impl AuthManager {
         }
     }
 
+    /// Return the current [`TokenState`] for the provider.
+    ///
+    /// Returns [`TokenState::Invalid`] if the token is missing or the store fails.
+    pub async fn token_state(&self, provider: &ProviderId) -> TokenState {
+        match self.store.load(provider).await {
+            Ok(Some(t)) => t.state(),
+            _ => TokenState::Invalid,
+        }
+    }
+
     /// Save a new token.
     ///
     /// # Errors
