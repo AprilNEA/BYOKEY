@@ -18,6 +18,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
       - run: cargo check --workspace --all-targets
 
   fmt:
@@ -39,6 +41,8 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
@@ -48,4 +52,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
       - run: cargo test --workspace

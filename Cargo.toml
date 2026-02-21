@@ -9,6 +9,7 @@ members = [
     "crates/provider",
     "crates/proxy",
 ]
+exclude = ["desktop"]
 
 [workspace.package]
 edition = "2024"
