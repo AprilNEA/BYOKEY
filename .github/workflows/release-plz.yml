@@ -8,8 +8,6 @@ on:
 jobs:
   release-plz-release:
     name: Release
-    # Only run when a release-plz PR is merged (commit message starts with "chore: release")
-    if: "startsWith(github.event.head_commit.message, 'chore: release')"
     runs-on: ubuntu-latest
     permissions:
       contents: write
