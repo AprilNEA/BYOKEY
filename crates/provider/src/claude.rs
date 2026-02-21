@@ -167,24 +167,79 @@ fn translate_claude_sse(inner: ByteStream) -> ByteStream {
                         && let Ok(ev) = serde_json::from_str::<Value>(data)
                     {
                         match ev["type"].as_str().unwrap_or("") {
-                                "message_start" => {
-                                    if let Some(id) =
-                                        ev.pointer("/message/id").and_then(Value::as_str)
-                                    {
-                                        s.id = format!("chatcmpl-{id}");
-                                    }
-                                    if let Some(model) =
-                                        ev.pointer("/message/model").and_then(Value::as_str)
-                                    {
-                                        s.model = model.to_string();
-                                    }
+                            "message_start" => {
+                                if let Some(id) = ev.pointer("/message/id").and_then(Value::as_str)
+                                {
+                                    s.id = format!("chatcmpl-{id}");
+                                }
+                                if let Some(model) =
+                                    ev.pointer("/message/model").and_then(Value::as_str)
+                                {
+                                    s.model = model.to_string();
+                                }
+                                let chunk = serde_json::json!({
+                                    "id": &s.id,
+                                    "object": "chat.completion.chunk",
+                                    "model": &s.model,
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {"role": "assistant", "content": ""},
+                                        "finish_reason": null
+                                    }]
+                                });
+                                return Ok(Some((Bytes::from(format!("data: {chunk}\n\n")), s)));
+                            }
+                            "content_block_start" => {
+                                let block_type = ev
+                                    .pointer("/content_block/type")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("");
+                                if block_type == "tool_use" {
+                                    s.in_tool_use = true;
+                                    s.tool_call_index += 1;
+                                    let id = ev
+                                        .pointer("/content_block/id")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let name = ev
+                                        .pointer("/content_block/name")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let idx = s.tool_call_index;
+                                    let chunk = serde_json::json!({
+                                        "id": &s.id,
+                                        "object": "chat.completion.chunk",
+                                        "model": &s.model,
+                                        "choices": [{"index": 0, "delta": {
+                                            "tool_calls": [{"index": idx, "id": id, "type": "function", "function": {"name": name, "arguments": ""}}]
+                                        }, "finish_reason": null}]
+                                    });
+                                    return Ok(Some((
+                                        Bytes::from(format!("data: {chunk}\n\n")),
+                                        s,
+                                    )));
+                                }
+                                s.in_tool_use = false;
+                            }
+                            "content_block_delta" => {
+                                let delta_type = ev
+                                    .pointer("/delta/type")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("");
+                                if delta_type == "text_delta" {
+                                    let text = ev
+                                        .pointer("/delta/text")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("");
                                     let chunk = serde_json::json!({
                                         "id": &s.id,
                                         "object": "chat.completion.chunk",
                                         "model": &s.model,
                                         "choices": [{
                                             "index": 0,
-                                            "delta": {"role": "assistant", "content": ""},
+                                            "delta": {"content": text},
                                             "finish_reason": null
                                         }]
                                     });
@@ -192,115 +247,53 @@ fn translate_claude_sse(inner: ByteStream) -> ByteStream {
                                         Bytes::from(format!("data: {chunk}\n\n")),
                                         s,
                                     )));
-                                }
-                                "content_block_start" => {
-                                    let block_type = ev
-                                        .pointer("/content_block/type")
+                                } else if delta_type == "input_json_delta" && s.in_tool_use {
+                                    let partial = ev
+                                        .pointer("/delta/partial_json")
                                         .and_then(Value::as_str)
                                         .unwrap_or("");
-                                    if block_type == "tool_use" {
-                                        s.in_tool_use = true;
-                                        s.tool_call_index += 1;
-                                        let id = ev
-                                            .pointer("/content_block/id")
-                                            .and_then(Value::as_str)
-                                            .unwrap_or("")
-                                            .to_string();
-                                        let name = ev
-                                            .pointer("/content_block/name")
-                                            .and_then(Value::as_str)
-                                            .unwrap_or("")
-                                            .to_string();
-                                        let idx = s.tool_call_index;
-                                        let chunk = serde_json::json!({
-                                            "id": &s.id,
-                                            "object": "chat.completion.chunk",
-                                            "model": &s.model,
-                                            "choices": [{"index": 0, "delta": {
-                                                "tool_calls": [{"index": idx, "id": id, "type": "function", "function": {"name": name, "arguments": ""}}]
-                                            }, "finish_reason": null}]
-                                        });
-                                        return Ok(Some((
-                                            Bytes::from(format!("data: {chunk}\n\n")),
-                                            s,
-                                        )));
-                                    }
-                                    s.in_tool_use = false;
-                                }
-                                "content_block_delta" => {
-                                    let delta_type = ev
-                                        .pointer("/delta/type")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or("");
-                                    if delta_type == "text_delta" {
-                                        let text = ev
-                                            .pointer("/delta/text")
-                                            .and_then(Value::as_str)
-                                            .unwrap_or("");
-                                        let chunk = serde_json::json!({
-                                            "id": &s.id,
-                                            "object": "chat.completion.chunk",
-                                            "model": &s.model,
-                                            "choices": [{
-                                                "index": 0,
-                                                "delta": {"content": text},
-                                                "finish_reason": null
-                                            }]
-                                        });
-                                        return Ok(Some((
-                                            Bytes::from(format!("data: {chunk}\n\n")),
-                                            s,
-                                        )));
-                                    } else if delta_type == "input_json_delta" && s.in_tool_use {
-                                        let partial = ev
-                                            .pointer("/delta/partial_json")
-                                            .and_then(Value::as_str)
-                                            .unwrap_or("");
-                                        let idx = s.tool_call_index;
-                                        let chunk = serde_json::json!({
-                                            "id": &s.id,
-                                            "object": "chat.completion.chunk",
-                                            "model": &s.model,
-                                            "choices": [{"index": 0, "delta": {
-                                                "tool_calls": [{"index": idx, "function": {"arguments": partial}}]
-                                            }, "finish_reason": null}]
-                                        });
-                                        return Ok(Some((
-                                            Bytes::from(format!("data: {chunk}\n\n")),
-                                            s,
-                                        )));
-                                    }
-                                }
-                                "message_delta" => {
-                                    let finish_reason = match ev
-                                        .pointer("/delta/stop_reason")
-                                        .and_then(Value::as_str)
-                                    {
-                                        Some("max_tokens") => "length",
-                                        Some("tool_use") => "tool_calls",
-                                        _ => "stop",
-                                    };
+                                    let idx = s.tool_call_index;
                                     let chunk = serde_json::json!({
                                         "id": &s.id,
                                         "object": "chat.completion.chunk",
                                         "model": &s.model,
-                                        "choices": [{
-                                            "index": 0,
-                                            "delta": {},
-                                            "finish_reason": finish_reason
-                                        }]
+                                        "choices": [{"index": 0, "delta": {
+                                            "tool_calls": [{"index": idx, "function": {"arguments": partial}}]
+                                        }, "finish_reason": null}]
                                     });
                                     return Ok(Some((
                                         Bytes::from(format!("data: {chunk}\n\n")),
                                         s,
                                     )));
                                 }
-                                "message_stop" => {
-                                    s.done = true;
-                                    return Ok(Some((Bytes::from("data: [DONE]\n\n"), s)));
-                                }
-                                _ => {} // ping, content_block_stop
                             }
+                            "message_delta" => {
+                                let finish_reason = match ev
+                                    .pointer("/delta/stop_reason")
+                                    .and_then(Value::as_str)
+                                {
+                                    Some("max_tokens") => "length",
+                                    Some("tool_use") => "tool_calls",
+                                    _ => "stop",
+                                };
+                                let chunk = serde_json::json!({
+                                    "id": &s.id,
+                                    "object": "chat.completion.chunk",
+                                    "model": &s.model,
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {},
+                                        "finish_reason": finish_reason
+                                    }]
+                                });
+                                return Ok(Some((Bytes::from(format!("data: {chunk}\n\n")), s)));
+                            }
+                            "message_stop" => {
+                                s.done = true;
+                                return Ok(Some((Bytes::from("data: [DONE]\n\n"), s)));
+                            }
+                            _ => {} // ping, content_block_stop
+                        }
                     }
                     continue;
                 }

@@ -64,10 +64,10 @@ impl ResponseTranslator for ClaudeToOpenAI {
             .unwrap_or("unknown")
             .to_string();
 
-        let id = res
-            .get("id")
-            .and_then(Value::as_str)
-            .map_or_else(|| "chatcmpl-unknown".to_string(), |s| format!("chatcmpl-{s}"));
+        let id = res.get("id").and_then(Value::as_str).map_or_else(
+            || "chatcmpl-unknown".to_string(),
+            |s| format!("chatcmpl-{s}"),
+        );
 
         let prompt_tokens = res
             .pointer("/usage/input_tokens")
@@ -177,7 +177,8 @@ mod tests {
         assert_eq!(tc[0]["id"], "toolu_abc");
         assert_eq!(tc[0]["type"], "function");
         assert_eq!(tc[0]["function"]["name"], "get_weather");
-        let args: Value = serde_json::from_str(tc[0]["function"]["arguments"].as_str().unwrap()).unwrap();
+        let args: Value =
+            serde_json::from_str(tc[0]["function"]["arguments"].as_str().unwrap()).unwrap();
         assert_eq!(args["city"], "Beijing");
     }
 

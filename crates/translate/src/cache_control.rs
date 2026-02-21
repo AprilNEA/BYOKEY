@@ -1,6 +1,6 @@
 //! Automatic `cache_control` injection for Claude Messages API requests.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Injects `cache_control: {type: "ephemeral"}` into a Claude request body
 /// at up to three positions for optimal prompt caching:

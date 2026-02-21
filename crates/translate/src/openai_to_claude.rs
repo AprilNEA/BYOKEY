@@ -1,7 +1,7 @@
 //! Translates `OpenAI` chat completion requests into Claude Messages API format.
 
-use byokey_types::{traits::Result, ByokError, RequestTranslator};
-use serde_json::{json, Value};
+use byokey_types::{ByokError, RequestTranslator, traits::Result};
+use serde_json::{Value, json};
 
 /// Translator from `OpenAI` chat completion request format to Claude Messages API format.
 pub struct OpenAIToClaude;
@@ -50,10 +50,11 @@ fn build_claude_messages(non_system: &[&Value]) -> Vec<Value> {
                     let id = tc.get("id").and_then(Value::as_str).unwrap_or("");
                     let func = tc.get("function").unwrap_or(&Value::Null);
                     let name = func.get("name").and_then(Value::as_str).unwrap_or("");
-                    let args_str =
-                        func.get("arguments").and_then(Value::as_str).unwrap_or("{}");
-                    let input: Value =
-                        serde_json::from_str(args_str).unwrap_or_else(|_| json!({}));
+                    let args_str = func
+                        .get("arguments")
+                        .and_then(Value::as_str)
+                        .unwrap_or("{}");
+                    let input: Value = serde_json::from_str(args_str).unwrap_or_else(|_| json!({}));
                     content_blocks.push(json!({
                         "type": "tool_use",
                         "id": id,

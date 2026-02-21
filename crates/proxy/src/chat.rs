@@ -49,8 +49,7 @@ pub async fn chat_completions(
         ProviderResponse::Complete(json) => Ok(Json(json).into_response()),
         ProviderResponse::Stream(byte_stream) => {
             // Convert ByokError → std::io::Error for Body::from_stream
-            let mapped = byte_stream
-                .map_err(|e| std::io::Error::other(e.to_string()));
+            let mapped = byte_stream.map_err(|e| std::io::Error::other(e.to_string()));
             let body = Body::from_stream(mapped);
             Ok(Response::builder()
                 .status(StatusCode::OK)

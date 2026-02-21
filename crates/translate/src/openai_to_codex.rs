@@ -7,8 +7,8 @@
 //! - `system` role → top-level `instructions` field
 //! - `max_tokens` → `max_output_tokens`
 
-use byokey_types::{traits::Result, ByokError, RequestTranslator};
-use serde_json::{json, Value};
+use byokey_types::{ByokError, RequestTranslator, traits::Result};
+use serde_json::{Value, json};
 
 /// Translator from `OpenAI` chat completion request format to Codex Responses API format.
 pub struct OpenAIToCodex;

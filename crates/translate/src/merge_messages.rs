@@ -3,7 +3,7 @@
 //! Some providers (Gemini, Codex) reject consecutive messages with the same role.
 //! This module provides a pure function to merge adjacent user/assistant messages.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Merges adjacent messages with the same role.
 ///

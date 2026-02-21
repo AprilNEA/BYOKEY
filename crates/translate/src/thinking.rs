@@ -55,7 +55,8 @@ impl ThinkingExtractor {
         let effective = budget_tokens.min(HARD_CAP);
         let headroom = (effective / 10).max(1024);
         let min_max = effective + headroom;
-        let current = u32::try_from(req.get("max_tokens").and_then(Value::as_u64).unwrap_or(0)).unwrap_or(u32::MAX);
+        let current = u32::try_from(req.get("max_tokens").and_then(Value::as_u64).unwrap_or(0))
+            .unwrap_or(u32::MAX);
         if current <= effective {
             req["max_tokens"] = json!(min_max);
         }

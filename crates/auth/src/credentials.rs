@@ -24,14 +24,17 @@ pub struct OAuthCredentials {
 /// # Errors
 ///
 /// Returns [`ByokError::Auth`] if the request fails or the JSON cannot be parsed.
-pub async fn fetch(provider_name: &str, http: &rquest::Client) -> Result<OAuthCredentials, ByokError> {
+pub async fn fetch(
+    provider_name: &str,
+    http: &rquest::Client,
+) -> Result<OAuthCredentials, ByokError> {
     let url = format!("{BASE_URL}/{provider_name}.json");
 
-    let resp = http
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| ByokError::Auth(format!("failed to fetch credentials for {provider_name}: {e}")))?;
+    let resp = http.get(&url).send().await.map_err(|e| {
+        ByokError::Auth(format!(
+            "failed to fetch credentials for {provider_name}: {e}"
+        ))
+    })?;
 
     if !resp.status().is_success() {
         return Err(ByokError::Auth(format!(
@@ -40,7 +43,9 @@ pub async fn fetch(provider_name: &str, http: &rquest::Client) -> Result<OAuthCr
         )));
     }
 
-    resp.json::<OAuthCredentials>()
-        .await
-        .map_err(|e| ByokError::Auth(format!("failed to parse credentials for {provider_name}: {e}")))
+    resp.json::<OAuthCredentials>().await.map_err(|e| {
+        ByokError::Auth(format!(
+            "failed to parse credentials for {provider_name}: {e}"
+        ))
+    })
 }
