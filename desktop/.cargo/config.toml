@@ -1,0 +1,9 @@
+[env]
+# Specify macOS SDK path for bindgen to resolve missing system headers
+# e.g., 'dispatch/dispatch.h' file not found
+#
+# If using Xcode, change to:
+# BINDGEN_EXTRA_CLANG_ARGS = "-isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+#
+# To find your SDK path: xcrun --show-sdk-path
+BINDGEN_EXTRA_CLANG_ARGS = "-isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"
