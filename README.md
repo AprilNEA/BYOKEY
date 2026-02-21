@@ -1,46 +1,89 @@
-# BYOKEY — Bring Your Own Keys
+<div align="center">
 
-A local proxy that turns AI **subscriptions** into **OpenAI-compatible API endpoints**,
-so any OpenAI-compatible tool (Amp, Cursor, Continue, etc.) can use them without a paid API key.
+# BYOKEY
+
+**Bring Your Own Keys**<br>
+Turn AI subscriptions into standard API endpoints.<br>
+Expose any provider as OpenAI- or Anthropic-compatible API — locally or in the cloud.
+
+[![ci](https://img.shields.io/github/actions/workflow/status/AprilNEA/BYOKEY/ci.yml?style=flat-square&labelColor=000&color=444&label=ci)](https://github.com/AprilNEA/BYOKEY/actions/workflows/ci.yml)
+&nbsp;
+[![crates.io](https://img.shields.io/crates/v/byokey?style=flat-square&labelColor=000&color=444)](https://crates.io/crates/byokey)
+&nbsp;
+[![license](https://img.shields.io/badge/license-MIT%20%7C%20Apache--2.0-444?style=flat-square&labelColor=000)](LICENSE-MIT)
+&nbsp;
+[![rust](https://img.shields.io/badge/rust-1.85+-444?style=flat-square&labelColor=000&logo=rust&logoColor=fff)](https://www.rust-lang.org)
+
+</div>
 
 ```
-Claude Pro  ─┐
-OpenAI Plus ─┤  byokey serve  ─►  http://localhost:8018/v1/chat/completions
-Copilot     ─┘                  (OpenAI-compatible, streaming)
+Subscriptions                                     Tools
+
+Claude Pro  ─┐                              ┌──  Amp Code
+OpenAI Plus ─┼──  byokey serve  ────────────┼──  Cursor · Windsurf
+Copilot     ─┘                              ├──  Factory CLI (Droid)
+                                            └──  any OpenAI / Anthropic client
 ```
 
 ## Features
 
-- **OpenAI-compatible API** — drop-in replacement, just change the base URL
-- **OAuth login flows** — PKCE, device code, and auth-code flows handled for you
-- **SQLite token store** — tokens survive restarts; stored in `~/.byokey/tokens.db`
-- **API key passthrough** — prefer raw API keys? Set them in the config file
-- **Amp CLI compatibility** — `/amp/*` routes for [Amp](https://ampcode.com) out of the box
-- **YAML config** — hot-reload friendly, all options have sensible defaults
+- **Multi-format API** — OpenAI and Anthropic compatible endpoints; just change the base URL
+- **OAuth login flows** — PKCE, device-code, and auth-code flows handled automatically
+- **Token persistence** — SQLite at `~/.byokey/tokens.db`; survives restarts
+- **API key passthrough** — Set raw keys in config to skip OAuth entirely
+- **Deploy anywhere** — Run locally as a CLI, or deploy as a shared AI gateway
+- **Agent-ready** — Native support for [Amp Code](https://ampcode.com); [Factory CLI (Droid)](https://factory.ai) coming soon
+- **Hot-reload config** — YAML-based with sensible defaults
 
 ## Supported Providers
 
-| Provider | Login flow | Models |
-|---|---|---|
-| **Claude** (Anthropic) | PKCE browser | claude-opus-4-6, claude-sonnet-4-5, … |
-| **Codex** (OpenAI) | PKCE browser | o4-mini, o3, gpt-4o, gpt-4o-mini |
-| **Copilot** (GitHub) | Device code | gpt-4o, claude-3.5-sonnet, o3-mini |
-| **Gemini** (Google) | PKCE browser | gemini-2.0-flash, gemini-1.5-pro, … |
-| **Kiro** (AWS) | Device code | kiro-default |
-| **Antigravity** (Google) | PKCE browser | — *(auth ready, executor WIP)* |
-| **Qwen** (Alibaba) | Device code + PKCE | — *(auth ready, executor WIP)* |
-| **Kimi** (Moonshot) | Device code | — *(auth ready, executor WIP)* |
-| **iFlow** (Z.ai / GLM) | Auth code | — *(auth ready, executor WIP)* |
+<table>
+  <tr>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/anthropic.svg" width="36" alt="Anthropic"><br>
+      <b>Claude</b><br>
+      <sup>PKCE</sup><br>
+      <sub>opus-4 · sonnet-4.5</sub>
+    </td>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/openai.svg" width="36" alt="OpenAI"><br>
+      <b>Codex</b><br>
+      <sup>PKCE</sup><br>
+      <sub>o4-mini · o3 · gpt-4o</sub>
+    </td>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/githubcopilot.svg" width="36" alt="GitHub Copilot"><br>
+      <b>Copilot</b><br>
+      <sup>Device code</sup><br>
+      <sub>gpt-4o · claude-3.5 · o3-mini</sub>
+    </td>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/googlegemini.svg" width="36" alt="Google Gemini"><br>
+      <b>Gemini</b><br>
+      <sup>PKCE</sup><br>
+      <sub>2.0-flash · 1.5-pro</sub>
+    </td>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/amazonwebservices.svg" width="36" alt="AWS"><br>
+      <b>Kiro</b><br>
+      <sup>Device code</sup><br>
+      <sub>kiro-default</sub>
+    </td>
+  </tr>
+</table>
+
+> **Coming soon** — auth implemented, executor in progress:<br>
+> Antigravity (Google) · Qwen (Alibaba) · Kimi (Moonshot) · iFlow (Z.ai)
 
 ## Installation
 
-### From crates.io
+**From crates.io**
 
 ```sh
 cargo install byokey
 ```
 
-### From source
+**From source**
 
 ```sh
 git clone https://github.com/AprilNEA/BYOKEY
@@ -48,7 +91,7 @@ cd BYOK
 cargo install --path .
 ```
 
-**Requirements:** Rust 1.85+ (edition 2024), a C compiler for SQLite.
+> **Requirements:** Rust 1.85+ (edition 2024), a C compiler for SQLite.
 
 ## Quick Start
 
@@ -66,10 +109,10 @@ export OPENAI_BASE_URL=http://localhost:8018/v1
 export OPENAI_API_KEY=any          # byokey ignores the key value
 ```
 
-For Amp:
+**For Amp:**
 
 ```jsonc
-// ~/.amp/settings.json  (or wherever Amp reads config)
+// ~/.amp/settings.json
 {
   "amp.url": "http://localhost:8018/amp"
 }
@@ -88,7 +131,11 @@ Commands:
   help     Print help
 ```
 
-### `byokey serve`
+<details>
+<summary><b>Command details</b></summary>
+<br>
+
+**`byokey serve`**
 
 ```
 Options:
@@ -98,7 +145,7 @@ Options:
       --db <PATH>       SQLite DB path  [default: ~/.byokey/tokens.db]
 ```
 
-### `byokey login <PROVIDER>`
+**`byokey login <PROVIDER>`**
 
 Runs the appropriate OAuth flow for the given provider.
 Supported names: `claude`, `codex`, `copilot`, `gemini`, `kiro`,
@@ -109,20 +156,17 @@ Options:
       --db <PATH>   SQLite DB path [default: ~/.byokey/tokens.db]
 ```
 
-### `byokey logout <PROVIDER>`
+**`byokey logout <PROVIDER>`** — Deletes the stored token for the given provider.
 
-Deletes the stored token for the given provider.
+**`byokey status`** — Prints authentication status for every known provider.
 
-### `byokey status`
-
-Prints authentication status for every known provider.
+</details>
 
 ## Configuration
 
 Create a YAML file (e.g. `~/.byokey/config.yaml`) and pass it with `--config`:
 
 ```yaml
-# ~/.byokey/config.yaml
 port: 8018
 host: 127.0.0.1
 
@@ -143,72 +187,10 @@ providers:
 All fields are optional; unspecified providers are enabled by default and use
 the OAuth token stored in the database.
 
-## API Endpoints
+## Contributing
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/chat/completions` | OpenAI-compatible chat (streaming supported) |
-| `GET` | `/v1/models` | List enabled models |
-| `GET` | `/amp/v1/login` | Amp login redirect |
-| `ANY` | `/amp/v0/management/{*path}` | Amp management API proxy |
-| `POST` | `/amp/v1/chat/completions` | Amp-compatible chat |
-
-The `model` field in the request body determines which provider is used.
-
-## How It Works
-
-```
-Client request
-    │
-    ▼
-byok-proxy  (axum HTTP server)
-    │  resolve model → provider
-    ▼
-byok-provider  (executor per provider)
-    │  get OAuth token (or api_key)
-    ▼
-byok-auth  (AuthManager + OAuth flows)
-    │
-    ▼
-Upstream API  (Anthropic / OpenAI / Google / …)
-    │  translate response → OpenAI format
-    ▼
-Client response  (JSON or SSE stream)
-```
-
-### Workspace Crates
-
-| Crate | Description |
-|---|---|
-| `byokey-types` | Shared types, traits, errors |
-| `byokey-config` | YAML configuration + file watching |
-| `byokey-store` | SQLite (and in-memory) token persistence |
-| `byokey-auth` | OAuth 2.0 login flows for every provider |
-| `byokey-translate` | Request/response format translation |
-| `byokey-provider` | Provider executors and model registry |
-| `byokey-proxy` | axum HTTP server and routing |
-
-## Building & Testing
-
-```sh
-# Build everything
-cargo build --workspace
-
-# Run all tests (173 tests, no network required)
-cargo test --workspace
-
-# Lint
-cargo clippy --workspace --all-targets -- -D warnings
-
-# Format
-cargo fmt --all
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build commands, architecture details, and coding guidelines.
 
 ## License
 
-Licensed under either of:
-
-- [MIT License](LICENSE-MIT)
-- [Apache License, Version 2.0](LICENSE-APACHE)
-
-at your option.
+Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option.

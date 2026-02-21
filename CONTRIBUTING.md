@@ -1,29 +1,20 @@
-# Contributing to byokey
+# Contributing to BYOKEY
 
 ## Requirements
 
-- Rust stable (recommended via [rustup](https://rustup.rs/))
+- Rust stable 1.85+ (recommended via [rustup](https://rustup.rs/))
 - SQLite 3 (system-level; pre-installed on macOS)
 
 ## Common Commands
 
 ```bash
-# Build everything
-cargo build --workspace
-
-# Run tests
-cargo test --workspace
-cargo test -p byokey-types          # single crate (-p uses package name)
-cargo test -p byokey-translate      # pure logic tests (no I/O, fastest)
-
-# Lint (CI runs with -D warnings, same locally)
-cargo clippy --workspace -- -D warnings
-
-# Format
-cargo fmt --all
-
-# Start the CLI server
-cargo run -- serve --config config.yaml
+cargo build --workspace                   # Build everything
+cargo test --workspace                    # Run all tests (no network required)
+cargo test -p byokey-auth                 # Single crate
+cargo test -p byokey-auth auth::pkce      # Single test module
+cargo clippy --workspace -- -D warnings   # Lint (CI runs with -D warnings)
+cargo fmt --all                           # Format
+cargo run -- serve                        # Start proxy (default :8018)
 ```
 
 ## Coding Guidelines
@@ -32,21 +23,59 @@ cargo run -- serve --config config.yaml
 - `clippy::pedantic` is enabled; ensure zero warnings before committing
 - edition 2024
 - All async traits use the `async-trait` macro
-- Error types: use `ByokError` across crate boundaries, `anyhow` within a crate
+- Error types: use `ByokError` (`thiserror`) across crate boundaries, `anyhow` within a crate
+- HTTP client is `rquest` (not reqwest) — supports TLS fingerprint impersonation
+- HTTP server is `axum 0.8`
+- `Box<dyn ProviderExecutor>` does not implement `Debug`; don't call `unwrap_err()` on Results, use `is_err()` or pattern match
 
-## Workspace Layering Rules
-
-Strict DAG — no reverse cross-layer dependencies:
+## Architecture
 
 ```
-Layer 0  byokey-types     — core types & traits, zero intra-workspace deps
-Layer 1  byokey-config    — configuration parsing
-         byokey-store     — token persistence
-Layer 2  byokey-auth      — OAuth flows (does not depend on translate / provider)
-         byokey-translate — format conversion (pure functions, does not depend on auth)
-Layer 3  byokey-provider  — Provider Executor
-Layer 4  byokey-proxy     — axum HTTP server
+Client request
+    │
+    ▼
+byok-proxy  (axum HTTP server)
+    │  resolve model → provider
+    ▼
+byok-provider  (executor per provider)
+    │  get OAuth token (or api_key)
+    ▼
+byok-auth  (AuthManager + OAuth flows)
+    │
+    ▼
+Upstream API  (Anthropic / OpenAI / Google / …)
+    │  translate response → OpenAI format
+    ▼
+Client response  (JSON or SSE stream)
 ```
+
+### Workspace Crates
+
+Strict layered DAG — no reverse cross-layer dependencies:
+
+| Crate | Layer | Description |
+|-------|:-----:|-------------|
+| `byokey-types` | 0 | Core types, traits, errors (zero intra-workspace deps) |
+| `byokey-config` | 1 | YAML configuration (figment) + file watching |
+| `byokey-store` | 1 | SQLite token persistence (sqlx) |
+| `byokey-auth` | 2 | OAuth flows (does not depend on translate / provider) |
+| `byokey-translate` | 2 | Format conversion — pure functions (does not depend on auth) |
+| `byokey-provider` | 3 | Provider Executor + model registry |
+| `byokey-proxy` | 4 | axum HTTP server, routing, SSE passthrough |
+
+CLI entry point: `src/main.rs` (package = `byokey`, bin = `byokey`).
+
+### API Endpoints (default `:8018`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat (streaming supported) |
+| `GET` | `/v1/models` | List enabled models |
+| `GET` | `/amp/v1/login` | Amp login redirect |
+| `ANY` | `/amp/v0/management/{*path}` | Amp management API proxy |
+| `POST` | `/amp/v1/chat/completions` | Amp-compatible chat |
+
+The `model` field in the request body determines which provider is used.
 
 ## Commit Convention
 

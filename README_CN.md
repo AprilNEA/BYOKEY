@@ -1,46 +1,89 @@
-# byok — 使用你自己的订阅
+<div align="center">
 
-将 AI **订阅账号**转换为 **OpenAI 兼容 API 端点**的本地代理，
-让任何兼容 OpenAI 的工具（Amp、Cursor、Continue 等）无需付费 API Key 即可使用。
+# BYOKEY
+
+**Bring Your Own Keys**<br>
+将 AI 订阅转换为标准 API 端点。<br>
+以 OpenAI 或 Anthropic 兼容格式暴露任意 Provider — 本地运行或云端部署。
+
+[![ci](https://img.shields.io/github/actions/workflow/status/AprilNEA/BYOKEY/ci.yml?style=flat-square&labelColor=000&color=444&label=ci)](https://github.com/AprilNEA/BYOKEY/actions/workflows/ci.yml)
+&nbsp;
+[![crates.io](https://img.shields.io/crates/v/byokey?style=flat-square&labelColor=000&color=444)](https://crates.io/crates/byokey)
+&nbsp;
+[![license](https://img.shields.io/badge/license-MIT%20%7C%20Apache--2.0-444?style=flat-square&labelColor=000)](LICENSE-MIT)
+&nbsp;
+[![rust](https://img.shields.io/badge/rust-1.85+-444?style=flat-square&labelColor=000&logo=rust&logoColor=fff)](https://www.rust-lang.org)
+
+</div>
 
 ```
-Claude Pro  ─┐
-OpenAI Plus ─┤  byokey serve  ─►  http://localhost:8018/v1/chat/completions
-Copilot     ─┘                  (OpenAI 兼容，支持流式输出)
+订阅                                              工具
+
+Claude Pro  ─┐                              ┌──  Amp Code
+OpenAI Plus ─┼──  byokey serve  ────────────┼──  Cursor · Windsurf
+Copilot     ─┘                              ├──  Factory CLI (Droid)
+                                            └──  任意 OpenAI / Anthropic 客户端
 ```
 
 ## 功能特性
 
-- **OpenAI 兼容 API** — 直接替换，只需修改 base URL
+- **多格式 API** — 同时兼容 OpenAI 和 Anthropic 端点，只需修改 base URL
 - **OAuth 登录流程** — 自动处理 PKCE、设备码、授权码等流程
-- **SQLite Token 存储** — Token 持久化，重启后依然有效，存储于 `~/.byokey/tokens.db`
-- **API Key 直通** — 更喜欢原始 API Key？在配置文件中设置即可
-- **Amp CLI 兼容** — 内置 `/amp/*` 路由，开箱即用支持 [Amp](https://ampcode.com)
-- **YAML 配置** — 热重载友好，所有选项均有合理默认值
+- **Token 持久化** — SQLite 存储于 `~/.byokey/tokens.db`，重启后依然有效
+- **API Key 直通** — 在配置中设置原始 Key，跳过 OAuth
+- **随处部署** — 本地 CLI 运行，或部署为共享 AI 网关
+- **Agent 就绪** — 原生支持 [Amp Code](https://ampcode.com)；[Factory CLI (Droid)](https://factory.ai) 即将到来
+- **热重载配置** — 基于 YAML，所有选项均有合理默认值
 
 ## 支持的 Provider
 
-| Provider | 登录方式 | 可用模型 |
-|---|---|---|
-| **Claude** (Anthropic) | PKCE 浏览器 | claude-opus-4-6, claude-sonnet-4-5, … |
-| **Codex** (OpenAI) | PKCE 浏览器 | o4-mini, o3, gpt-4o, gpt-4o-mini |
-| **Copilot** (GitHub) | 设备码 | gpt-4o, claude-3.5-sonnet, o3-mini |
-| **Gemini** (Google) | PKCE 浏览器 | gemini-2.0-flash, gemini-1.5-pro, … |
-| **Kiro** (AWS) | 设备码 | kiro-default |
-| **Antigravity** (Google) | PKCE 浏览器 | — *(认证已就绪，执行器开发中)* |
-| **Qwen** (Alibaba) | 设备码 + PKCE | — *(认证已就绪，执行器开发中)* |
-| **Kimi** (Moonshot) | 设备码 | — *(认证已就绪，执行器开发中)* |
-| **iFlow** (Z.ai / GLM) | 授权码 | — *(认证已就绪，执行器开发中)* |
+<table>
+  <tr>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/anthropic.svg" width="36" alt="Anthropic"><br>
+      <b>Claude</b><br>
+      <sup>PKCE</sup><br>
+      <sub>opus-4 · sonnet-4.5</sub>
+    </td>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/openai.svg" width="36" alt="OpenAI"><br>
+      <b>Codex</b><br>
+      <sup>PKCE</sup><br>
+      <sub>o4-mini · o3 · gpt-4o</sub>
+    </td>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/githubcopilot.svg" width="36" alt="GitHub Copilot"><br>
+      <b>Copilot</b><br>
+      <sup>设备码</sup><br>
+      <sub>gpt-4o · claude-3.5 · o3-mini</sub>
+    </td>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/googlegemini.svg" width="36" alt="Google Gemini"><br>
+      <b>Gemini</b><br>
+      <sup>PKCE</sup><br>
+      <sub>2.0-flash · 1.5-pro</sub>
+    </td>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/amazonwebservices.svg" width="36" alt="AWS"><br>
+      <b>Kiro</b><br>
+      <sup>设备码</sup><br>
+      <sub>kiro-default</sub>
+    </td>
+  </tr>
+</table>
+
+> **即将到来** — 认证已实现，执行器开发中：<br>
+> Antigravity (Google) · Qwen (Alibaba) · Kimi (Moonshot) · iFlow (Z.ai)
 
 ## 安装
 
-### 从 crates.io 安装
+**从 crates.io 安装**
 
 ```sh
 cargo install byokey
 ```
 
-### 从源码安装
+**从源码安装**
 
 ```sh
 git clone https://github.com/AprilNEA/BYOKEY
@@ -48,7 +91,7 @@ cd BYOK
 cargo install --path .
 ```
 
-**环境要求：** Rust 1.85+（edition 2024），以及用于 SQLite 的 C 编译器。
+> **环境要求：** Rust 1.85+（edition 2024），以及用于 SQLite 的 C 编译器。
 
 ## 快速开始
 
@@ -63,13 +106,13 @@ byokey serve
 
 # 3. 将工具指向代理地址
 export OPENAI_BASE_URL=http://localhost:8018/v1
-export OPENAI_API_KEY=any          # byok 忽略 key 的值
+export OPENAI_API_KEY=any          # byokey 忽略 key 的值
 ```
 
-对于 Amp：
+**对于 Amp：**
 
 ```jsonc
-// ~/.amp/settings.json（或 Amp 读取配置的路径）
+// ~/.amp/settings.json
 {
   "amp.url": "http://localhost:8018/amp"
 }
@@ -88,7 +131,11 @@ Commands:
   help     打印帮助信息
 ```
 
-### `byokey serve`
+<details>
+<summary><b>命令详情</b></summary>
+<br>
+
+**`byokey serve`**
 
 ```
 Options:
@@ -98,7 +145,7 @@ Options:
       --db <PATH>       SQLite 数据库路径 [默认: ~/.byokey/tokens.db]
 ```
 
-### `byokey login <PROVIDER>`
+**`byokey login <PROVIDER>`**
 
 为指定 Provider 运行相应的 OAuth 流程。
 支持的名称：`claude`、`codex`、`copilot`、`gemini`、`kiro`、
@@ -109,20 +156,17 @@ Options:
       --db <PATH>   SQLite 数据库路径 [默认: ~/.byokey/tokens.db]
 ```
 
-### `byokey logout <PROVIDER>`
+**`byokey logout <PROVIDER>`** — 删除指定 Provider 的已存储 Token。
 
-删除指定 Provider 的已存储 Token。
+**`byokey status`** — 打印所有已知 Provider 的认证状态。
 
-### `byokey status`
-
-打印所有已知 Provider 的认证状态。
+</details>
 
 ## 配置
 
 创建 YAML 文件（例如 `~/.byokey/config.yaml`），通过 `--config` 传入：
 
 ```yaml
-# ~/.byokey/config.yaml
 port: 8018
 host: 127.0.0.1
 
@@ -142,70 +186,10 @@ providers:
 
 所有字段均可选；未指定的 Provider 默认启用，并使用数据库中存储的 OAuth Token。
 
-## API 端点
+## 贡献
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| `POST` | `/v1/chat/completions` | OpenAI 兼容对话（支持流式） |
-| `GET` | `/v1/models` | 列出已启用的模型 |
-| `GET` | `/amp/v1/login` | Amp 登录重定向 |
-| `ANY` | `/amp/v0/management/{*path}` | Amp 管理 API 代理 |
-| `POST` | `/amp/v1/chat/completions` | Amp 兼容对话 |
-
-请求体中的 `model` 字段决定使用哪个 Provider。
-
-## 工作原理
-
-```
-客户端请求
-    │
-    ▼
-byok-proxy  (axum HTTP 服务器)
-    │  根据 model 解析 → provider
-    ▼
-byok-provider  (每个 provider 的执行器)
-    │  获取 OAuth Token（或 api_key）
-    ▼
-byok-auth  (AuthManager + OAuth 流程)
-    │
-    ▼
-上游 API  (Anthropic / OpenAI / Google / …)
-    │  将响应转换为 OpenAI 格式
-    ▼
-客户端响应  (JSON 或 SSE 流)
-```
-
-### Workspace Crate 说明
-
-| Crate | 说明 |
-|---|---|
-| `byokey-types` | 共享类型、Trait、错误定义 |
-| `byokey-config` | YAML 配置 + 文件监听 |
-| `byokey-store` | SQLite（及内存）Token 持久化 |
-| `byokey-auth` | 各 Provider 的 OAuth 2.0 登录流程 |
-| `byokey-translate` | 请求/响应格式转换 |
-| `byokey-provider` | Provider 执行器与模型注册表 |
-| `byokey-proxy` | axum HTTP 服务器与路由 |
-
-## 构建与测试
-
-```sh
-# 构建全部
-cargo build --workspace
-
-# 运行全部测试（173 个测试，无需网络）
-cargo test --workspace
-
-# Lint
-cargo clippy --workspace --all-targets -- -D warnings
-
-# 格式化
-cargo fmt --all
-```
+请参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解构建命令、架构细节和编码规范。
 
 ## 许可证
 
-双协议授权，任选其一：
-
-- [MIT License](LICENSE-MIT)
-- [Apache License, Version 2.0](LICENSE-APACHE)
+双协议授权，任选其一：[MIT](LICENSE-MIT) 或 [Apache-2.0](LICENSE-APACHE)。
