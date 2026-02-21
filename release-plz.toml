@@ -1,10 +1,11 @@
 [workspace]
 # Conventional commits are used for changelog generation.
+# Single unified tag without package prefix: v0.1.0 instead of byokey-v0.1.0.
+tag_name_template = "v{{ version }}"
 
-# Root binary crate — single unified tag (v0.1.0, not byokey-v0.1.0)
+# Root binary crate — public release artefact.
 [[package]]
 name = "byokey"
-tag_name = "v{{ version }}"
 git_release_enable = true
 git_tag_enable = true
 
