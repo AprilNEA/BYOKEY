@@ -4,6 +4,7 @@
 //! listing, and an Amp CLI compatibility layer under `/amp/*`.
 
 mod amp;
+mod amp_provider;
 mod chat;
 mod error;
 mod messages;
@@ -43,20 +44,48 @@ impl AppState {
 /// Build the full axum router.
 ///
 /// Routes:
-/// - POST /v1/chat/completions        OpenAI-compatible
-/// - POST /v1/messages                Anthropic native passthrough
+/// - POST /v1/chat/completions                          OpenAI-compatible
+/// - POST /v1/messages                                  Anthropic native passthrough
 /// - GET  /v1/models
 /// - GET  /amp/v1/login
 /// - ANY  /amp/v0/management/{*path}
 /// - POST /amp/v1/chat/completions
+///
+/// `AmpCode` provider routes:
+/// - POST /api/provider/anthropic/v1/messages           Anthropic native (`AmpCode`)
+/// - POST /api/provider/openai/v1/chat/completions      `OpenAI`-compatible (`AmpCode`)
+/// - POST /api/provider/openai/v1/responses             Codex Responses API (`AmpCode`)
+/// - POST /api/provider/google/v1beta/models/{action}   Gemini native (`AmpCode`)
+/// - ANY  /api/{*path}                                  `ampcode.com` management proxy
 pub fn make_router(state: Arc<AppState>) -> Router {
     Router::new()
+        // Standard routes
         .route("/v1/chat/completions", post(chat::chat_completions))
         .route("/v1/messages", post(messages::anthropic_messages))
         .route("/v1/models", get(models::list_models))
+        // Legacy Amp CLI routes
         .route("/amp/v1/login", get(amp::login_redirect))
         .route("/amp/v0/management/{*path}", any(amp::management_proxy))
         .route("/amp/v1/chat/completions", post(chat::chat_completions))
+        // AmpCode provider-specific routes (must be registered before the catch-all)
+        .route(
+            "/api/provider/anthropic/v1/messages",
+            post(messages::anthropic_messages),
+        )
+        .route(
+            "/api/provider/openai/v1/chat/completions",
+            post(chat::chat_completions),
+        )
+        .route(
+            "/api/provider/openai/v1/responses",
+            post(amp_provider::codex_responses_passthrough),
+        )
+        .route(
+            "/api/provider/google/v1beta/models/{action}",
+            post(amp_provider::gemini_native_passthrough),
+        )
+        // Catch-all: forward remaining /api/* routes to ampcode.com
+        .route("/api/{*path}", any(amp_provider::amp_management_proxy))
         .with_state(state)
 }
 
