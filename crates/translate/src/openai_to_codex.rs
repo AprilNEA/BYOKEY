@@ -85,23 +85,79 @@ impl RequestTranslator for OpenAIToCodex {
             .join("\n");
 
         // Convert non-system messages to Codex input items
-        let input: Vec<Value> = messages
-            .iter()
-            .filter(|m| m.get("role").and_then(Value::as_str) != Some("system"))
-            .map(|m| {
-                let role = m.get("role").and_then(Value::as_str).unwrap_or("user");
-                let content = m
-                    .get("content")
-                    .cloned()
-                    .unwrap_or(Value::String(String::new()));
-                let content_parts = to_codex_content(&content, role);
-                json!({
-                    "type": "message",
-                    "role": role,
-                    "content": content_parts,
-                })
-            })
-            .collect();
+        let mut input: Vec<Value> = Vec::new();
+        for m in messages {
+            let role = m.get("role").and_then(Value::as_str).unwrap_or("user");
+            match role {
+                "system" => continue,
+                "tool" => {
+                    let call_id = m
+                        .get("tool_call_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let output = m
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    input.push(json!({
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": output,
+                    }));
+                }
+                "assistant" if m.get("tool_calls").is_some() => {
+                    // Emit content message if present
+                    if let Some(content) = m.get("content").filter(|c| !c.is_null()) {
+                        let content_parts = to_codex_content(content, role);
+                        input.push(json!({
+                            "type": "message",
+                            "role": role,
+                            "content": content_parts,
+                        }));
+                    }
+                    // Emit function_call items for each tool_call
+                    if let Some(tool_calls) = m.get("tool_calls").and_then(Value::as_array) {
+                        for tc in tool_calls {
+                            let call_id = tc
+                                .get("id")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string();
+                            let name = tc
+                                .pointer("/function/name")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string();
+                            let arguments = tc
+                                .pointer("/function/arguments")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string();
+                            input.push(json!({
+                                "type": "function_call",
+                                "call_id": call_id,
+                                "name": name,
+                                "arguments": arguments,
+                            }));
+                        }
+                    }
+                }
+                _ => {
+                    let content = m
+                        .get("content")
+                        .cloned()
+                        .unwrap_or(Value::String(String::new()));
+                    let content_parts = to_codex_content(&content, role);
+                    input.push(json!({
+                        "type": "message",
+                        "role": role,
+                        "content": content_parts,
+                    }));
+                }
+            }
+        }
 
         let mut out = json!({
             "model": model,
@@ -110,6 +166,38 @@ impl RequestTranslator for OpenAIToCodex {
             // Request reasoning content so reasoning models return their thinking.
             "include": ["reasoning.encrypted_content"],
         });
+
+        // Translate tools definitions
+        if let Some(tools) = req.get("tools").and_then(Value::as_array) {
+            let codex_tools: Vec<Value> = tools
+                .iter()
+                .filter_map(|t| {
+                    let func = t.get("function")?;
+                    let mut name = func
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    if name.len() > 64 {
+                        name.truncate(64);
+                    }
+                    let mut tool = json!({
+                        "type": "function",
+                        "name": name,
+                    });
+                    if let Some(desc) = func.get("description") {
+                        tool["description"] = desc.clone();
+                    }
+                    if let Some(params) = func.get("parameters") {
+                        tool["parameters"] = params.clone();
+                    }
+                    Some(tool)
+                })
+                .collect();
+            if !codex_tools.is_empty() {
+                out["tools"] = json!(codex_tools);
+            }
+        }
 
         if let Some(tokens) = req.get("max_tokens").and_then(Value::as_u64) {
             out["max_output_tokens"] = json!(tokens);
@@ -185,5 +273,84 @@ mod tests {
     fn test_missing_model_error() {
         let req = json!({"messages": [{"role": "user", "content": "hi"}]});
         assert!(OpenAIToCodex.translate_request(req).is_err());
+    }
+
+    #[test]
+    fn test_tools_translated() {
+        let req = json!({
+            "model": "o4-mini",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get weather info",
+                    "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}
+                }
+            }]
+        });
+        let out = OpenAIToCodex.translate_request(req).unwrap();
+        let tools = out["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["type"], "function");
+        assert_eq!(tools[0]["name"], "get_weather");
+        assert_eq!(tools[0]["description"], "Get weather info");
+        assert!(tools[0].get("parameters").is_some());
+        // No nested "function" wrapper
+        assert!(tools[0].get("function").is_none());
+    }
+
+    #[test]
+    fn test_tool_calls_message() {
+        let req = json!({
+            "model": "o4-mini",
+            "messages": [
+                {"role": "user", "content": "What's the weather?"},
+                {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "get_weather", "arguments": "{\"city\":\"Tokyo\"}"}
+                    }]
+                }
+            ]
+        });
+        let out = OpenAIToCodex.translate_request(req).unwrap();
+        let input = out["input"].as_array().unwrap();
+        // user message + function_call
+        assert_eq!(input.len(), 2);
+        assert_eq!(input[1]["type"], "function_call");
+        assert_eq!(input[1]["call_id"], "call_1");
+        assert_eq!(input[1]["name"], "get_weather");
+        assert_eq!(input[1]["arguments"], "{\"city\":\"Tokyo\"}");
+    }
+
+    #[test]
+    fn test_tool_result_message() {
+        let req = json!({
+            "model": "o4-mini",
+            "messages": [
+                {"role": "user", "content": "What's the weather?"},
+                {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "get_weather", "arguments": "{\"city\":\"Tokyo\"}"}
+                    }]
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "Sunny, 25C"}
+            ]
+        });
+        let out = OpenAIToCodex.translate_request(req).unwrap();
+        let input = out["input"].as_array().unwrap();
+        // user + function_call + function_call_output
+        assert_eq!(input.len(), 3);
+        assert_eq!(input[2]["type"], "function_call_output");
+        assert_eq!(input[2]["call_id"], "call_1");
+        assert_eq!(input[2]["output"], "Sunny, 25C");
     }
 }

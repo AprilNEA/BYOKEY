@@ -7,11 +7,15 @@
 pub mod claude_to_openai;
 pub mod codex_to_openai;
 pub mod gemini_to_openai;
+pub mod merge_messages;
 pub mod openai_to_claude;
 pub mod openai_to_codex;
 pub mod openai_to_gemini;
+pub mod cache_control;
 pub mod thinking;
 
+pub use cache_control::inject_cache_control;
+pub use merge_messages::merge_adjacent_messages;
 pub use claude_to_openai::ClaudeToOpenAI;
 pub use codex_to_openai::CodexToOpenAI;
 pub use gemini_to_openai::GeminiToOpenAI;

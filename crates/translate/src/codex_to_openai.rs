@@ -70,11 +70,50 @@ impl ResponseTranslator for CodexToOpenAI {
             .and_then(Value::as_u64)
             .unwrap_or(0);
 
-        let message = if let Some(r) = reasoning {
+        // Collect function_call output items → OpenAI tool_calls
+        let tool_calls: Vec<Value> = output
+            .map(|arr| {
+                arr.iter()
+                    .filter(|item| {
+                        item.get("type").and_then(Value::as_str) == Some("function_call")
+                    })
+                    .map(|item| {
+                        let call_id = item
+                            .get("call_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        let name =
+                            item.get("name").and_then(Value::as_str).unwrap_or("");
+                        let arguments = item
+                            .get("arguments")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        json!({
+                            "id": call_id,
+                            "type": "function",
+                            "function": {"name": name, "arguments": arguments}
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let has_tool_calls = !tool_calls.is_empty();
+
+        let mut message = if let Some(r) = reasoning {
             json!({"role": "assistant", "content": text, "reasoning_content": r})
         } else {
             json!({"role": "assistant", "content": text})
         };
+
+        if has_tool_calls {
+            message["tool_calls"] = json!(tool_calls);
+            if text.is_empty() {
+                message["content"] = Value::Null;
+            }
+        }
+
+        let finish_reason = if has_tool_calls { "tool_calls" } else { "stop" };
 
         Ok(json!({
             "id": id,
@@ -83,7 +122,7 @@ impl ResponseTranslator for CodexToOpenAI {
             "choices": [{
                 "index": 0,
                 "message": message,
-                "finish_reason": "stop"
+                "finish_reason": finish_reason
             }],
             "usage": {
                 "prompt_tokens": input_tokens,
@@ -145,5 +184,33 @@ mod tests {
         let res = json!({"id": "resp_x", "model": "o4-mini", "output": []});
         let out = CodexToOpenAI.translate_response(res).unwrap();
         assert_eq!(out["choices"][0]["message"]["content"], "");
+    }
+
+    #[test]
+    fn test_function_call_output() {
+        let res = json!({
+            "id": "resp_fc",
+            "model": "o4-mini",
+            "output": [
+                {
+                    "type": "function_call",
+                    "id": "fc_abc",
+                    "call_id": "call_1",
+                    "name": "get_weather",
+                    "arguments": "{\"city\":\"Tokyo\"}"
+                }
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+        });
+        let out = CodexToOpenAI.translate_response(res).unwrap();
+        let choice = &out["choices"][0];
+        assert_eq!(choice["finish_reason"], "tool_calls");
+        assert!(choice["message"]["content"].is_null());
+        let tool_calls = choice["message"]["tool_calls"].as_array().unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0]["id"], "call_1");
+        assert_eq!(tool_calls[0]["type"], "function");
+        assert_eq!(tool_calls[0]["function"]["name"], "get_weather");
+        assert_eq!(tool_calls[0]["function"]["arguments"], "{\"city\":\"Tokyo\"}");
     }
 }

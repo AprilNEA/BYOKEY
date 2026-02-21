@@ -39,19 +39,101 @@ impl RequestTranslator for OpenAIToClaude {
             Some(system_parts.join("\n"))
         };
 
-        // Filter out system messages
-        let claude_messages: Vec<Value> = messages
+        // Filter out system messages and translate tool-related messages
+        let non_system: Vec<&Value> = messages
             .iter()
             .filter(|m| m.get("role").and_then(Value::as_str) != Some("system"))
-            .map(|m| {
-                let role = m.get("role").and_then(Value::as_str).unwrap_or("user");
+            .collect();
+
+        let mut claude_messages: Vec<Value> = Vec::new();
+        let mut tool_buffer: Vec<Value> = Vec::new();
+
+        for m in &non_system {
+            let role = m.get("role").and_then(Value::as_str).unwrap_or("user");
+
+            if role == "tool" {
+                // Buffer tool result messages
+                let tool_call_id = m
+                    .get("tool_call_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 let content = m
                     .get("content")
                     .cloned()
                     .unwrap_or_else(|| Value::String(String::new()));
-                json!({ "role": role, "content": content })
-            })
-            .collect();
+                tool_buffer.push(json!({
+                    "type": "tool_result",
+                    "tool_use_id": tool_call_id,
+                    "content": content,
+                }));
+                continue;
+            }
+
+            // Flush buffered tool results before processing the next non-tool message
+            if !tool_buffer.is_empty() {
+                claude_messages.push(json!({
+                    "role": "user",
+                    "content": std::mem::take(&mut tool_buffer),
+                }));
+            }
+
+            if role == "assistant" {
+                if let Some(tool_calls) = m.get("tool_calls").and_then(Value::as_array) {
+                    // Assistant message with tool_calls → Claude tool_use content blocks
+                    let mut content_blocks: Vec<Value> = Vec::new();
+
+                    // Include text content if present
+                    if let Some(text) = m.get("content").and_then(Value::as_str) {
+                        if !text.is_empty() {
+                            content_blocks.push(json!({"type": "text", "text": text}));
+                        }
+                    }
+
+                    for tc in tool_calls {
+                        let id = tc.get("id").and_then(Value::as_str).unwrap_or("");
+                        let func = tc.get("function").unwrap_or(&Value::Null);
+                        let name = func.get("name").and_then(Value::as_str).unwrap_or("");
+                        let args_str = func
+                            .get("arguments")
+                            .and_then(Value::as_str)
+                            .unwrap_or("{}");
+                        let input: Value =
+                            serde_json::from_str(args_str).unwrap_or_else(|_| json!({}));
+                        content_blocks.push(json!({
+                            "type": "tool_use",
+                            "id": id,
+                            "name": name,
+                            "input": input,
+                        }));
+                    }
+
+                    claude_messages.push(json!({
+                        "role": "assistant",
+                        "content": content_blocks,
+                    }));
+                } else {
+                    let content = m
+                        .get("content")
+                        .cloned()
+                        .unwrap_or_else(|| Value::String(String::new()));
+                    claude_messages.push(json!({ "role": "assistant", "content": content }));
+                }
+            } else {
+                let content = m
+                    .get("content")
+                    .cloned()
+                    .unwrap_or_else(|| Value::String(String::new()));
+                claude_messages.push(json!({ "role": role, "content": content }));
+            }
+        }
+
+        // Flush any remaining tool results
+        if !tool_buffer.is_empty() {
+            claude_messages.push(json!({
+                "role": "user",
+                "content": tool_buffer,
+            }));
+        }
 
         let max_tokens = req
             .get("max_tokens")
@@ -72,6 +154,48 @@ impl RequestTranslator for OpenAIToClaude {
         }
         if let Some(s) = req.get("stream") {
             out["stream"] = s.clone();
+        }
+
+        // Translate tools
+        if let Some(tools) = req.get("tools").and_then(Value::as_array) {
+            let claude_tools: Vec<Value> = tools
+                .iter()
+                .filter_map(|t| {
+                    let func = t.get("function")?;
+                    let name = func.get("name")?.clone();
+                    let description = func.get("description").cloned().unwrap_or(Value::Null);
+                    let input_schema = func
+                        .get("parameters")
+                        .cloned()
+                        .unwrap_or_else(|| json!({"type": "object"}));
+                    let mut tool = json!({ "name": name, "input_schema": input_schema });
+                    if !description.is_null() {
+                        tool["description"] = description;
+                    }
+                    Some(tool)
+                })
+                .collect();
+            if !claude_tools.is_empty() {
+                out["tools"] = Value::Array(claude_tools);
+            }
+        }
+
+        // Translate tool_choice
+        if let Some(tc) = req.get("tool_choice") {
+            if let Some(s) = tc.as_str() {
+                match s {
+                    "auto" => out["tool_choice"] = json!({"type": "auto"}),
+                    "required" => out["tool_choice"] = json!({"type": "any"}),
+                    "none" => {} // Don't set tool_choice for "none"
+                    _ => {}
+                }
+            } else if let Some(name) = tc
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(Value::as_str)
+            {
+                out["tool_choice"] = json!({"type": "tool", "name": name});
+            }
         }
 
         Ok(out)
@@ -142,6 +266,153 @@ mod tests {
         });
         let out = OpenAIToClaude.translate_request(req).unwrap();
         assert_eq!(out["stream"], true);
+    }
+
+    #[test]
+    fn test_tools_translated() {
+        let req = json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get the weather",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "city": {"type": "string"}
+                        },
+                        "required": ["city"]
+                    }
+                }
+            }]
+        });
+        let out = OpenAIToClaude.translate_request(req).unwrap();
+        let tools = out["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "get_weather");
+        assert_eq!(tools[0]["description"], "Get the weather");
+        assert_eq!(tools[0]["input_schema"]["type"], "object");
+        assert_eq!(tools[0]["input_schema"]["properties"]["city"]["type"], "string");
+        // Ensure OpenAI-style fields are not present
+        assert!(tools[0].get("type").is_none());
+        assert!(tools[0].get("function").is_none());
+    }
+
+    #[test]
+    fn test_tool_choice_auto() {
+        let req = json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tool_choice": "auto"
+        });
+        let out = OpenAIToClaude.translate_request(req).unwrap();
+        assert_eq!(out["tool_choice"]["type"], "auto");
+    }
+
+    #[test]
+    fn test_tool_choice_specific() {
+        let req = json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tool_choice": {"type": "function", "function": {"name": "get_weather"}}
+        });
+        let out = OpenAIToClaude.translate_request(req).unwrap();
+        assert_eq!(out["tool_choice"]["type"], "tool");
+        assert_eq!(out["tool_choice"]["name"], "get_weather");
+    }
+
+    #[test]
+    fn test_tool_calls_in_assistant_message() {
+        let req = json!({
+            "model": "m",
+            "messages": [
+                {"role": "user", "content": "What's the weather?"},
+                {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": "{\"city\":\"Beijing\"}"
+                        }
+                    }]
+                }
+            ]
+        });
+        let out = OpenAIToClaude.translate_request(req).unwrap();
+        let assistant_msg = &out["messages"][1];
+        assert_eq!(assistant_msg["role"], "assistant");
+        let content = assistant_msg["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "tool_use");
+        assert_eq!(content[0]["id"], "call_1");
+        assert_eq!(content[0]["name"], "get_weather");
+        assert_eq!(content[0]["input"]["city"], "Beijing");
+    }
+
+    #[test]
+    fn test_tool_result_messages() {
+        let req = json!({
+            "model": "m",
+            "messages": [
+                {"role": "user", "content": "What's the weather?"},
+                {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": "{\"city\":\"Beijing\"}"
+                        }
+                    }]
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "Sunny, 25C"}
+            ]
+        });
+        let out = OpenAIToClaude.translate_request(req).unwrap();
+        // tool message becomes a user message with tool_result content
+        let tool_result_msg = &out["messages"][2];
+        assert_eq!(tool_result_msg["role"], "user");
+        let content = tool_result_msg["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[0]["tool_use_id"], "call_1");
+        assert_eq!(content[0]["content"], "Sunny, 25C");
+    }
+
+    #[test]
+    fn test_multiple_tool_results_merged() {
+        let req = json!({
+            "model": "m",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [
+                        {"id": "call_1", "type": "function", "function": {"name": "a", "arguments": "{}"}},
+                        {"id": "call_2", "type": "function", "function": {"name": "b", "arguments": "{}"}}
+                    ]
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "result1"},
+                {"role": "tool", "tool_call_id": "call_2", "content": "result2"}
+            ]
+        });
+        let out = OpenAIToClaude.translate_request(req).unwrap();
+        // Two consecutive tool messages merged into one user message
+        assert_eq!(out["messages"].as_array().unwrap().len(), 3);
+        let tool_msg = &out["messages"][2];
+        assert_eq!(tool_msg["role"], "user");
+        let content = tool_msg["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["tool_use_id"], "call_1");
+        assert_eq!(content[1]["tool_use_id"], "call_2");
     }
 
     #[test]

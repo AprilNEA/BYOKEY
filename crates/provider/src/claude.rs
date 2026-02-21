@@ -5,7 +5,7 @@
 use crate::registry;
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
-use byokey_translate::{ClaudeToOpenAI, OpenAIToClaude};
+use byokey_translate::{ClaudeToOpenAI, OpenAIToClaude, inject_cache_control};
 use byokey_types::{
     ByokError, ProviderId,
     traits::{
@@ -70,6 +70,7 @@ impl ClaudeExecutor {
 impl ProviderExecutor for ClaudeExecutor {
     async fn chat_completion(&self, request: Value, stream: bool) -> Result<ProviderResponse> {
         let mut body = OpenAIToClaude.translate_request(request)?;
+        body = inject_cache_control(body);
         body["stream"] = Value::Bool(stream);
 
         let auth = self.get_auth().await?;
@@ -125,11 +126,12 @@ impl ProviderExecutor for ClaudeExecutor {
 /// Wraps a raw Claude SSE `ByteStream` and translates its events to
 /// `OpenAI` chat completion chunk SSE format line-by-line.
 ///
-/// Claude SSE events used:
-/// - `message_start`       → extract `id` and `model`; emit empty first chunk with `role`
-/// - `content_block_delta` → emit content chunk for `text_delta` events
-/// - `message_delta`       → emit finish chunk with mapped `finish_reason`
-/// - `message_stop`        → emit `data: [DONE]`
+/// Claude SSE events handled:
+/// - `message_start`         → extract `id` and `model`; emit first chunk with `role`
+/// - `content_block_start`   → for `tool_use` blocks: emit tool_calls opening chunk
+/// - `content_block_delta`   → `text_delta` → content; `input_json_delta` → tool arguments
+/// - `message_delta`         → emit finish chunk (`stop_reason` mapped to `finish_reason`)
+/// - `message_stop`          → emit `data: [DONE]`
 fn translate_claude_sse(inner: ByteStream) -> ByteStream {
     struct State {
         inner: ByteStream,
@@ -137,6 +139,10 @@ fn translate_claude_sse(inner: ByteStream) -> ByteStream {
         id: String,
         model: String,
         done: bool,
+        /// Index of the most recently started tool_call, or -1 if not in a tool block.
+        tool_call_index: i64,
+        /// Whether the current content block is a `tool_use` block.
+        in_tool_use: bool,
     }
 
     Box::pin(try_unfold(
@@ -146,6 +152,8 @@ fn translate_claude_sse(inner: ByteStream) -> ByteStream {
             id: "chatcmpl-claude".to_string(),
             model: "claude".to_string(),
             done: false,
+            tool_call_index: -1,
+            in_tool_use: false,
         },
         |mut s| async move {
             loop {
@@ -183,10 +191,47 @@ fn translate_claude_sse(inner: ByteStream) -> ByteStream {
                                         s,
                                     )));
                                 }
+                                "content_block_start" => {
+                                    let block_type = ev
+                                        .pointer("/content_block/type")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("");
+                                    if block_type == "tool_use" {
+                                        s.in_tool_use = true;
+                                        s.tool_call_index += 1;
+                                        let id = ev
+                                            .pointer("/content_block/id")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("")
+                                            .to_string();
+                                        let name = ev
+                                            .pointer("/content_block/name")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("")
+                                            .to_string();
+                                        let idx = s.tool_call_index;
+                                        let chunk = serde_json::json!({
+                                            "id": &s.id,
+                                            "object": "chat.completion.chunk",
+                                            "model": &s.model,
+                                            "choices": [{"index": 0, "delta": {
+                                                "tool_calls": [{"index": idx, "id": id, "type": "function", "function": {"name": name, "arguments": ""}}]
+                                            }, "finish_reason": null}]
+                                        });
+                                        return Ok(Some((
+                                            Bytes::from(format!("data: {chunk}\n\n")),
+                                            s,
+                                        )));
+                                    } else {
+                                        s.in_tool_use = false;
+                                    }
+                                }
                                 "content_block_delta" => {
-                                    if ev.pointer("/delta/type").and_then(Value::as_str)
-                                        == Some("text_delta")
-                                    {
+                                    let delta_type = ev
+                                        .pointer("/delta/type")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("");
+                                    if delta_type == "text_delta" {
                                         let text = ev
                                             .pointer("/delta/text")
                                             .and_then(Value::as_str)
@@ -205,6 +250,24 @@ fn translate_claude_sse(inner: ByteStream) -> ByteStream {
                                             Bytes::from(format!("data: {chunk}\n\n")),
                                             s,
                                         )));
+                                    } else if delta_type == "input_json_delta" && s.in_tool_use {
+                                        let partial = ev
+                                            .pointer("/delta/partial_json")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("");
+                                        let idx = s.tool_call_index;
+                                        let chunk = serde_json::json!({
+                                            "id": &s.id,
+                                            "object": "chat.completion.chunk",
+                                            "model": &s.model,
+                                            "choices": [{"index": 0, "delta": {
+                                                "tool_calls": [{"index": idx, "function": {"arguments": partial}}]
+                                            }, "finish_reason": null}]
+                                        });
+                                        return Ok(Some((
+                                            Bytes::from(format!("data: {chunk}\n\n")),
+                                            s,
+                                        )));
                                     }
                                 }
                                 "message_delta" => {
@@ -213,6 +276,7 @@ fn translate_claude_sse(inner: ByteStream) -> ByteStream {
                                         .and_then(Value::as_str)
                                     {
                                         Some("max_tokens") => "length",
+                                        Some("tool_use") => "tool_calls",
                                         _ => "stop",
                                     };
                                     let chunk = serde_json::json!({
@@ -234,7 +298,7 @@ fn translate_claude_sse(inner: ByteStream) -> ByteStream {
                                     s.done = true;
                                     return Ok(Some((Bytes::from("data: [DONE]\n\n"), s)));
                                 }
-                                _ => {} // ping, content_block_start, content_block_stop
+                                _ => {} // ping, content_block_stop
                             }
                         }
                     }

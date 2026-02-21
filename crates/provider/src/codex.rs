@@ -177,6 +177,7 @@ fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStream {
         buf: Vec<u8>,
         model: String,
         done: bool,
+        tool_call_index: i64,
     }
 
     Box::pin(try_unfold(
@@ -185,6 +186,7 @@ fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStream {
             buf: Vec::new(),
             model,
             done: false,
+            tool_call_index: 0,
         },
         |mut s| async move {
             loop {
@@ -227,12 +229,62 @@ fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStream {
                                     let line = format!("data: {chunk}\n\n");
                                     return Ok(Some((Bytes::from(line), s)));
                                 }
+                                "response.output_item.added"
+                                    if ev.pointer("/item/type").and_then(Value::as_str)
+                                        == Some("function_call") =>
+                                {
+                                    let id = ev
+                                        .pointer("/item/call_id")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let name = ev
+                                        .pointer("/item/name")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let idx = s.tool_call_index;
+                                    s.tool_call_index += 1;
+                                    let chunk = serde_json::json!({
+                                        "object": "chat.completion.chunk",
+                                        "model": &s.model,
+                                        "choices": [{"index": 0, "delta": {
+                                            "tool_calls": [{"index": idx, "id": id, "type": "function", "function": {"name": name, "arguments": ""}}]
+                                        }, "finish_reason": null}]
+                                    });
+                                    let line = format!("data: {chunk}\n\n");
+                                    return Ok(Some((Bytes::from(line), s)));
+                                }
+                                "response.function_call_arguments.delta" => {
+                                    let delta =
+                                        ev["delta"].as_str().unwrap_or("").to_string();
+                                    let idx = (s.tool_call_index - 1).max(0);
+                                    let chunk = serde_json::json!({
+                                        "object": "chat.completion.chunk",
+                                        "model": &s.model,
+                                        "choices": [{"index": 0, "delta": {
+                                            "tool_calls": [{"index": idx, "function": {"arguments": delta}}]
+                                        }, "finish_reason": null}]
+                                    });
+                                    let line = format!("data: {chunk}\n\n");
+                                    return Ok(Some((Bytes::from(line), s)));
+                                }
                                 "response.completed" => {
+                                    let mut chunks = Vec::new();
+                                    // If tool calls were emitted, send a finish chunk
+                                    if s.tool_call_index > 0 {
+                                        let finish = serde_json::json!({
+                                            "object": "chat.completion.chunk",
+                                            "model": &s.model,
+                                            "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]
+                                        });
+                                        chunks.extend_from_slice(
+                                            format!("data: {finish}\n\n").as_bytes(),
+                                        );
+                                    }
+                                    chunks.extend_from_slice(b"data: [DONE]\n\n");
                                     s.done = true;
-                                    return Ok(Some((
-                                        Bytes::from("data: [DONE]\n\n"),
-                                        s,
-                                    )));
+                                    return Ok(Some((Bytes::from(chunks), s)));
                                 }
                                 _ => {}
                             }
