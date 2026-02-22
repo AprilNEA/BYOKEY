@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/AprilNEA/BYOKEY/compare/v0.2.0...v0.2.1) - 2026-02-22
+
+### Added
+
+- *(desktop)* add Info.plist with LSUIElement, separate CI job
+- *(cli)* add start/stop/restart and autostart enable/disable/status
+
+### Fixed
+
+- *(main)* gate LAUNCHD_LABEL behind cfg(target_os = "macos")
+- *(ci)* upgrade libclang to 7.x for aarch64 cross-compilation
+
+### Other
+
+- add pre-commit config with fmt, clippy, and conventional commit checks
+- add From<rquest::Error>/From<sqlx::Error> for ByokError, eliminate manual .map_err
+
 ## [0.2.0](https://github.com/AprilNEA/BYOKEY/compare/v0.1.3...v0.2.0) - 2026-02-22
 
 ### Other

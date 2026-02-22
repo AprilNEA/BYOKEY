@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/AprilNEA/BYOKEY/compare/byokey-proxy-v0.2.0...byokey-proxy-v0.2.1) - 2026-02-22
+
+### Added
+
+- *(proxy)* forward query params and add debug logging for /api/internal
+- *(proxy)* add /amp/auth/cli-login route for Amp CLI login flow
+
+### Fixed
+
+- *(lint)* resolve clippy warnings and format issues
+- *(proxy)* strip thinking field when type is "auto" or tool_choice is forced
+- *(auth,proxy)* update Claude token URL and strip thinking on forced tool_choice
+- *(proxy)* align Anthropic request headers with reference implementation
+- *(proxy)* strip /amp prefix when redirecting to ampcode.com auth
+
+### Other
+
+- add From<rquest::Error>/From<sqlx::Error> for ByokError, eliminate manual .map_err
+
 ## [0.2.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-proxy-v0.1.3...byokey-proxy-v0.2.0) - 2026-02-22
 
 ### Added
