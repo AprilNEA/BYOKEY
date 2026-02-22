@@ -55,3 +55,22 @@ jobs:
         with:
           workspaces: ". -> target"
       - run: cargo test --workspace
+
+  desktop:
+    name: Desktop (macOS)
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "desktop -> desktop/target"
+      - name: Set macOS SDK root
+        run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> $GITHUB_ENV
+      - run: cargo check
+      - run: cargo clippy -- -D warnings

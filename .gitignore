@@ -3,3 +3,8 @@ CLAUDE.md
 plan*.md
 PLAN*.md
 MEMORY.md
+
+# desktop/ is a standalone macOS-only crate outside the workspace.
+# Its Cargo.lock and local .cargo/ config are machine/platform-specific.
+desktop/Cargo.lock
+desktop/.cargo/

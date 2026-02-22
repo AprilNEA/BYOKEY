@@ -1,6 +1,6 @@
 [package]
 name = "byokey-gui"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 authors = ["AprilNEA <github@sku.moe>"]
 description = "BYOKEY desktop client — macOS menu bar app"
@@ -11,11 +11,11 @@ name = "byokey-gui"
 path = "src/main.rs"
 
 [dependencies]
-byokey-types   = { version = "0.1.1", path = "../crates/types" }
-byokey-config  = { version = "0.1.1", path = "../crates/config" }
-byokey-store   = { version = "0.1.1", path = "../crates/store" }
-byokey-auth    = { version = "0.1.1", path = "../crates/auth" }
-byokey-proxy   = { version = "0.1.1", path = "../crates/proxy" }
+byokey-types   = { version = "0.2.0", path = "../crates/types" }
+byokey-config  = { version = "0.2.0", path = "../crates/config" }
+byokey-store   = { version = "0.2.0", path = "../crates/store" }
+byokey-auth    = { version = "0.2.0", path = "../crates/auth" }
+byokey-proxy   = { version = "0.2.0", path = "../crates/proxy" }
 gpui           = "0.2"
 gpui-component = "0.5"
 tray-icon      = "0.21"
