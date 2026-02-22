@@ -347,7 +347,7 @@ checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 
 [[package]]
 name = "byokey"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -362,7 +362,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-auth"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -384,7 +384,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-config"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -400,7 +400,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-provider"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -427,7 +427,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-proxy"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -451,7 +451,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-store"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -465,7 +465,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-translate"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "byokey-types",
@@ -476,7 +476,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-types"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-trait",
  "bytes",
