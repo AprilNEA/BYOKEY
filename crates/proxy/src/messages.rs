@@ -27,6 +27,22 @@ const USER_AGENT: &str = "claude-cli/2.1.44 (external, sdk-cli)";
 /// Authenticates with the Claude provider (API key or OAuth), then forwards
 /// the request body verbatim to the Anthropic API and streams the response
 /// back without translation.
+/// When `tool_choice` forces a specific tool (`type == "any"` or `type == "tool"`),
+/// the Anthropic API rejects requests that also contain `thinking`.
+/// Strip the `thinking` field in that case.
+fn disable_thinking_if_tool_choice_forced(body: &mut Value) {
+    let forced = body
+        .get("tool_choice")
+        .and_then(|tc| tc.get("type"))
+        .and_then(Value::as_str)
+        .is_some_and(|t| t == "any" || t == "tool");
+    if forced {
+        if let Some(obj) = body.as_object_mut() {
+            obj.remove("thinking");
+        }
+    }
+}
+
 /// Merge betas from the request body's `betas` array into the base beta string.
 fn build_beta_header(body: &Value) -> String {
     let mut betas = ANTHROPIC_BETA_BASE.to_string();
@@ -47,7 +63,8 @@ pub async fn anthropic_messages(
     State(state): State<Arc<AppState>>,
     body: axum::extract::Json<Value>,
 ) -> Result<Response, ApiError> {
-    let body = body.0;
+    let mut body = body.0;
+    disable_thinking_if_tool_choice_forced(&mut body);
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let beta = build_beta_header(&body);
 

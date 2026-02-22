@@ -15,7 +15,7 @@ pub const CALLBACK_PORT: u16 = 54545;
 pub const AUTH_URL: &str = "https://claude.ai/oauth/authorize";
 
 /// Claude OAuth token endpoint.
-pub const TOKEN_URL: &str = "https://console.anthropic.com/v1/oauth/token";
+pub const TOKEN_URL: &str = "https://api.anthropic.com/v1/oauth/token";
 
 /// OAuth scopes requested during authorization.
 pub const SCOPES: &[&str] = &["org:create_api_key", "user:profile", "user:inference"];
