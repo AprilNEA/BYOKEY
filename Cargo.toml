@@ -13,7 +13,7 @@ exclude = ["desktop"]
 
 [workspace.package]
 edition = "2024"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["AprilNEA <github@sku.moe>"]
 description = "Bring Your Own Keys — AI subscription-to-API proxy gateway"
 license = "MIT OR Apache-2.0"
@@ -25,13 +25,13 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Workspace crates
-byokey-types = { version = "0.1.2", path = "crates/types" }
-byokey-config = { version = "0.1.2", path = "crates/config" }
-byokey-store = { version = "0.1.2", path = "crates/store" }
-byokey-auth = { version = "0.1.2", path = "crates/auth" }
-byokey-translate = { version = "0.1.2", path = "crates/translate" }
-byokey-provider = { version = "0.1.2", path = "crates/provider" }
-byokey-proxy = { version = "0.1.2", path = "crates/proxy" }
+byokey-types = { version = "0.1.3", path = "crates/types" }
+byokey-config = { version = "0.1.3", path = "crates/config" }
+byokey-store = { version = "0.1.3", path = "crates/store" }
+byokey-auth = { version = "0.1.3", path = "crates/auth" }
+byokey-translate = { version = "0.1.3", path = "crates/translate" }
+byokey-provider = { version = "0.1.3", path = "crates/provider" }
+byokey-proxy = { version = "0.1.3", path = "crates/proxy" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
