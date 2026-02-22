@@ -102,10 +102,7 @@ impl CodexExecutor {
 
         let model = codex_body["model"].as_str().unwrap_or("codex").to_string();
 
-        let raw: ByteStream = Box::pin(
-            resp.bytes_stream()
-                .map(|r| r.map_err(ByokError::from)),
-        );
+        let raw: ByteStream = Box::pin(resp.bytes_stream().map(|r| r.map_err(ByokError::from)));
 
         Ok(ProviderResponse::Stream(translate_codex_sse(raw, model)))
     }
@@ -124,9 +121,7 @@ impl CodexExecutor {
         }
 
         let mut all = Vec::new();
-        let mut stream = resp
-            .bytes_stream()
-            .map_err(ByokError::from);
+        let mut stream = resp.bytes_stream().map_err(ByokError::from);
         while let Some(chunk) = stream.try_next().await? {
             all.extend_from_slice(&chunk);
         }
@@ -336,10 +331,8 @@ impl ProviderExecutor for CodexExecutor {
         }
 
         if stream {
-            let byte_stream: ByteStream = Box::pin(
-                resp.bytes_stream()
-                    .map(|r| r.map_err(ByokError::from)),
-            );
+            let byte_stream: ByteStream =
+                Box::pin(resp.bytes_stream().map(|r| r.map_err(ByokError::from)));
             Ok(ProviderResponse::Stream(byte_stream))
         } else {
             let json: Value = resp.json().await?;

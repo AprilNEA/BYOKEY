@@ -79,10 +79,7 @@ impl ProviderExecutor for QwenExecutor {
             builder = builder.header("accept", "application/json");
         }
 
-        let resp = builder
-            .json(&body)
-            .send()
-            .await?;
+        let resp = builder.json(&body).send().await?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -91,10 +88,8 @@ impl ProviderExecutor for QwenExecutor {
         }
 
         if stream {
-            let byte_stream: ByteStream = Box::pin(
-                resp.bytes_stream()
-                    .map(|r| r.map_err(ByokError::from)),
-            );
+            let byte_stream: ByteStream =
+                Box::pin(resp.bytes_stream().map(|r| r.map_err(ByokError::from)));
             Ok(ProviderResponse::Stream(byte_stream))
         } else {
             let json: Value = resp.json().await?;

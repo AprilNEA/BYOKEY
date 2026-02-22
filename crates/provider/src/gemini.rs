@@ -68,10 +68,8 @@ impl ProviderExecutor for GeminiExecutor {
         }
 
         if stream {
-            let byte_stream: ByteStream = Box::pin(
-                resp.bytes_stream()
-                    .map(|r| r.map_err(ByokError::from)),
-            );
+            let byte_stream: ByteStream =
+                Box::pin(resp.bytes_stream().map(|r| r.map_err(ByokError::from)));
             Ok(ProviderResponse::Stream(byte_stream))
         } else {
             let json: Value = resp.json().await?;
