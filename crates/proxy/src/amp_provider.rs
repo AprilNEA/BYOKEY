@@ -15,7 +15,7 @@
 
 use axum::{
     body::Body,
-    extract::{Path, Query, State},
+    extract::{Path, Query, RawQuery, State},
     http::{HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -241,10 +241,26 @@ pub async fn amp_management_proxy(
     State(state): State<Arc<AppState>>,
     method: Method,
     Path(path): Path<String>,
+    RawQuery(query): RawQuery,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let url = format!("{AMP_BACKEND}/api/{path}");
+    let url = match query.as_deref() {
+        Some(q) if !q.is_empty() => format!("{AMP_BACKEND}/api/{path}?{q}"),
+        _ => format!("{AMP_BACKEND}/api/{path}"),
+    };
+
+    // Debug: print request and response for /api/internal (only when LOG_LEVEL=debug)
+    let debug = path == "internal"
+        && std::env::var("LOG_LEVEL").is_ok_and(|v| v.eq_ignore_ascii_case("debug"));
+    if debug {
+        let req_body = std::str::from_utf8(&body)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+            .map(|v| serde_json::to_string_pretty(&v).unwrap_or_default())
+            .unwrap_or_else(|| format!("{body:?}"));
+        eprintln!("[debug] --> {} {url}\n{req_body}", method);
+    }
 
     let strip_client_auth = state.config.amp.upstream_key.is_some();
 
@@ -308,6 +324,16 @@ pub async fn amp_management_proxy(
     }
 
     let body_bytes = resp.bytes().await.unwrap_or_default();
+
+    if debug {
+        let resp_body = std::str::from_utf8(&body_bytes)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+            .map(|v| serde_json::to_string_pretty(&v).unwrap_or_default())
+            .unwrap_or_else(|| format!("{body_bytes:?}"));
+        eprintln!("[debug] <-- {status}\n{resp_body}");
+    }
+
     (status, resp_headers, body_bytes).into_response()
 }
 
