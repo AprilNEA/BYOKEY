@@ -30,6 +30,9 @@ const HOP_BY_HOP: &[&str] = &[
     "upgrade",
 ];
 
+/// 共享代理模式下需要从客户端请求中剥离的认证头。
+const CLIENT_AUTH_HEADERS: &[&str] = &["authorization", "x-api-key", "x-goog-api-key"];
+
 /// Redirects Amp CLI to the web login page.
 pub async fn login_redirect() -> impl IntoResponse {
     (
@@ -51,21 +54,40 @@ pub async fn management_proxy(
 ) -> Response {
     let url = format!("{AMP_BACKEND}/v0/management/{path}");
 
-    // Build upstream request, converting http::Method (same underlying type)
-    let mut builder = state.http.request(method, url).body(body);
+    let strip_client_auth = state.config.amp.upstream_key.is_some();
 
     // Forward headers, skipping hop-by-hop and Host
     let mut header_map = rquest::header::HeaderMap::new();
     for (name, value) in &headers {
         let name_str = name.as_str();
-        if !HOP_BY_HOP.contains(&name_str)
-            && name_str != "host"
-            && let Ok(n) = rquest::header::HeaderName::from_bytes(name.as_ref())
-            && let Ok(v) = rquest::header::HeaderValue::from_bytes(value.as_bytes())
-        {
+        if HOP_BY_HOP.contains(&name_str) || name_str == "host" {
+            continue;
+        }
+        if strip_client_auth && CLIENT_AUTH_HEADERS.contains(&name_str) {
+            continue;
+        }
+        if let (Ok(n), Ok(v)) = (
+            rquest::header::HeaderName::from_bytes(name.as_ref()),
+            rquest::header::HeaderValue::from_bytes(value.as_bytes()),
+        ) {
             header_map.insert(n, v);
         }
     }
+
+    if let Some(key) = &state.config.amp.upstream_key
+        && let (Ok(n_auth), Ok(v_auth), Ok(n_apikey), Ok(v_apikey)) = (
+            rquest::header::HeaderName::from_bytes(b"authorization"),
+            rquest::header::HeaderValue::from_str(&format!("Bearer {key}")),
+            rquest::header::HeaderName::from_bytes(b"x-api-key"),
+            rquest::header::HeaderValue::from_str(key.as_str()),
+        )
+    {
+        header_map.insert(n_auth, v_auth);
+        header_map.insert(n_apikey, v_apikey);
+    }
+
+    // Build upstream request
+    let mut builder = state.http.request(method, url).body(body);
     builder = builder.headers(header_map);
 
     let resp = match builder.send().await {

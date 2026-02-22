@@ -33,6 +33,17 @@ fn default_host() -> String {
     "127.0.0.1".to_string()
 }
 
+/// `AmpCode` 管理代理配置。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AmpConfig {
+    /// 设置后，byokey 进入"共享代理"模式：
+    /// 客户端的 Authorization / X-Api-Key 头会被剥离，
+    /// 改为注入此 key（同时设置 `Authorization: Bearer {key}` 和 `X-Api-Key: {key}`）。
+    /// 不设置则保持 BYOK 透传行为（默认）。
+    #[serde(default)]
+    pub upstream_key: Option<String>,
+}
+
 /// Top-level application configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -45,6 +56,9 @@ pub struct Config {
     /// Provider configuration map.
     #[serde(default)]
     pub providers: HashMap<ProviderId, ProviderConfig>,
+    /// `AmpCode` 管理代理配置。
+    #[serde(default)]
+    pub amp: AmpConfig,
 }
 
 impl Default for Config {
@@ -53,6 +67,7 @@ impl Default for Config {
             port: default_port(),
             host: default_host(),
             providers: HashMap::new(),
+            amp: AmpConfig::default(),
         }
     }
 }
@@ -149,5 +164,27 @@ providers:
         let pc = ProviderConfig::default();
         assert!(pc.enabled);
         assert!(pc.api_key.is_none());
+    }
+
+    #[test]
+    fn test_default_amp_upstream_key_is_none() {
+        let c = Config::default();
+        assert!(c.amp.upstream_key.is_none());
+    }
+
+    #[test]
+    fn test_from_yaml_amp_upstream_key() {
+        let yaml = r#"
+amp:
+  upstream_key: "amp-key-xxx"
+"#;
+        let c = Config::from_yaml(yaml).unwrap();
+        assert_eq!(c.amp.upstream_key.as_deref(), Some("amp-key-xxx"));
+    }
+
+    #[test]
+    fn test_from_yaml_amp_defaults_when_omitted() {
+        let c = Config::from_yaml("port: 1234").unwrap();
+        assert!(c.amp.upstream_key.is_none());
     }
 }
