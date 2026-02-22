@@ -167,7 +167,7 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::FOUND);
         assert_eq!(
             resp.headers().get("location").and_then(|v| v.to_str().ok()),
-            Some("https://ampcode.com/amp/auth/cli-login?authToken=abc123&callbackPort=35789")
+            Some("https://ampcode.com/auth/cli-login?authToken=abc123&callbackPort=35789")
         );
     }
 

@@ -51,8 +51,8 @@ pub async fn login_redirect() -> impl IntoResponse {
 /// callback to `http://localhost:{callbackPort}/...` directly.
 pub async fn cli_login_redirect(RawQuery(query): RawQuery) -> impl IntoResponse {
     let url = match query {
-        Some(q) => format!("https://ampcode.com/amp/auth/cli-login?{q}"),
-        None => "https://ampcode.com/amp/auth/cli-login".to_string(),
+        Some(q) => format!("https://ampcode.com/auth/cli-login?{q}"),
+        None => "https://ampcode.com/auth/cli-login".to_string(),
     };
     let location = HeaderValue::from_str(&url)
         .unwrap_or_else(|_| HeaderValue::from_static("https://ampcode.com/amp/auth/cli-login"));
