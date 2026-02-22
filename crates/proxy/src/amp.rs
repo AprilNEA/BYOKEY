@@ -46,8 +46,8 @@ pub async fn login_redirect() -> impl IntoResponse {
 
 /// Handles `GET /amp/auth/cli-login?authToken=...&callbackPort=...`
 ///
-/// `amp login` opens this URL in the browser. We forward it to AmpCode's
-/// own login endpoint so AmpCode can authenticate the user and then
+/// `amp login` opens this URL in the browser. We forward it to `AmpCode`'s
+/// own login endpoint so `AmpCode` can authenticate the user and then
 /// callback to `http://localhost:{callbackPort}/...` directly.
 pub async fn cli_login_redirect(RawQuery(query): RawQuery) -> impl IntoResponse {
     let url = match query {
@@ -56,7 +56,10 @@ pub async fn cli_login_redirect(RawQuery(query): RawQuery) -> impl IntoResponse 
     };
     let location = HeaderValue::from_str(&url)
         .unwrap_or_else(|_| HeaderValue::from_static("https://ampcode.com/amp/auth/cli-login"));
-    (StatusCode::FOUND, [(axum::http::header::LOCATION, location)])
+    (
+        StatusCode::FOUND,
+        [(axum::http::header::LOCATION, location)],
+    )
 }
 
 /// Transparently proxies requests to the ampcode.com management API.

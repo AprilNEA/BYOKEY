@@ -28,7 +28,7 @@ const USER_AGENT: &str = "claude-cli/2.1.44 (external, sdk-cli)";
 /// the request body verbatim to the Anthropic API and streams the response
 /// back without translation.
 /// Strip the `thinking` field when it should not be forwarded to the Anthropic API:
-/// 1. `tool_choice.type == "any"` or `"tool"` — API rejects thinking + forced tool_choice.
+/// 1. `tool_choice.type == "any"` or `"tool"` — API rejects thinking + forced `tool_choice`.
 /// 2. `thinking.type == "auto"` — not a valid Anthropic API value; API returns 400.
 fn sanitize_thinking(body: &mut Value) {
     let should_remove = {
@@ -47,10 +47,8 @@ fn sanitize_thinking(body: &mut Value) {
         forced_tool || auto_thinking
     };
 
-    if should_remove {
-        if let Some(obj) = body.as_object_mut() {
-            obj.remove("thinking");
-        }
+    if should_remove && let Some(obj) = body.as_object_mut() {
+        obj.remove("thinking");
     }
 }
 
@@ -59,11 +57,11 @@ fn build_beta_header(body: &Value) -> String {
     let mut betas = ANTHROPIC_BETA_BASE.to_string();
     if let Some(arr) = body.get("betas").and_then(Value::as_array) {
         for b in arr {
-            if let Some(s) = b.as_str() {
-                if !betas.contains(s) {
-                    betas.push(',');
-                    betas.push_str(s);
-                }
+            if let Some(s) = b.as_str()
+                && !betas.contains(s)
+            {
+                betas.push(',');
+                betas.push_str(s);
             }
         }
     }

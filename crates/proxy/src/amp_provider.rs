@@ -257,9 +257,11 @@ pub async fn amp_management_proxy(
         let req_body = std::str::from_utf8(&body)
             .ok()
             .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-            .map(|v| serde_json::to_string_pretty(&v).unwrap_or_default())
-            .unwrap_or_else(|| format!("{body:?}"));
-        eprintln!("[debug] --> {} {url}\n{req_body}", method);
+            .map_or_else(
+                || format!("{body:?}"),
+                |v| serde_json::to_string_pretty(&v).unwrap_or_default(),
+            );
+        eprintln!("[debug] --> {method} {url}\n{req_body}");
     }
 
     let strip_client_auth = state.config.amp.upstream_key.is_some();
@@ -329,8 +331,10 @@ pub async fn amp_management_proxy(
         let resp_body = std::str::from_utf8(&body_bytes)
             .ok()
             .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-            .map(|v| serde_json::to_string_pretty(&v).unwrap_or_default())
-            .unwrap_or_else(|| format!("{body_bytes:?}"));
+            .map_or_else(
+                || format!("{body_bytes:?}"),
+                |v| serde_json::to_string_pretty(&v).unwrap_or_default(),
+            );
         eprintln!("[debug] <-- {status}\n{resp_body}");
     }
 
