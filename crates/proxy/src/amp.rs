@@ -5,7 +5,7 @@
 //! - `ANY  /amp/v0/management/{*path}` -> proxy to ampcode.com/v0/management/*.
 //! - `POST /amp/v1/chat/completions`   -> handled by `chat::chat_completions`.
 use axum::{
-    extract::{Path, State},
+    extract::{Path, RawQuery, State},
     http::{HeaderMap, HeaderValue, Method, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -42,6 +42,21 @@ pub async fn login_redirect() -> impl IntoResponse {
             HeaderValue::from_static("https://ampcode.com/login"),
         )],
     )
+}
+
+/// Handles `GET /amp/auth/cli-login?authToken=...&callbackPort=...`
+///
+/// `amp login` opens this URL in the browser. We forward it to AmpCode's
+/// own login endpoint so AmpCode can authenticate the user and then
+/// callback to `http://localhost:{callbackPort}/...` directly.
+pub async fn cli_login_redirect(RawQuery(query): RawQuery) -> impl IntoResponse {
+    let url = match query {
+        Some(q) => format!("https://ampcode.com/amp/auth/cli-login?{q}"),
+        None => "https://ampcode.com/amp/auth/cli-login".to_string(),
+    };
+    let location = HeaderValue::from_str(&url)
+        .unwrap_or_else(|_| HeaderValue::from_static("https://ampcode.com/amp/auth/cli-login"));
+    (StatusCode::FOUND, [(axum::http::header::LOCATION, location)])
 }
 
 /// Transparently proxies requests to the ampcode.com management API.

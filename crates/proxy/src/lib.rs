@@ -63,7 +63,8 @@ pub fn make_router(state: Arc<AppState>) -> Router {
         .route("/v1/chat/completions", post(chat::chat_completions))
         .route("/v1/messages", post(messages::anthropic_messages))
         .route("/v1/models", get(models::list_models))
-        // Legacy Amp CLI routes
+        // Amp CLI routes
+        .route("/amp/auth/cli-login", get(amp::cli_login_redirect))
         .route("/amp/v1/login", get(amp::login_redirect))
         .route("/amp/v0/management/{*path}", any(amp::management_proxy))
         .route("/amp/v1/chat/completions", post(chat::chat_completions))
@@ -147,6 +148,26 @@ mod tests {
         assert_eq!(
             resp.headers().get("location").and_then(|v| v.to_str().ok()),
             Some("https://ampcode.com/login")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_amp_cli_login_redirect() {
+        let app = make_router(make_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/amp/auth/cli-login?authToken=abc123&callbackPort=35789")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::FOUND);
+        assert_eq!(
+            resp.headers().get("location").and_then(|v| v.to_str().ok()),
+            Some("https://ampcode.com/amp/auth/cli-login?authToken=abc123&callbackPort=35789")
         );
     }
 
