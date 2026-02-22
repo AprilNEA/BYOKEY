@@ -11,6 +11,7 @@ use std::{path::PathBuf, process::Stdio, sync::Arc};
 use std::os::unix::process::CommandExt as _;
 
 /// `launchd` service label (macOS).
+#[cfg(target_os = "macos")]
 const LAUNCHD_LABEL: &str = "io.byokey.server";
 /// `systemd` unit name (Linux).
 #[cfg(target_os = "linux")]
