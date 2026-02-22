@@ -27,16 +27,27 @@ const USER_AGENT: &str = "claude-cli/2.1.44 (external, sdk-cli)";
 /// Authenticates with the Claude provider (API key or OAuth), then forwards
 /// the request body verbatim to the Anthropic API and streams the response
 /// back without translation.
-/// When `tool_choice` forces a specific tool (`type == "any"` or `type == "tool"`),
-/// the Anthropic API rejects requests that also contain `thinking`.
-/// Strip the `thinking` field in that case.
-fn disable_thinking_if_tool_choice_forced(body: &mut Value) {
-    let forced = body
-        .get("tool_choice")
-        .and_then(|tc| tc.get("type"))
-        .and_then(Value::as_str)
-        .is_some_and(|t| t == "any" || t == "tool");
-    if forced {
+/// Strip the `thinking` field when it should not be forwarded to the Anthropic API:
+/// 1. `tool_choice.type == "any"` or `"tool"` — API rejects thinking + forced tool_choice.
+/// 2. `thinking.type == "auto"` — not a valid Anthropic API value; API returns 400.
+fn sanitize_thinking(body: &mut Value) {
+    let should_remove = {
+        let forced_tool = body
+            .get("tool_choice")
+            .and_then(|tc| tc.get("type"))
+            .and_then(Value::as_str)
+            .is_some_and(|t| t == "any" || t == "tool");
+
+        let auto_thinking = body
+            .get("thinking")
+            .and_then(|th| th.get("type"))
+            .and_then(Value::as_str)
+            .is_some_and(|t| t == "auto");
+
+        forced_tool || auto_thinking
+    };
+
+    if should_remove {
         if let Some(obj) = body.as_object_mut() {
             obj.remove("thinking");
         }
@@ -64,7 +75,7 @@ pub async fn anthropic_messages(
     body: axum::extract::Json<Value>,
 ) -> Result<Response, ApiError> {
     let mut body = body.0;
-    disable_thinking_if_tool_choice_forced(&mut body);
+    sanitize_thinking(&mut body);
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let beta = build_beta_header(&body);
 
