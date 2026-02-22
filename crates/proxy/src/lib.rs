@@ -14,6 +14,9 @@ pub use error::ApiError;
 
 use axum::{
     Router,
+    extract::Request,
+    middleware::{self, Next},
+    response::Response,
     routing::{any, get, post},
 };
 use byokey_auth::AuthManager;
@@ -39,6 +42,14 @@ impl AppState {
             http: rquest::Client::new(),
         })
     }
+}
+
+async fn log_request(req: Request, next: Next) -> Response {
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+    let resp = next.run(req).await;
+    eprintln!("{} {} -> {}", method, uri, resp.status());
+    resp
 }
 
 /// Build the full axum router.
@@ -88,6 +99,7 @@ pub fn make_router(state: Arc<AppState>) -> Router {
         // Catch-all: forward remaining /api/* routes to ampcode.com
         .route("/api/{*path}", any(amp_provider::amp_management_proxy))
         .with_state(state)
+        .layer(middleware::from_fn(log_request))
 }
 
 #[cfg(test)]
