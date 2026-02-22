@@ -79,7 +79,7 @@ pub async fn codex_responses_passthrough(
             .auth
             .get_token(&ProviderId::Codex)
             .await
-            .map_err(|e| ApiError::from(ByokError::Auth(e.to_string())))?;
+            .map_err(ApiError::from)?;
         (true, tok.access_token)
     };
 
@@ -106,7 +106,7 @@ pub async fn codex_responses_passthrough(
             .send()
             .await
     }
-    .map_err(|e| ApiError::from(ByokError::Http(e.to_string())))?;
+    .map_err(|e| ApiError(ByokError::from(e)))?;
 
     let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     if !status.is_success() {
@@ -137,7 +137,7 @@ pub async fn codex_responses_passthrough(
         let json: Value = resp
             .json()
             .await
-            .map_err(|e| ApiError::from(ByokError::Http(e.to_string())))?;
+            .map_err(|e| ApiError(ByokError::from(e)))?;
         Ok((status, axum::Json(json)).into_response())
     }
 }
@@ -183,7 +183,7 @@ pub async fn gemini_native_passthrough(
             .auth
             .get_token(&ProviderId::Gemini)
             .await
-            .map_err(|e| ApiError::from(ByokError::Auth(e.to_string())))?;
+            .map_err(ApiError::from)?;
         ("authorization", format!("Bearer {}", token.access_token))
     };
 
@@ -195,7 +195,7 @@ pub async fn gemini_native_passthrough(
         .json(&body)
         .send()
         .await
-        .map_err(|e| ApiError::from(ByokError::Http(e.to_string())))?;
+        .map_err(|e| ApiError(ByokError::from(e)))?;
 
     let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     if !status.is_success() {
@@ -227,7 +227,7 @@ pub async fn gemini_native_passthrough(
         let json: Value = resp
             .json()
             .await
-            .map_err(|e| ApiError::from(ByokError::Http(e.to_string())))?;
+            .map_err(|e| ApiError(ByokError::from(e)))?;
         Ok((status, axum::Json(json)).into_response())
     }
 }

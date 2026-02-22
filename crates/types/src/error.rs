@@ -50,6 +50,22 @@ pub enum ByokError {
     Upstream { status: u16, body: String },
 }
 
+// ── Feature-gated From impls ──────────────────────────────────────────────────
+
+#[cfg(feature = "rquest")]
+impl From<rquest::Error> for ByokError {
+    fn from(e: rquest::Error) -> Self {
+        Self::Http(e.to_string())
+    }
+}
+
+#[cfg(feature = "sqlx")]
+impl From<sqlx::Error> for ByokError {
+    fn from(e: sqlx::Error) -> Self {
+        Self::Storage(e.to_string())
+    }
+}
+
 /// Convenience alias used throughout the workspace.
 pub type Result<T> = std::result::Result<T, ByokError>;
 

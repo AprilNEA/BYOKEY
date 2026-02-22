@@ -481,8 +481,10 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures-core",
+ "rquest",
  "serde",
  "serde_json",
+ "sqlx",
  "thiserror 2.0.18",
 ]
 

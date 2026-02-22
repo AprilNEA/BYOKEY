@@ -93,8 +93,7 @@ impl ProviderExecutor for ClaudeExecutor {
         let resp = builder
             .json(&body)
             .send()
-            .await
-            .map_err(|e| ByokError::Http(e.to_string()))?;
+            .await?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -105,14 +104,11 @@ impl ProviderExecutor for ClaudeExecutor {
         if stream {
             let byte_stream: ByteStream = Box::pin(
                 resp.bytes_stream()
-                    .map(|r| r.map_err(|e| ByokError::Http(e.to_string()))),
+                    .map(|r| r.map_err(ByokError::from)),
             );
             Ok(ProviderResponse::Stream(translate_claude_sse(byte_stream)))
         } else {
-            let json: Value = resp
-                .json()
-                .await
-                .map_err(|e| ByokError::Http(e.to_string()))?;
+            let json: Value = resp.json().await?;
             let translated = ClaudeToOpenAI.translate_response(json)?;
             Ok(ProviderResponse::Complete(translated))
         }

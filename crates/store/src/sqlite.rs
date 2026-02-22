@@ -49,8 +49,7 @@ impl TokenStore for SqliteTokenStore {
             sqlx::query_as("SELECT token_json FROM tokens WHERE provider = ?")
                 .bind(&key)
                 .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| ByokError::Storage(e.to_string()))?;
+                .await?;
 
         match row {
             None => Ok(None),
@@ -73,8 +72,7 @@ impl TokenStore for SqliteTokenStore {
         .bind(&key)
         .bind(&json)
         .execute(&self.pool)
-        .await
-        .map_err(|e| ByokError::Storage(e.to_string()))?;
+        .await?;
         Ok(())
     }
 
@@ -84,8 +82,7 @@ impl TokenStore for SqliteTokenStore {
         sqlx::query("DELETE FROM tokens WHERE provider = ?")
             .bind(&key)
             .execute(&self.pool)
-            .await
-            .map_err(|e| ByokError::Storage(e.to_string()))?;
+            .await?;
         Ok(())
     }
 }

@@ -60,8 +60,7 @@ async fn login_claude(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
-        .await
-        .map_err(|e| ByokError::Http(e.to_string()))?;
+        .await?;
 
     let json: serde_json::Value = resp
         .json()
@@ -102,8 +101,7 @@ async fn login_codex(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
         .header("Accept", "application/json")
         .form(&token_params)
         .send()
-        .await
-        .map_err(|e| ByokError::Http(e.to_string()))?;
+        .await?;
 
     let json: serde_json::Value = resp
         .json()
@@ -130,8 +128,7 @@ async fn login_copilot(auth: &AuthManager, http: &rquest::Client) -> Result<()> 
         .header("Accept", "application/json")
         .form(&init_params)
         .send()
-        .await
-        .map_err(|e| ByokError::Http(e.to_string()))?;
+        .await?;
 
     let json: serde_json::Value = resp
         .json()
@@ -166,8 +163,7 @@ async fn login_copilot(auth: &AuthManager, http: &rquest::Client) -> Result<()> 
             .header("Accept", "application/json")
             .form(&token_params)
             .send()
-            .await
-            .map_err(|e| ByokError::Http(e.to_string()))?;
+            .await?;
 
         let json: serde_json::Value = resp
             .json()
@@ -225,8 +221,7 @@ async fn login_gemini(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
         .post(gemini::TOKEN_URL)
         .form(&token_params)
         .send()
-        .await
-        .map_err(|e| ByokError::Http(e.to_string()))?;
+        .await?;
 
     let json: serde_json::Value = resp
         .json()
@@ -274,8 +269,7 @@ async fn login_antigravity(auth: &AuthManager, http: &rquest::Client) -> Result<
         .post(antigravity::TOKEN_URL)
         .form(&token_params)
         .send()
-        .await
-        .map_err(|e| ByokError::Http(e.to_string()))?;
+        .await?;
 
     let json: serde_json::Value = resp
         .json()
@@ -300,8 +294,7 @@ async fn login_qwen(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
         .header("Accept", "application/json")
         .form(&device_params)
         .send()
-        .await
-        .map_err(|e| ByokError::Http(e.to_string()))?;
+        .await?;
 
     let json: serde_json::Value = resp
         .json()
@@ -332,8 +325,7 @@ async fn login_qwen(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
             .header("Accept", "application/json")
             .form(&token_params)
             .send()
-            .await
-            .map_err(|e| ByokError::Http(e.to_string()))?;
+            .await?;
 
         let json: serde_json::Value = resp
             .json()
@@ -372,10 +364,7 @@ async fn login_kimi(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
         req = req.header(*name, value.as_str());
     }
 
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| ByokError::Http(e.to_string()))?;
+    let resp = req.send().await?;
 
     let json: serde_json::Value = resp
         .json()
@@ -409,10 +398,7 @@ async fn login_kimi(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
             req = req.header(*name, value.as_str());
         }
 
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| ByokError::Http(e.to_string()))?;
+        let resp = req.send().await?;
 
         let json: serde_json::Value = resp
             .json()
@@ -473,8 +459,7 @@ async fn login_iflow(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
         )
         .form(&token_params)
         .send()
-        .await
-        .map_err(|e| ByokError::Http(e.to_string()))?;
+        .await?;
 
     let json: serde_json::Value = resp
         .json()

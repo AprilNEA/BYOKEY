@@ -98,8 +98,7 @@ impl CopilotExecutor {
             .header("editor-version", EDITOR_VERSION)
             .header("editor-plugin-version", PLUGIN_VERSION)
             .send()
-            .await
-            .map_err(|e| ByokError::Http(e.to_string()))?;
+            .await?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -109,10 +108,7 @@ impl CopilotExecutor {
             )));
         }
 
-        let json: Value = resp
-            .json()
-            .await
-            .map_err(|e| ByokError::Http(e.to_string()))?;
+        let json: Value = resp.json().await?;
 
         let api_token = json
             .get("token")
@@ -200,8 +196,7 @@ impl ProviderExecutor for CopilotExecutor {
             .header("content-type", "application/json")
             .json(&body)
             .send()
-            .await
-            .map_err(|e| ByokError::Http(e.to_string()))?;
+            .await?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -212,14 +207,11 @@ impl ProviderExecutor for CopilotExecutor {
         if stream {
             let byte_stream: ByteStream = Box::pin(
                 resp.bytes_stream()
-                    .map(|r| r.map_err(|e| ByokError::Http(e.to_string()))),
+                    .map(|r| r.map_err(ByokError::from)),
             );
             Ok(ProviderResponse::Stream(byte_stream))
         } else {
-            let json: Value = resp
-                .json()
-                .await
-                .map_err(|e| ByokError::Http(e.to_string()))?;
+            let json: Value = resp.json().await?;
             Ok(ProviderResponse::Complete(json))
         }
     }

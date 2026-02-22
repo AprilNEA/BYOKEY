@@ -89,7 +89,7 @@ impl AntigravityExecutor {
                     .json(body)
                     .send()
                     .await
-                    .map_err(|e| ByokError::Http(e.to_string()))
+                    .map_err(ByokError::from)
             }
         }
     }
@@ -233,7 +233,7 @@ impl ProviderExecutor for AntigravityExecutor {
         if stream {
             let model_owned = model;
             let byte_stream: ByteStream = Box::pin(resp.bytes_stream().map(move |chunk_result| {
-                let chunk_bytes = chunk_result.map_err(|e| ByokError::Http(e.to_string()))?;
+                let chunk_bytes = chunk_result.map_err(ByokError::from)?;
                 let text = String::from_utf8_lossy(&chunk_bytes);
                 let mut output = String::new();
 
@@ -260,10 +260,7 @@ impl ProviderExecutor for AntigravityExecutor {
             }));
             Ok(ProviderResponse::Stream(byte_stream))
         } else {
-            let json: Value = resp
-                .json()
-                .await
-                .map_err(|e| ByokError::Http(e.to_string()))?;
+            let json: Value = resp.json().await?;
 
             // Extract the `response` field from the Antigravity envelope
             let gemini_response = json.get("response").cloned().unwrap_or(json);

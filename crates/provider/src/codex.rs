@@ -84,7 +84,7 @@ impl CodexExecutor {
             .json(body)
             .send()
             .await
-            .map_err(|e| ByokError::Http(e.to_string()))
+            .map_err(ByokError::from)
     }
 
     /// Translates an `OpenAI` Chat request, sends it to the Codex Responses
@@ -104,7 +104,7 @@ impl CodexExecutor {
 
         let raw: ByteStream = Box::pin(
             resp.bytes_stream()
-                .map(|r| r.map_err(|e| ByokError::Http(e.to_string()))),
+                .map(|r| r.map_err(ByokError::from)),
         );
 
         Ok(ProviderResponse::Stream(translate_codex_sse(raw, model)))
@@ -126,7 +126,7 @@ impl CodexExecutor {
         let mut all = Vec::new();
         let mut stream = resp
             .bytes_stream()
-            .map_err(|e| ByokError::Http(e.to_string()));
+            .map_err(ByokError::from);
         while let Some(chunk) = stream.try_next().await? {
             all.extend_from_slice(&chunk);
         }
@@ -327,8 +327,7 @@ impl ProviderExecutor for CodexExecutor {
             .header("content-type", "application/json")
             .json(&body)
             .send()
-            .await
-            .map_err(|e| ByokError::Http(e.to_string()))?;
+            .await?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -339,14 +338,11 @@ impl ProviderExecutor for CodexExecutor {
         if stream {
             let byte_stream: ByteStream = Box::pin(
                 resp.bytes_stream()
-                    .map(|r| r.map_err(|e| ByokError::Http(e.to_string()))),
+                    .map(|r| r.map_err(ByokError::from)),
             );
             Ok(ProviderResponse::Stream(byte_stream))
         } else {
-            let json: Value = resp
-                .json()
-                .await
-                .map_err(|e| ByokError::Http(e.to_string()))?;
+            let json: Value = resp.json().await?;
             Ok(ProviderResponse::Complete(json))
         }
     }

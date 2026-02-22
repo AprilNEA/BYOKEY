@@ -114,7 +114,7 @@ pub async fn anthropic_messages(
             .auth
             .get_token(&ProviderId::Claude)
             .await
-            .map_err(|e| ApiError::from(ByokError::Auth(e.to_string())))?;
+            .map_err(ApiError::from)?;
         builder.header("authorization", format!("Bearer {}", token.access_token))
     };
 
@@ -122,7 +122,7 @@ pub async fn anthropic_messages(
         .json(&body)
         .send()
         .await
-        .map_err(|e| ApiError::from(ByokError::Http(e.to_string())))?;
+        .map_err(|e| ApiError(ByokError::from(e)))?;
 
     let status = resp.status();
     if !status.is_success() {
@@ -150,7 +150,7 @@ pub async fn anthropic_messages(
         let json: Value = resp
             .json()
             .await
-            .map_err(|e| ApiError::from(ByokError::Http(e.to_string())))?;
+            .map_err(|e| ApiError(ByokError::from(e)))?;
         Ok((upstream_status, axum::Json(json)).into_response())
     }
 }

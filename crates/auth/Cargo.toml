@@ -12,7 +12,7 @@ homepage.workspace   = true
 workspace = true
 
 [dependencies]
-byokey-types.workspace = true
+byokey-types = { workspace = true, features = ["rquest"] }
 byokey-store.workspace = true
 byokey-config.workspace = true
 oauth2.workspace = true

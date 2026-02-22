@@ -89,8 +89,7 @@ pub async fn fetch_api_key(oauth_token: &str, http: &rquest::Client) -> Result<S
         .get(&url)
         .header("Accept", "application/json")
         .send()
-        .await
-        .map_err(|e| ByokError::Http(e.to_string()))?;
+        .await?;
 
     let status = resp.status();
     let json: serde_json::Value = resp
