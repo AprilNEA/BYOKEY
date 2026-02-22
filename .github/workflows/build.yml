@@ -54,7 +54,7 @@ jobs:
           fi
 
       - name: Package (Unix)
-        if: runner.os != 'Windows'
+        if: github.event_name == 'release' && runner.os != 'Windows'
         shell: bash
         run: |
           BIN="target/${{ matrix.target }}/release/byokey"
@@ -63,7 +63,7 @@ jobs:
           echo "ASSET=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Package (Windows)
-        if: runner.os == 'Windows'
+        if: github.event_name == 'release' && runner.os == 'Windows'
         shell: pwsh
         run: |
           $archive = "byokey-${{ github.event.release.tag_name }}-${{ matrix.target }}.zip"
@@ -71,6 +71,28 @@ jobs:
           "ASSET=$archive" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Upload to Release
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ env.ASSET }}
+
+  update-homebrew:
+    name: Update Homebrew
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_KEY }}
+          repositories: homebrew-tap
+      - name: Trigger homebrew-tap update
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          repository: AprilNEA/homebrew-tap
+          event-type: update-formula
+          client-payload: '{"version": "${{ github.event.release.tag_name }}"}'
