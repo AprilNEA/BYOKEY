@@ -213,11 +213,11 @@ amp:
 
     #[test]
     fn test_from_yaml_backend_copilot() {
-        let yaml = r#"
+        let yaml = r"
 providers:
   gemini:
     backend: copilot
-"#;
+";
         let c = Config::from_yaml(yaml).unwrap();
         let gemini = c.providers.get(&ProviderId::Gemini).unwrap();
         assert_eq!(gemini.backend, Some(ProviderId::Copilot));
@@ -226,11 +226,11 @@ providers:
 
     #[test]
     fn test_from_yaml_fallback_copilot() {
-        let yaml = r#"
+        let yaml = r"
 providers:
   gemini:
     fallback: copilot
-"#;
+";
         let c = Config::from_yaml(yaml).unwrap();
         let gemini = c.providers.get(&ProviderId::Gemini).unwrap();
         assert!(gemini.backend.is_none());
