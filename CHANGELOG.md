@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/AprilNEA/BYOKEY/compare/v0.2.1...v0.3.0) - 2026-02-23
+
+### Added
+
+- *(proxy)* route Gemini native API through backend provider
+- *(config)* default config path ~/.config/byokey/settings.json + JSON support
+
+### Other
+
+- *(desktop)* rewrite from GPUI to Tauri v2
+- *(release-plz)* delete stale release-plz branches before running
+- use app token for release-plz PR creation ([#12](https://github.com/AprilNEA/BYOKEY/pull/12))
+
 ## [0.2.1](https://github.com/AprilNEA/BYOKEY/compare/v0.2.0...v0.2.1) - 2026-02-22
 
 ### Added
