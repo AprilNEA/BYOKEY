@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BYOKEY</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="header">
+      <span class="header-title">BYOKEY</span>
+      <span class="header-status" id="proxy-status-badge">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-text">Stopped</span>
+      </span>
+    </header>
+
+    <main class="provider-list" id="provider-list">
+      <div class="loading">Loading…</div>
+    </main>
+
+    <footer class="footer">
+      <button class="btn-primary" id="toggle-proxy-btn">Start Proxy</button>
+      <span class="port-label" id="port-label">port: —</span>
+    </footer>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>

@@ -4,7 +4,12 @@ plan*.md
 PLAN*.md
 MEMORY.md
 
-# desktop/ is a standalone macOS-only crate outside the workspace.
-# Its Cargo.lock and local .cargo/ config are machine/platform-specific.
-desktop/Cargo.lock
-desktop/.cargo/
+# Playwright MCP artifacts
+.playwright-mcp/
+
+# desktop/ is a standalone Tauri app outside the workspace.
+# Its Cargo.lock, target/, and local .cargo/ config are machine/platform-specific.
+desktop/src-tauri/Cargo.lock
+desktop/src-tauri/target/
+desktop/src-tauri/.cargo/
+desktop/src-tauri/gen/
