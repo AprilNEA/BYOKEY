@@ -100,6 +100,9 @@ impl Config {
 
     /// Loads configuration from a file path, merged with defaults.
     ///
+    /// The file format is determined by the file extension:
+    /// `.json` uses JSON, everything else uses YAML.
+    ///
     /// # Errors
     ///
     /// Returns a [`figment::Error`] if the file cannot be read or parsed.
@@ -107,11 +110,15 @@ impl Config {
     pub fn from_file(path: &std::path::Path) -> Result<Self, figment::Error> {
         use figment::{
             Figment,
-            providers::{Format as _, Serialized, Yaml},
+            providers::{Format as _, Json, Serialized, Yaml},
         };
-        Figment::from(Serialized::defaults(Config::default()))
-            .merge(Yaml::file(path))
-            .extract()
+        let base = Figment::from(Serialized::defaults(Config::default()));
+        let figment = if path.extension().is_some_and(|e| e == "json") {
+            base.merge(Json::file(path))
+        } else {
+            base.merge(Yaml::file(path))
+        };
+        figment.extract()
     }
 }
 

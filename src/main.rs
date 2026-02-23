@@ -28,7 +28,8 @@ struct Cli {
 enum Commands {
     /// Start the proxy server (foreground).
     Serve {
-        /// Path to the YAML configuration file.
+        /// Path to the configuration file (JSON or YAML).
+        /// Defaults to ~/.config/byokey/settings.json if it exists.
         #[arg(short, long, value_name = "FILE")]
         config: Option<PathBuf>,
         /// Override the listening port (default: 8018).
@@ -43,7 +44,8 @@ enum Commands {
     },
     /// Start the proxy server in the background.
     Start {
-        /// Path to the YAML configuration file.
+        /// Path to the configuration file (JSON or YAML).
+        /// Defaults to ~/.config/byokey/settings.json if it exists.
         #[arg(short, long, value_name = "FILE")]
         config: Option<PathBuf>,
         /// Override the listening port (default: 8018).
@@ -63,7 +65,8 @@ enum Commands {
     Stop,
     /// Restart the background proxy server.
     Restart {
-        /// Path to the YAML configuration file.
+        /// Path to the configuration file (JSON or YAML).
+        /// Defaults to ~/.config/byokey/settings.json if it exists.
         #[arg(short, long, value_name = "FILE")]
         config: Option<PathBuf>,
         /// Override the listening port (default: 8018).
@@ -112,7 +115,8 @@ enum Commands {
 enum AutostartAction {
     /// Register byokey as a boot-time service.
     Enable {
-        /// Path to the YAML configuration file.
+        /// Path to the configuration file (JSON or YAML).
+        /// Defaults to ~/.config/byokey/settings.json if it exists.
         #[arg(short, long, value_name = "FILE")]
         config: Option<PathBuf>,
         /// Override the listening port (default: 8018).
@@ -185,7 +189,15 @@ async fn cmd_serve(
     host: Option<String>,
     db: Option<PathBuf>,
 ) -> Result<()> {
-    let mut config = if let Some(path) = &config_path {
+    let effective_path = config_path.or_else(|| {
+        let default = default_config_path();
+        if default.exists() {
+            Some(default)
+        } else {
+            None
+        }
+    });
+    let mut config = if let Some(path) = &effective_path {
         Config::from_file(path).map_err(|e| anyhow::anyhow!("config error: {e}"))?
     } else {
         Config::default()
@@ -660,6 +672,14 @@ async fn open_store(db: Option<PathBuf>) -> Result<SqliteTokenStore> {
     SqliteTokenStore::new(&url)
         .await
         .map_err(|e| anyhow::anyhow!("database error: {e}"))
+}
+
+fn default_config_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home)
+        .join(".config")
+        .join("byokey")
+        .join("settings.json")
 }
 
 fn default_db_path() -> PathBuf {
