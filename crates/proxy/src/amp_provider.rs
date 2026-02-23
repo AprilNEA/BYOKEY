@@ -151,17 +151,43 @@ pub async fn codex_responses_passthrough(
 /// The `{action}` path segment contains `{model}:{method}`, e.g.
 /// `gemini-3-pro:generateContent` or `gemini-3-flash:streamGenerateContent`.
 /// Query parameters (e.g. `?alt=sse`) are forwarded verbatim to the upstream.
+///
+/// When the Gemini provider has `backend` configured (e.g. `backend: copilot`),
+/// the request is translated from Google native format to `OpenAI` format,
+/// sent to the backend provider, and the response is translated back.
 pub async fn gemini_native_passthrough(
     State(state): State<Arc<AppState>>,
     Path(action): Path<String>,
     Query(query_params): Query<HashMap<String, String>>,
     axum::extract::Json(body): axum::extract::Json<Value>,
 ) -> Result<Response, ApiError> {
-    let api_key = state
+    let gemini_config = state
         .config
         .providers
         .get(&ProviderId::Gemini)
-        .and_then(|pc| pc.api_key.clone());
+        .cloned()
+        .unwrap_or_default();
+
+    // Extract model name from action (e.g. "gemini-3-pro:generateContent" → "gemini-3-pro")
+    let model_name = action
+        .split_once(':')
+        .map_or(action.as_str(), |(model, _)| model);
+
+    // If a backend override is configured, translate and route through it.
+    if let Some(backend_id) = &gemini_config.backend {
+        return gemini_native_via_backend(
+            &state,
+            &action,
+            &query_params,
+            body,
+            model_name,
+            backend_id,
+        )
+        .await;
+    }
+
+    // Direct passthrough to Gemini API.
+    let api_key = gemini_config.api_key;
 
     // Rebuild query string from parsed params.
     let qs: String = query_params
@@ -230,6 +256,112 @@ pub async fn gemini_native_passthrough(
             .map_err(|e| ApiError(ByokError::from(e)))?;
         Ok((status, axum::Json(json)).into_response())
     }
+}
+
+/// Route a Gemini native request through an `OpenAI`-compatible backend provider.
+///
+/// Translates: Google native → `OpenAI` → backend → `OpenAI` response → Google native.
+async fn gemini_native_via_backend(
+    state: &Arc<AppState>,
+    action: &str,
+    query_params: &HashMap<String, String>,
+    body: Value,
+    model: &str,
+    backend_id: &ProviderId,
+) -> Result<Response, ApiError> {
+    let is_stream = action.contains("streamGenerateContent")
+        || query_params.get("alt").is_some_and(|v| v == "sse");
+
+    // Build the executor for the backend provider.
+    let backend_config = state
+        .config
+        .providers
+        .get(backend_id)
+        .cloned()
+        .unwrap_or_default();
+    let executor =
+        byokey_provider::make_executor(backend_id, backend_config.api_key, state.auth.clone())
+            .ok_or_else(|| {
+                ApiError::from(ByokError::UnsupportedModel(format!(
+                    "backend {backend_id:?} has no executor"
+                )))
+            })?;
+
+    // Translate Gemini native request → OpenAI format.
+    let openai_req: Value = byokey_translate::GeminiNativeRequest { body: &body, model }
+        .try_into()
+        .map_err(ApiError::from)?;
+
+    // Send through the backend executor.
+    let provider_resp = executor
+        .chat_completion(openai_req, is_stream)
+        .await
+        .map_err(ApiError::from)?;
+
+    match provider_resp {
+        byokey_types::traits::ProviderResponse::Complete(openai_resp) => {
+            let gemini_resp: Value = byokey_translate::OpenAIResponseToGemini {
+                body: &openai_resp,
+                model,
+            }
+            .try_into()
+            .map_err(ApiError::from)?;
+            Ok(axum::Json(gemini_resp).into_response())
+        }
+        byokey_types::traits::ProviderResponse::Stream(byte_stream) => {
+            // Translate each OpenAI SSE chunk → Gemini native SSE chunk.
+            let model_owned = model.to_string();
+            let translated = byte_stream_to_gemini_sse(byte_stream, model_owned);
+            let mapped = translated.map_err(|e| std::io::Error::other(e.to_string()));
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "text/event-stream")
+                .header("cache-control", "no-cache")
+                .header("x-accel-buffering", "no")
+                .body(Body::from_stream(mapped))
+                .expect("valid response"))
+        }
+    }
+}
+
+/// Transform a stream of `OpenAI` SSE byte chunks into Gemini-native SSE chunks.
+///
+/// The upstream `ByteStream` yields arbitrary byte boundaries; SSE lines may be
+/// split across chunks. We buffer incoming bytes and split on newlines so that
+/// each line is translated individually.
+fn byte_stream_to_gemini_sse(
+    upstream: byokey_types::traits::ByteStream,
+    model: String,
+) -> impl futures_util::Stream<Item = std::result::Result<Bytes, ByokError>> {
+    use futures_util::StreamExt as _;
+
+    let mut buffer = Vec::<u8>::new();
+
+    upstream.flat_map(move |chunk_result| {
+        let mut output: Vec<std::result::Result<Bytes, ByokError>> = Vec::new();
+
+        match chunk_result {
+            Err(e) => output.push(Err(e)),
+            Ok(chunk) => {
+                buffer.extend_from_slice(&chunk);
+
+                // Process complete lines from the buffer.
+                while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
+                    let line: Vec<u8> = buffer.drain(..=pos).collect();
+                    let translated: Option<Vec<u8>> = byokey_translate::OpenAISseChunk {
+                        line: &line,
+                        model: &model,
+                    }
+                    .into();
+                    if let Some(bytes) = translated {
+                        output.push(Ok(Bytes::from(bytes)));
+                    }
+                }
+            }
+        }
+
+        futures_util::stream::iter(output)
+    })
 }
 
 /// 共享代理模式下需要从客户端请求中剥离的认证头。

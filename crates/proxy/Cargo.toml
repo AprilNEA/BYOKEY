@@ -16,6 +16,7 @@ byokey-types = { workspace = true, features = ["rquest"] }
 byokey-config.workspace = true
 byokey-auth.workspace = true
 byokey-provider.workspace = true
+byokey-translate.workspace = true
 byokey-store.workspace = true
 axum.workspace = true
 tower.workspace = true

@@ -436,6 +436,7 @@ dependencies = [
  "byokey-config",
  "byokey-provider",
  "byokey-store",
+ "byokey-translate",
  "byokey-types",
  "bytes",
  "futures-util",
