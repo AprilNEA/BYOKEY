@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-translate-v0.2.1...byokey-translate-v0.3.0) - 2026-02-23
+
+### Added
+
+- *(proxy)* route Gemini native API through backend provider
+
 ## [0.1.1](https://github.com/AprilNEA/BYOKEY/compare/byokey-translate-v0.1.0...byokey-translate-v0.1.1) - 2026-02-21
 
 ### Added

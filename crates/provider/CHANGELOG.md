@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-provider-v0.2.1...byokey-provider-v0.3.0) - 2026-02-23
+
+### Added
+
+- *(provider)* Copilot model refresh + Gemini→Copilot backend/fallback
+
 ## [0.2.1](https://github.com/AprilNEA/BYOKEY/compare/byokey-provider-v0.2.0...byokey-provider-v0.2.1) - 2026-02-22
 
 ### Other

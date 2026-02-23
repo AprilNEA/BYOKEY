@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-config-v0.2.1...byokey-config-v0.3.0) - 2026-02-23
+
+### Added
+
+- *(config)* default config path ~/.config/byokey/settings.json + JSON support
+- *(provider)* Copilot model refresh + Gemini→Copilot backend/fallback
+
+### Fixed
+
+- align pre-commit clippy flags with CI and fix needless_raw_string_hashes
+
 ## [0.2.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-config-v0.1.3...byokey-config-v0.2.0) - 2026-02-22
 
 ### Added
