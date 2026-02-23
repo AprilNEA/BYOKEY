@@ -79,7 +79,7 @@ jobs:
   update-homebrew:
     name: Update Homebrew
     needs: build
-    if: github.event_name == 'release'
+    if: always() && github.event_name == 'release' && !cancelled()
     runs-on: ubuntu-latest
     steps:
       - name: Generate token
