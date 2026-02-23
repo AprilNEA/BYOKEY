@@ -50,6 +50,14 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
+      - name: Delete stale release-plz branches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api repos/${{ github.repository }}/branches --paginate --jq '.[].name' \
+            | grep '^release-plz-' \
+            | xargs -I{} gh api repos/${{ github.repository }}/git/refs/heads/{} -X DELETE \
+            || true
       - uses: dtolnay/rust-toolchain@stable
       - uses: MarcoIeni/release-plz-action@v0.5
         with:
