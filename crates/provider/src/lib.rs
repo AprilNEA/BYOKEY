@@ -24,9 +24,41 @@ pub use kiro::KiroExecutor;
 pub use qwen::QwenExecutor;
 pub use registry::resolve_provider;
 
+use async_trait::async_trait;
 use byokey_auth::AuthManager;
-use byokey_types::{ByokError, ProviderId, traits::ProviderExecutor};
+use byokey_config::ProviderConfig;
+use byokey_types::{
+    ByokError, ProviderId,
+    traits::{ProviderExecutor, ProviderResponse, Result as ProviderResult},
+};
 use std::sync::Arc;
+
+/// Wraps a primary executor with a fallback: if the primary fails, the fallback is tried.
+struct FallbackExecutor {
+    primary: Box<dyn ProviderExecutor>,
+    fallback: Box<dyn ProviderExecutor>,
+}
+
+#[async_trait]
+impl ProviderExecutor for FallbackExecutor {
+    async fn chat_completion(
+        &self,
+        request: serde_json::Value,
+        stream: bool,
+    ) -> ProviderResult<ProviderResponse> {
+        match self.primary.chat_completion(request.clone(), stream).await {
+            Ok(resp) => Ok(resp),
+            Err(err) => {
+                eprintln!("[byokey] primary provider failed ({err}), falling back to secondary");
+                self.fallback.chat_completion(request, stream).await
+            }
+        }
+    }
+
+    fn supported_models(&self) -> Vec<String> {
+        self.primary.supported_models()
+    }
+}
 
 /// Create a boxed executor for the given provider.
 ///
@@ -51,19 +83,43 @@ pub fn make_executor(
 
 /// Create an executor by resolving the model string to its provider.
 ///
+/// Respects `ProviderConfig::backend` (always route to another provider) and
+/// `ProviderConfig::fallback` (wrap with a fallback executor).
+///
 /// # Errors
 ///
 /// Returns [`ByokError::UnsupportedModel`] if the model string is not recognised
 /// or if the resolved provider does not have an executor implemented yet.
 pub fn make_executor_for_model(
     model: &str,
-    api_key_fn: impl Fn(&ProviderId) -> Option<String>,
+    config_fn: impl Fn(&ProviderId) -> Option<ProviderConfig>,
     auth: Arc<AuthManager>,
 ) -> Result<Box<dyn ProviderExecutor>, ByokError> {
     let provider = registry::resolve_provider(model)
         .ok_or_else(|| ByokError::UnsupportedModel(model.to_string()))?;
-    make_executor(&provider, api_key_fn(&provider), auth)
-        .ok_or_else(|| ByokError::UnsupportedModel(model.to_string()))
+
+    let config = config_fn(&provider).unwrap_or_default();
+
+    // If a backend override is set, route entirely to that provider.
+    if let Some(backend_id) = &config.backend {
+        let backend_config = config_fn(backend_id).unwrap_or_default();
+        return make_executor(backend_id, backend_config.api_key, auth)
+            .ok_or_else(|| ByokError::UnsupportedModel(model.to_string()));
+    }
+
+    // Build the primary executor.
+    let primary = make_executor(&provider, config.api_key, Arc::clone(&auth))
+        .ok_or_else(|| ByokError::UnsupportedModel(model.to_string()))?;
+
+    // If a fallback is configured, wrap in FallbackExecutor.
+    if let Some(fallback_id) = &config.fallback {
+        let fallback_config = config_fn(fallback_id).unwrap_or_default();
+        if let Some(fallback) = make_executor(fallback_id, fallback_config.api_key, auth) {
+            return Ok(Box::new(FallbackExecutor { primary, fallback }));
+        }
+    }
+
+    Ok(primary)
 }
 
 #[cfg(test)]
@@ -142,11 +198,53 @@ mod tests {
         let ex = make_executor_for_model(
             "gpt-4o",
             |p| match p {
-                ProviderId::Codex => Some("sk-test".into()),
+                ProviderId::Copilot => Some(ProviderConfig {
+                    api_key: Some("sk-test".into()),
+                    ..Default::default()
+                }),
                 _ => None,
             },
             auth,
         );
         assert!(ex.is_ok());
+    }
+
+    #[test]
+    fn test_make_executor_for_model_backend_override() {
+        let auth = make_auth();
+        // gemini model with backend: copilot → should create a Copilot executor
+        let ex = make_executor_for_model(
+            "gemini-2.0-flash",
+            |p| match p {
+                ProviderId::Gemini => Some(ProviderConfig {
+                    backend: Some(ProviderId::Copilot),
+                    ..Default::default()
+                }),
+                _ => None,
+            },
+            auth,
+        );
+        assert!(ex.is_ok());
+    }
+
+    #[test]
+    fn test_make_executor_for_model_fallback() {
+        let auth = make_auth();
+        // gemini model with fallback: copilot → should create a FallbackExecutor
+        let ex = make_executor_for_model(
+            "gemini-2.0-flash",
+            |p| match p {
+                ProviderId::Gemini => Some(ProviderConfig {
+                    fallback: Some(ProviderId::Copilot),
+                    ..Default::default()
+                }),
+                _ => None,
+            },
+            auth,
+        );
+        assert!(ex.is_ok());
+        // FallbackExecutor delegates supported_models to primary (Gemini)
+        let models = ex.unwrap().supported_models();
+        assert!(models.iter().any(|m| m.starts_with("gemini-")));
     }
 }

@@ -15,6 +15,13 @@ pub struct ProviderConfig {
     /// Whether this provider is enabled (defaults to `true`).
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Always route requests to this provider instead (e.g. `backend: copilot`
+    /// lets Gemini requests go through GitHub Copilot).
+    #[serde(default)]
+    pub backend: Option<ProviderId>,
+    /// Fallback provider to use when the primary provider fails.
+    #[serde(default)]
+    pub fallback: Option<ProviderId>,
 }
 
 impl Default for ProviderConfig {
@@ -22,6 +29,8 @@ impl Default for ProviderConfig {
         Self {
             api_key: None,
             enabled: true,
+            backend: None,
+            fallback: None,
         }
     }
 }
@@ -186,5 +195,38 @@ amp:
     fn test_from_yaml_amp_defaults_when_omitted() {
         let c = Config::from_yaml("port: 1234").unwrap();
         assert!(c.amp.upstream_key.is_none());
+    }
+
+    #[test]
+    fn test_provider_config_backend_fallback_default_none() {
+        let pc = ProviderConfig::default();
+        assert!(pc.backend.is_none());
+        assert!(pc.fallback.is_none());
+    }
+
+    #[test]
+    fn test_from_yaml_backend_copilot() {
+        let yaml = r#"
+providers:
+  gemini:
+    backend: copilot
+"#;
+        let c = Config::from_yaml(yaml).unwrap();
+        let gemini = c.providers.get(&ProviderId::Gemini).unwrap();
+        assert_eq!(gemini.backend, Some(ProviderId::Copilot));
+        assert!(gemini.fallback.is_none());
+    }
+
+    #[test]
+    fn test_from_yaml_fallback_copilot() {
+        let yaml = r#"
+providers:
+  gemini:
+    fallback: copilot
+"#;
+        let c = Config::from_yaml(yaml).unwrap();
+        let gemini = c.providers.get(&ProviderId::Gemini).unwrap();
+        assert!(gemini.backend.is_none());
+        assert_eq!(gemini.fallback, Some(ProviderId::Copilot));
     }
 }

@@ -35,11 +35,10 @@ pub async fn chat_completions(
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
 
     let config = state.config.clone();
-    let api_key_fn =
-        move |p: &ProviderId| config.providers.get(p).and_then(|pc| pc.api_key.clone());
+    let config_fn = move |p: &ProviderId| config.providers.get(p).cloned();
 
     let executor =
-        make_executor_for_model(&model, api_key_fn, state.auth.clone()).map_err(ApiError::from)?;
+        make_executor_for_model(&model, config_fn, state.auth.clone()).map_err(ApiError::from)?;
 
     match executor
         .chat_completion(body, stream)

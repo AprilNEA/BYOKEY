@@ -37,6 +37,8 @@ struct CachedToken {
     token: String,
     api_endpoint: String,
     expires_at: Instant,
+    /// `true` = Pro/Business/Enterprise, `false` = Free tier.
+    is_pro: bool,
 }
 
 /// Executor for the GitHub Copilot API.
@@ -137,6 +139,12 @@ impl CopilotExecutor {
             .trim_end_matches('/')
             .to_string();
 
+        // If "copilot_plan" is absent or not "copilot_free", assume Pro+.
+        let is_pro = json
+            .get("copilot_plan")
+            .and_then(Value::as_str)
+            .is_none_or(|plan| plan != "copilot_free");
+
         let chat_url = format!("{api_endpoint}/chat/completions");
 
         // Cache the new token
@@ -148,11 +156,37 @@ impl CopilotExecutor {
                     token: api_token.clone(),
                     api_endpoint,
                     expires_at: Instant::now() + ttl,
+                    is_pro,
                 },
             );
         }
 
         Ok((api_token, chat_url))
+    }
+
+    /// Returns `true` if the current Copilot token belongs to a Pro/Business/Enterprise plan.
+    ///
+    /// Defaults to `true` (Pro) if the plan cannot be determined (e.g. no cached token yet
+    /// or the `copilot_plan` field was absent in the token exchange response).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal token cache mutex is poisoned.
+    pub async fn is_pro(&self) -> bool {
+        if let Ok(github_token) = self
+            .auth
+            .get_token(&ProviderId::Copilot)
+            .await
+            .map(|t| t.access_token)
+        {
+            let cache = self.cache.lock().unwrap();
+            if let Some(cached) = cache.get(&github_token)
+                && cached.expires_at > Instant::now()
+            {
+                return cached.is_pro;
+            }
+        }
+        true // conservative default: assume Pro
     }
 
     /// Returns the `X-Initiator` header value based on whether the request

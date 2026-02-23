@@ -80,15 +80,49 @@ pub fn antigravity_models() -> Vec<String> {
 }
 
 /// Returns the list of supported GitHub Copilot model identifiers.
+///
+/// Includes Free-tier and Pro/Business/Enterprise models.
+/// Some models (e.g. `claude-*`, `gemini-*`) share names with other providers
+/// and are only routable via Copilot when `backend: copilot` is configured.
 #[must_use]
 pub fn copilot_models() -> Vec<String> {
     // GitHub Copilot OpenAI-compatible endpoint
     vec![
+        // Free tier
         "gpt-4o".into(),
-        "gpt-4o-mini".into(),
-        "claude-3.5-sonnet".into(),
-        "o3-mini".into(),
+        "gpt-4.1".into(),
+        "gpt-5-mini".into(),
+        "claude-haiku-4.5".into(),
+        "raptor-mini".into(),
+        "goldeneye".into(),
+        // Pro / Business / Enterprise
+        "claude-sonnet-4".into(),
+        "claude-sonnet-4.5".into(),
+        "claude-sonnet-4.6".into(),
+        "claude-opus-4.5".into(),
+        "claude-opus-4.6".into(),
+        "gemini-2.5-pro".into(),
+        "gemini-3-flash".into(),
+        "gemini-3-pro".into(),
+        "gemini-3.1-pro".into(),
+        "gpt-5.1".into(),
+        "gpt-5.1-codex".into(),
+        "gpt-5.1-codex-mini".into(),
+        "gpt-5.1-codex-max".into(),
+        "gpt-5.2".into(),
+        "gpt-5.2-codex".into(),
+        "gpt-5.3-codex".into(),
+        "grok-code-fast-1".into(),
     ]
+}
+
+/// Returns `true` if the model is available on the Copilot **Free** tier.
+#[must_use]
+pub fn is_copilot_free_model(model: &str) -> bool {
+    matches!(
+        model,
+        "gpt-4o" | "gpt-4.1" | "gpt-5-mini" | "claude-haiku-4.5" | "raptor-mini" | "goldeneye"
+    )
 }
 
 /// Map a model string to its backing provider.
@@ -107,7 +141,11 @@ pub fn resolve_provider(model: &str) -> Option<ProviderId> {
         Some(ProviderId::Qwen)
     } else if model.starts_with("glm-") || model.starts_with("kimi-") {
         Some(ProviderId::IFlow)
-    } else if matches!(model, "gpt-4o" | "gpt-4o-mini" | "o3-mini") {
+    } else if matches!(
+        model,
+        "gpt-4o" | "gpt-4.1" | "gpt-5-mini" | "raptor-mini" | "goldeneye" | "grok-code-fast-1"
+    ) || model.starts_with("gpt-5.")
+    {
         Some(ProviderId::Copilot)
     } else if matches!(model, "o4-mini" | "o3" | "gpt-4-turbo" | "gpt-4") {
         Some(ProviderId::Codex)
@@ -153,10 +191,44 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_gpt4o_to_copilot() {
+    fn test_resolve_to_copilot() {
         assert_eq!(resolve_provider("gpt-4o"), Some(ProviderId::Copilot));
-        assert_eq!(resolve_provider("gpt-4o-mini"), Some(ProviderId::Copilot));
-        assert_eq!(resolve_provider("o3-mini"), Some(ProviderId::Copilot));
+        assert_eq!(resolve_provider("gpt-4.1"), Some(ProviderId::Copilot));
+        assert_eq!(resolve_provider("gpt-5-mini"), Some(ProviderId::Copilot));
+        assert_eq!(resolve_provider("raptor-mini"), Some(ProviderId::Copilot));
+        assert_eq!(resolve_provider("goldeneye"), Some(ProviderId::Copilot));
+        assert_eq!(
+            resolve_provider("grok-code-fast-1"),
+            Some(ProviderId::Copilot)
+        );
+        assert_eq!(resolve_provider("gpt-5.1"), Some(ProviderId::Copilot));
+        assert_eq!(resolve_provider("gpt-5.1-codex"), Some(ProviderId::Copilot));
+        assert_eq!(resolve_provider("gpt-5.2"), Some(ProviderId::Copilot));
+        assert_eq!(resolve_provider("gpt-5.3-codex"), Some(ProviderId::Copilot));
+    }
+
+    #[test]
+    fn test_retired_models_no_longer_copilot() {
+        // These were retired on 2025-10-23 and should no longer resolve to Copilot.
+        assert_ne!(resolve_provider("gpt-4o-mini"), Some(ProviderId::Copilot));
+        assert_ne!(resolve_provider("o3-mini"), Some(ProviderId::Copilot));
+        assert_ne!(
+            resolve_provider("claude-3.5-sonnet"),
+            Some(ProviderId::Copilot)
+        );
+    }
+
+    #[test]
+    fn test_is_copilot_free_model() {
+        assert!(is_copilot_free_model("gpt-4o"));
+        assert!(is_copilot_free_model("gpt-4.1"));
+        assert!(is_copilot_free_model("gpt-5-mini"));
+        assert!(is_copilot_free_model("claude-haiku-4.5"));
+        assert!(is_copilot_free_model("raptor-mini"));
+        assert!(is_copilot_free_model("goldeneye"));
+        assert!(!is_copilot_free_model("gpt-5.1"));
+        assert!(!is_copilot_free_model("claude-sonnet-4.5"));
+        assert!(!is_copilot_free_model("grok-code-fast-1"));
     }
 
     #[test]
