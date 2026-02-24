@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-provider-v0.3.0...byokey-provider-v0.4.0) - 2026-02-24
+
+### Added
+
+- multi-account OAuth support per provider
+- *(config)* multi-API-key configuration and credential routing
+
+### Other
+
+- *(provider)* structured errors, shared HTTP client, Kimi executor, thinking suffix
+- introduce tracing + fix config hot-reload via ArcSwap
+
 ## [0.3.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-provider-v0.2.1...byokey-provider-v0.3.0) - 2026-02-23
 
 ### Added

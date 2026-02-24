@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-proxy-v0.3.0...byokey-proxy-v0.4.0) - 2026-02-24
+
+### Added
+
+- multi-account OAuth support per provider
+
+### Other
+
+- *(provider)* structured errors, shared HTTP client, Kimi executor, thinking suffix
+- introduce tracing + fix config hot-reload via ArcSwap
+
 ## [0.3.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-proxy-v0.2.1...byokey-proxy-v0.3.0) - 2026-02-23
 
 ### Added
