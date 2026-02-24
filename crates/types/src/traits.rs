@@ -95,15 +95,6 @@ pub trait TokenStore: Send + Sync {
     }
 }
 
-/// Acquires and refreshes OAuth tokens for a single provider.
-#[async_trait]
-pub trait TokenProvider: Send + Sync {
-    /// Obtain a valid access token, performing an OAuth flow if necessary.
-    async fn get_token(&self) -> Result<OAuthToken>;
-    /// Force-refresh the current token using the stored refresh token.
-    async fn refresh(&self) -> Result<OAuthToken>;
-}
-
 /// Translates an `OpenAI`-format request into a provider's native format.
 ///
 /// Implementations must be pure (no I/O).

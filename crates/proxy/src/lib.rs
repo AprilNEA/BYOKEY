@@ -105,7 +105,7 @@ mod tests {
 
     fn make_state() -> Arc<AppState> {
         let store = Arc::new(InMemoryTokenStore::new());
-        let auth = Arc::new(AuthManager::new(store));
+        let auth = Arc::new(AuthManager::new(store, rquest::Client::new()));
         let config = Arc::new(ArcSwap::from_pointee(Config::default()));
         AppState::new(config, auth)
     }

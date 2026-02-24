@@ -16,5 +16,5 @@ pub use provider::{ProtocolFormat, ProviderId};
 pub use token::{AccountInfo, OAuthToken, TokenState};
 pub use traits::{
     ByteStream, ProviderExecutor, ProviderResponse, RequestTranslator, ResponseTranslator,
-    TokenProvider, TokenStore,
+    TokenStore,
 };

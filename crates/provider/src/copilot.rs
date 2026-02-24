@@ -242,7 +242,7 @@ mod tests {
 
     fn make_executor() -> CopilotExecutor {
         let store = Arc::new(InMemoryTokenStore::new());
-        let auth = Arc::new(AuthManager::new(store));
+        let auth = Arc::new(AuthManager::new(store, rquest::Client::new()));
         CopilotExecutor::new(Client::new(), None, auth)
     }
 

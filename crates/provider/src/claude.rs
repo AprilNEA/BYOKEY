@@ -306,7 +306,7 @@ mod tests {
 
     fn make_executor() -> ClaudeExecutor {
         let store = Arc::new(InMemoryTokenStore::new());
-        let auth = Arc::new(AuthManager::new(store));
+        let auth = Arc::new(AuthManager::new(store, rquest::Client::new()));
         ClaudeExecutor::new(Client::new(), None, auth)
     }
 
@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn test_supported_models_with_api_key() {
         let store = Arc::new(InMemoryTokenStore::new());
-        let auth = Arc::new(AuthManager::new(store));
+        let auth = Arc::new(AuthManager::new(store, rquest::Client::new()));
         let ex = ClaudeExecutor::new(Client::new(), Some("sk-ant-test".into()), auth);
         assert!(!ex.supported_models().is_empty());
     }

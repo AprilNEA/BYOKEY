@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 const BASE_URL: &str = "https://assets.byokey.io/oauth";
 
-/// Minimal credential fields returned by the remote JSON files.
+/// Credential fields returned by the remote JSON files.
 #[derive(Debug, Clone, Deserialize)]
 pub struct OAuthCredentials {
     /// OAuth 2.0 client ID.
@@ -17,6 +17,9 @@ pub struct OAuthCredentials {
     /// OAuth 2.0 client secret (absent for public clients).
     #[serde(default)]
     pub client_secret: Option<String>,
+    /// OAuth 2.0 token endpoint URL (used for both initial exchange and refresh).
+    #[serde(default)]
+    pub token_url: Option<String>,
 }
 
 /// Fetch credentials for `provider_name` (e.g. `"gemini"`, `"antigravity"`).

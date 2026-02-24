@@ -94,7 +94,7 @@ mod tests {
 
     fn make_executor() -> QwenExecutor {
         let store = Arc::new(InMemoryTokenStore::new());
-        let auth = Arc::new(AuthManager::new(store));
+        let auth = Arc::new(AuthManager::new(store, rquest::Client::new()));
         QwenExecutor::new(Client::new(), None, auth)
     }
 

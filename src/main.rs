@@ -238,7 +238,10 @@ async fn cmd_serve(
         port.unwrap_or(snapshot.port),
     );
 
-    let auth = Arc::new(AuthManager::new(Arc::new(open_store(db).await?)));
+    let auth = Arc::new(AuthManager::new(
+        Arc::new(open_store(db).await?),
+        rquest::Client::new(),
+    ));
     let state = AppState::new(config_arc, auth);
     let app = byokey_proxy::make_router(state);
 
@@ -649,7 +652,7 @@ async fn cmd_login(
     let provider = provider_str
         .parse::<ProviderId>()
         .map_err(|e| anyhow::anyhow!("unknown provider '{provider_str}': {e}"))?;
-    let auth = AuthManager::new(Arc::new(open_store(db).await?));
+    let auth = AuthManager::new(Arc::new(open_store(db).await?), rquest::Client::new());
     byokey_auth::flow::login(&provider, &auth, account.as_deref())
         .await
         .map_err(|e| anyhow::anyhow!("login failed: {e}"))?;
@@ -664,7 +667,7 @@ async fn cmd_logout(
     let provider = provider_str
         .parse::<ProviderId>()
         .map_err(|e| anyhow::anyhow!("unknown provider '{provider_str}': {e}"))?;
-    let auth = AuthManager::new(Arc::new(open_store(db).await?));
+    let auth = AuthManager::new(Arc::new(open_store(db).await?), rquest::Client::new());
     if let Some(account_id) = &account {
         auth.remove_token_for(&provider, account_id)
             .await
@@ -680,7 +683,7 @@ async fn cmd_logout(
 }
 
 async fn cmd_status(db: Option<PathBuf>) -> Result<()> {
-    let auth = AuthManager::new(Arc::new(open_store(db).await?));
+    let auth = AuthManager::new(Arc::new(open_store(db).await?), rquest::Client::new());
     let providers = [
         ProviderId::Claude,
         ProviderId::Codex,
@@ -718,7 +721,7 @@ async fn cmd_accounts(provider_str: String, db: Option<PathBuf>) -> Result<()> {
     let provider = provider_str
         .parse::<ProviderId>()
         .map_err(|e| anyhow::anyhow!("unknown provider '{provider_str}': {e}"))?;
-    let auth = AuthManager::new(Arc::new(open_store(db).await?));
+    let auth = AuthManager::new(Arc::new(open_store(db).await?), rquest::Client::new());
     let accounts = auth
         .list_accounts(&provider)
         .await
@@ -742,7 +745,7 @@ async fn cmd_switch(provider_str: String, account: String, db: Option<PathBuf>) 
     let provider = provider_str
         .parse::<ProviderId>()
         .map_err(|e| anyhow::anyhow!("unknown provider '{provider_str}': {e}"))?;
-    let auth = AuthManager::new(Arc::new(open_store(db).await?));
+    let auth = AuthManager::new(Arc::new(open_store(db).await?), rquest::Client::new());
     auth.set_active_account(&provider, &account)
         .await
         .map_err(|e| anyhow::anyhow!("switch failed: {e}"))?;

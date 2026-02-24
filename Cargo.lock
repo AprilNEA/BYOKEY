@@ -358,6 +358,7 @@ dependencies = [
  "byokey-store",
  "byokey-types",
  "clap",
+ "rquest",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -383,6 +384,7 @@ dependencies = [
  "sha2",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

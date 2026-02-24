@@ -109,7 +109,10 @@ mod tests {
     use byokey_store::InMemoryTokenStore;
 
     fn make_auth() -> Arc<AuthManager> {
-        Arc::new(AuthManager::new(Arc::new(InMemoryTokenStore::new())))
+        Arc::new(AuthManager::new(
+            Arc::new(InMemoryTokenStore::new()),
+            rquest::Client::new(),
+        ))
     }
 
     #[test]

@@ -2,9 +2,8 @@
 //!
 //! Responsibilities:
 //! - Load tokens from a [`TokenStore`].
-//! - Detect expiration and trigger refresh.
+//! - Detect expiration and trigger refresh via the provider's token endpoint.
 //! - Cooldown duration to prevent excessive refresh attempts (30 s).
-//! - Background async refresh (non-blocking on the request path).
 //! - Multi-account support: save, switch, and list accounts per provider.
 use byokey_types::{
     AccountInfo, ByokError, OAuthToken, ProviderId, TokenState, TokenStore, traits::Result,
@@ -15,6 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::{credentials, iflow};
+
 const REFRESH_COOLDOWN: Duration = Duration::from_secs(30);
 
 struct ProviderState {
@@ -23,13 +24,15 @@ struct ProviderState {
 
 pub struct AuthManager {
     store: Arc<dyn TokenStore>,
+    http: rquest::Client,
     state: Mutex<HashMap<ProviderId, ProviderState>>,
 }
 
 impl AuthManager {
-    pub fn new(store: Arc<dyn TokenStore>) -> Self {
+    pub fn new(store: Arc<dyn TokenStore>, http: rquest::Client) -> Self {
         Self {
             store,
+            http,
             state: Mutex::new(HashMap::new()),
         }
     }
@@ -171,12 +174,7 @@ impl AuthManager {
 
     // ── Private helpers ──────────────────────────────────────────────────
 
-    #[allow(clippy::unused_async)]
-    async fn refresh_token(
-        &self,
-        provider: &ProviderId,
-        _token: &OAuthToken,
-    ) -> Result<OAuthToken> {
+    async fn refresh_token(&self, provider: &ProviderId, token: &OAuthToken) -> Result<OAuthToken> {
         // Check cooldown period
         {
             let state = self.state.lock().unwrap();
@@ -199,11 +197,173 @@ impl AuthManager {
                 },
             );
         }
-        // Actual refresh is implemented by each provider module; return an error for the caller to handle
-        Err(ByokError::Auth(format!(
-            "token refresh not implemented for {provider}; please re-authenticate"
-        )))
+
+        let refresh_token = token
+            .refresh_token
+            .as_deref()
+            .ok_or_else(|| ByokError::Auth(format!("no refresh_token for {provider}")))?;
+
+        // Copilot tokens don't expire; Kiro login is not yet implemented.
+        if matches!(provider, ProviderId::Copilot | ProviderId::Kiro) {
+            return Err(ByokError::Auth(format!(
+                "token refresh not supported for {provider}; please re-authenticate"
+            )));
+        }
+
+        // Fetch credentials (client_id, client_secret, token_url) from CDN.
+        let provider_name = provider.to_string();
+        let creds = credentials::fetch(&provider_name, &self.http).await?;
+        let token_url = creds.token_url.as_deref().ok_or_else(|| {
+            ByokError::Auth(format!("no token_url in credentials for {provider}"))
+        })?;
+
+        // Build the refresh request.
+        let new_token = if *provider == ProviderId::IFlow {
+            self.refresh_iflow(&creds, token_url, refresh_token).await?
+        } else {
+            self.refresh_standard(&creds, token_url, refresh_token)
+                .await?
+        };
+
+        // Preserve the old refresh_token if the response didn't include a new one
+        // (Google OAuth typically does not return a new refresh_token on refresh).
+        let new_token = if new_token.refresh_token.is_none() {
+            OAuthToken {
+                refresh_token: token.refresh_token.clone(),
+                ..new_token
+            }
+        } else {
+            new_token
+        };
+
+        self.store.save(provider, &new_token).await?;
+        tracing::info!(%provider, "token refreshed successfully");
+        Ok(new_token)
     }
+
+    /// Standard `OAuth2` refresh: POST form with `grant_type=refresh_token`.
+    async fn refresh_standard(
+        &self,
+        creds: &credentials::OAuthCredentials,
+        token_url: &str,
+        refresh_token: &str,
+    ) -> Result<OAuthToken> {
+        let mut params = vec![
+            ("grant_type", "refresh_token"),
+            ("client_id", creds.client_id.as_str()),
+            ("refresh_token", refresh_token),
+        ];
+        // Providers with a client_secret (Gemini, Antigravity) include it in the form.
+        let secret_ref;
+        if let Some(secret) = &creds.client_secret {
+            secret_ref = secret.clone();
+            params.push(("client_secret", &secret_ref));
+        }
+
+        let resp = self
+            .http
+            .post(token_url)
+            .header("Accept", "application/json")
+            .form(&params)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ByokError::Auth(format!("failed to parse refresh response: {e}")))?;
+
+        if !status.is_success() {
+            let error_desc = json
+                .get("error_description")
+                .or_else(|| json.get("error"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown error");
+            return Err(ByokError::Auth(format!(
+                "refresh failed ({status}): {error_desc}"
+            )));
+        }
+
+        parse_token_response(&json)
+    }
+
+    /// iFlow-specific refresh: uses Basic Auth header and exchanges the new
+    /// OAuth `access_token` for an API key via `fetch_api_key`.
+    async fn refresh_iflow(
+        &self,
+        creds: &credentials::OAuthCredentials,
+        token_url: &str,
+        refresh_token: &str,
+    ) -> Result<OAuthToken> {
+        let client_secret = creds
+            .client_secret
+            .as_deref()
+            .ok_or_else(|| ByokError::Auth("iflow credentials missing client_secret".into()))?;
+
+        let params = [
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+        ];
+
+        let resp = self
+            .http
+            .post(token_url)
+            .header(
+                "Authorization",
+                iflow::basic_auth_header(&creds.client_id, client_secret),
+            )
+            .form(&params)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ByokError::Auth(format!("failed to parse refresh response: {e}")))?;
+
+        if !status.is_success() {
+            let error_desc = json
+                .get("error_description")
+                .or_else(|| json.get("error"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown error");
+            return Err(ByokError::Auth(format!(
+                "iflow refresh failed ({status}): {error_desc}"
+            )));
+        }
+
+        let token = parse_token_response(&json)?;
+
+        // Exchange the new OAuth access_token for an iFlow API key.
+        let api_key = iflow::fetch_api_key(&token.access_token, &self.http).await?;
+        Ok(OAuthToken {
+            access_token: api_key,
+            ..token
+        })
+    }
+}
+
+/// Parse a standard OAuth token response JSON into an [`OAuthToken`].
+fn parse_token_response(json: &serde_json::Value) -> Result<OAuthToken> {
+    let access_token = json
+        .get("access_token")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| ByokError::Auth("missing access_token in refresh response".into()))?
+        .to_string();
+
+    let mut token = OAuthToken::new(access_token);
+    if let Some(r) = json
+        .get("refresh_token")
+        .and_then(serde_json::Value::as_str)
+    {
+        token = token.with_refresh(r);
+    }
+    if let Some(exp) = json.get("expires_in").and_then(serde_json::Value::as_u64) {
+        token = token.with_expiry(exp);
+    }
+    Ok(token)
 }
 
 #[cfg(test)]
@@ -213,7 +373,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn make_manager() -> AuthManager {
-        AuthManager::new(Arc::new(InMemoryTokenStore::new()))
+        AuthManager::new(Arc::new(InMemoryTokenStore::new()), rquest::Client::new())
     }
 
     fn past_ts(secs: u64) -> u64 {
