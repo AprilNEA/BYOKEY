@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-translate-v0.3.0...byokey-translate-v0.4.0) - 2026-02-24
+
+### Other
+
+- *(provider)* structured errors, shared HTTP client, Kimi executor, thinking suffix
+
 ## [0.3.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-translate-v0.2.1...byokey-translate-v0.3.0) - 2026-02-23
 
 ### Added
