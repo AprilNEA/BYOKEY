@@ -25,63 +25,52 @@ struct Cli {
     command: Commands,
 }
 
+/// Common server arguments shared across serve/start/restart/autostart commands.
+#[derive(clap::Args, Debug)]
+struct ServerArgs {
+    /// Path to the configuration file (JSON or YAML).
+    /// Defaults to ~/.config/byokey/settings.json if it exists.
+    #[arg(short, long, value_name = "FILE")]
+    config: Option<PathBuf>,
+    /// Override the listening port (default: 8018).
+    #[arg(short, long)]
+    port: Option<u16>,
+    /// Override the listening address (default: 127.0.0.1).
+    #[arg(long)]
+    host: Option<String>,
+    /// SQLite database path (default: ~/.byokey/tokens.db).
+    #[arg(long, value_name = "PATH")]
+    db: Option<PathBuf>,
+}
+
+/// Extended server arguments that include a log file path (for background/daemon modes).
+#[derive(clap::Args, Debug)]
+struct DaemonArgs {
+    #[command(flatten)]
+    server: ServerArgs,
+    /// Log file path (default: ~/.byokey/server.log).
+    #[arg(long, value_name = "PATH")]
+    log_file: Option<PathBuf>,
+}
+
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Start the proxy server (foreground).
     Serve {
-        /// Path to the configuration file (JSON or YAML).
-        /// Defaults to ~/.config/byokey/settings.json if it exists.
-        #[arg(short, long, value_name = "FILE")]
-        config: Option<PathBuf>,
-        /// Override the listening port (default: 8018).
-        #[arg(short, long)]
-        port: Option<u16>,
-        /// Override the listening address (default: 127.0.0.1).
-        #[arg(long)]
-        host: Option<String>,
-        /// SQLite database path (default: ~/.byokey/tokens.db).
-        #[arg(long, value_name = "PATH")]
-        db: Option<PathBuf>,
+        #[command(flatten)]
+        server: ServerArgs,
     },
     /// Start the proxy server in the background.
     Start {
-        /// Path to the configuration file (JSON or YAML).
-        /// Defaults to ~/.config/byokey/settings.json if it exists.
-        #[arg(short, long, value_name = "FILE")]
-        config: Option<PathBuf>,
-        /// Override the listening port (default: 8018).
-        #[arg(short, long)]
-        port: Option<u16>,
-        /// Override the listening address (default: 127.0.0.1).
-        #[arg(long)]
-        host: Option<String>,
-        /// SQLite database path (default: ~/.byokey/tokens.db).
-        #[arg(long, value_name = "PATH")]
-        db: Option<PathBuf>,
-        /// Log file path (default: ~/.byokey/server.log).
-        #[arg(long, value_name = "PATH")]
-        log_file: Option<PathBuf>,
+        #[command(flatten)]
+        daemon: DaemonArgs,
     },
     /// Stop the background proxy server.
     Stop,
     /// Restart the background proxy server.
     Restart {
-        /// Path to the configuration file (JSON or YAML).
-        /// Defaults to ~/.config/byokey/settings.json if it exists.
-        #[arg(short, long, value_name = "FILE")]
-        config: Option<PathBuf>,
-        /// Override the listening port (default: 8018).
-        #[arg(short, long)]
-        port: Option<u16>,
-        /// Override the listening address (default: 127.0.0.1).
-        #[arg(long)]
-        host: Option<String>,
-        /// SQLite database path (default: ~/.byokey/tokens.db).
-        #[arg(long, value_name = "PATH")]
-        db: Option<PathBuf>,
-        /// Log file path (default: ~/.byokey/server.log).
-        #[arg(long, value_name = "PATH")]
-        log_file: Option<PathBuf>,
+        #[command(flatten)]
+        daemon: DaemonArgs,
     },
     /// Manage auto-start on system boot.
     Autostart {
@@ -116,22 +105,8 @@ enum Commands {
 enum AutostartAction {
     /// Register byokey as a boot-time service.
     Enable {
-        /// Path to the configuration file (JSON or YAML).
-        /// Defaults to ~/.config/byokey/settings.json if it exists.
-        #[arg(short, long, value_name = "FILE")]
-        config: Option<PathBuf>,
-        /// Override the listening port (default: 8018).
-        #[arg(short, long)]
-        port: Option<u16>,
-        /// Override the listening address (default: 127.0.0.1).
-        #[arg(long)]
-        host: Option<String>,
-        /// SQLite database path (default: ~/.byokey/tokens.db).
-        #[arg(long, value_name = "PATH")]
-        db: Option<PathBuf>,
-        /// Log file path (default: ~/.byokey/server.log).
-        #[arg(long, value_name = "PATH")]
-        log_file: Option<PathBuf>,
+        #[command(flatten)]
+        daemon: DaemonArgs,
     },
     /// Unregister the boot-time service.
     Disable,
@@ -144,35 +119,32 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Serve {
-            config,
-            port,
-            host,
-            db,
-        } => cmd_serve(config, port, host, db).await,
-        Commands::Start {
-            config,
-            port,
-            host,
-            db,
-            log_file,
-        } => cmd_start(config, port, host, db, log_file),
+        Commands::Serve { server } => {
+            cmd_serve(server.config, server.port, server.host, server.db).await
+        }
+        Commands::Start { daemon } => cmd_start(
+            daemon.server.config,
+            daemon.server.port,
+            daemon.server.host,
+            daemon.server.db,
+            daemon.log_file,
+        ),
         Commands::Stop => cmd_stop(),
-        Commands::Restart {
-            config,
-            port,
-            host,
-            db,
-            log_file,
-        } => cmd_restart(config, port, host, db, log_file),
+        Commands::Restart { daemon } => cmd_restart(
+            daemon.server.config,
+            daemon.server.port,
+            daemon.server.host,
+            daemon.server.db,
+            daemon.log_file,
+        ),
         Commands::Autostart { action } => match action {
-            AutostartAction::Enable {
-                config,
-                port,
-                host,
-                db,
-                log_file,
-            } => autostart_enable_impl(config, port, host, db, log_file),
+            AutostartAction::Enable { daemon } => autostart_enable_impl(
+                daemon.server.config,
+                daemon.server.port,
+                daemon.server.host,
+                daemon.server.db,
+                daemon.log_file,
+            ),
             AutostartAction::Disable => autostart_disable_impl(),
             AutostartAction::Status => autostart_status_impl(),
         },
