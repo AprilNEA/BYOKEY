@@ -17,12 +17,14 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
 anyhow = "1"
+rquest = "5"
+arc-swap = "1"
 
-byokey-types = { version = "0.2.0", path = "../../crates/types" }
-byokey-config = { version = "0.2.0", path = "../../crates/config" }
-byokey-store = { version = "0.2.0", path = "../../crates/store" }
-byokey-auth = { version = "0.2.0", path = "../../crates/auth" }
-byokey-proxy = { version = "0.2.0", path = "../../crates/proxy" }
+byokey-types = { path = "../../crates/types" }
+byokey-config = { path = "../../crates/config" }
+byokey-store = { path = "../../crates/store" }
+byokey-auth = { path = "../../crates/auth" }
+byokey-proxy = { path = "../../crates/proxy" }
 
 [lints.rust]
 unsafe_code = "forbid"

@@ -89,7 +89,8 @@ async fn toggle_proxy(state: tauri::State<'_, AppState>) -> Result<ProxyStatusRe
 
         tokio::spawn(async move {
             let addr = format!("{}:{}", config.host, port);
-            let app_state = byokey_proxy::AppState::new(config, auth);
+            let config_arc = Arc::new(arc_swap::ArcSwap::from_pointee((*config).clone()));
+            let app_state = byokey_proxy::AppState::new(config_arc, auth);
             let app = byokey_proxy::make_router(app_state);
 
             let listener = match tokio::net::TcpListener::bind(&addr).await {
@@ -183,7 +184,7 @@ fn main() {
     let store = rt
         .block_on(open_store())
         .expect("failed to open token store");
-    let auth = Arc::new(AuthManager::new(Arc::new(store)));
+    let auth = Arc::new(AuthManager::new(Arc::new(store), rquest::Client::new()));
 
     let app_state = AppState {
         auth,
