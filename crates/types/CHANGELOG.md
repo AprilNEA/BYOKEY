@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/AprilNEA/BYOKEY/compare/byokey-types-v0.3.0...byokey-types-v0.3.1) - 2026-02-24
+
+### Added
+
+- multi-account OAuth support per provider
+
+### Other
+
+- *(provider)* structured errors, shared HTTP client, Kimi executor, thinking suffix
+
 ## [0.2.1](https://github.com/AprilNEA/BYOKEY/compare/byokey-types-v0.2.0...byokey-types-v0.2.1) - 2026-02-22
 
 ### Other
