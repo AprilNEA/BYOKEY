@@ -3,17 +3,16 @@
 //! Auth: Bearer API key (obtained via OAuth + userInfo exchange).
 //! Format: `OpenAI` passthrough (no translation needed).
 
+use crate::http_util::ProviderHttp;
 use crate::registry;
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
 use byokey_types::{
-    ByokError, ProviderId,
-    traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
+    ChatRequest, ProviderId,
+    traits::{ProviderExecutor, ProviderResponse, Result},
 };
-use futures_util::StreamExt as _;
 use hmac::{Hmac, Mac};
 use rquest::Client;
-use serde_json::Value;
 use sha2::Sha256;
 use std::sync::Arc;
 
@@ -22,7 +21,7 @@ const API_URL: &str = "https://apis.iflow.cn/v1/chat/completions";
 
 /// Executor for the iFlow (Z.ai / GLM) API.
 pub struct IFlowExecutor {
-    http: Client,
+    ph: ProviderHttp,
     api_key: Option<String>,
     auth: Arc<AuthManager>,
 }
@@ -31,7 +30,7 @@ impl IFlowExecutor {
     /// Creates a new iFlow executor with an optional API key and auth manager.
     pub fn new(http: Client, api_key: Option<String>, auth: Arc<AuthManager>) -> Self {
         Self {
-            http,
+            ph: ProviderHttp::new(http),
             api_key,
             auth,
         }
@@ -60,9 +59,9 @@ fn create_signature(api_key: &str, session_id: &str, timestamp: u64) -> String {
 
 #[async_trait]
 impl ProviderExecutor for IFlowExecutor {
-    async fn chat_completion(&self, request: Value, stream: bool) -> Result<ProviderResponse> {
-        let mut body = request;
-        body["stream"] = Value::Bool(stream);
+    async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
+        let stream = request.stream;
+        let body = request.into_body();
 
         let api_key = self.resolve_api_key().await?;
 
@@ -81,8 +80,9 @@ impl ProviderExecutor for IFlowExecutor {
             "application/json"
         };
 
-        let resp = self
-            .http
+        let builder = self
+            .ph
+            .client()
             .post(API_URL)
             .header("content-type", "application/json")
             .header("authorization", format!("Bearer {api_key}"))
@@ -91,27 +91,9 @@ impl ProviderExecutor for IFlowExecutor {
             .header("x-iflow-timestamp", timestamp.to_string())
             .header("x-iflow-signature", &signature)
             .header("accept", accept)
-            .json(&body)
-            .send()
-            .await?;
+            .json(&body);
 
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(ByokError::Upstream {
-                status: status.as_u16(),
-                body: text,
-            });
-        }
-
-        if stream {
-            let byte_stream: ByteStream =
-                Box::pin(resp.bytes_stream().map(|r| r.map_err(ByokError::from)));
-            Ok(ProviderResponse::Stream(byte_stream))
-        } else {
-            let json: Value = resp.json().await?;
-            Ok(ProviderResponse::Complete(json))
-        }
+        self.ph.send_passthrough(builder, stream).await
     }
 
     fn supported_models(&self) -> Vec<String> {

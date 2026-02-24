@@ -121,7 +121,7 @@ async fn login_provider(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let provider_id: ProviderId = provider.parse().map_err(|e: byokey_types::ByokError| e.to_string())?;
-    byokey_auth::flow::login(&provider_id, &state.auth)
+    byokey_auth::flow::login(&provider_id, &state.auth, None)
         .await
         .map_err(|e| e.to_string())
 }

@@ -2,16 +2,14 @@
 //!
 //! Uses Gemini's OpenAI-compatible endpoint for simplicity.
 //! Auth: `Authorization: Bearer {token}` for OAuth, `x-goog-api-key` for API key.
-use crate::registry;
+use crate::{http_util::ProviderHttp, registry};
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
 use byokey_types::{
-    ByokError, ProviderId,
-    traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
+    ChatRequest, ProviderId,
+    traits::{ProviderExecutor, ProviderResponse, Result},
 };
-use futures_util::StreamExt as _;
 use rquest::Client;
-use serde_json::Value;
 use std::sync::Arc;
 
 /// Gemini OpenAI-compatible endpoint
@@ -19,7 +17,7 @@ const API_URL: &str = "https://generativelanguage.googleapis.com/v1beta/openai/c
 
 /// Executor for the Google Gemini API.
 pub struct GeminiExecutor {
-    http: Client,
+    ph: ProviderHttp,
     api_key: Option<String>,
     auth: Arc<AuthManager>,
 }
@@ -28,7 +26,7 @@ impl GeminiExecutor {
     /// Creates a new Gemini executor with an optional API key and auth manager.
     pub fn new(http: Client, api_key: Option<String>, auth: Arc<AuthManager>) -> Self {
         Self {
-            http,
+            ph: ProviderHttp::new(http),
             api_key,
             auth,
         }
@@ -46,38 +44,22 @@ impl GeminiExecutor {
 
 #[async_trait]
 impl ProviderExecutor for GeminiExecutor {
-    async fn chat_completion(&self, request: Value, stream: bool) -> Result<ProviderResponse> {
-        let mut body = request;
-        body["stream"] = Value::Bool(stream);
+    async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
+        let stream = request.stream;
+        let mut body = request.into_body();
+        body["stream"] = serde_json::Value::Bool(stream);
 
         let (header_name, header_value) = self.auth_header().await?;
 
-        let resp = self
-            .http
+        let builder = self
+            .ph
+            .client()
             .post(API_URL)
             .header(header_name, header_value)
             .header("content-type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
+            .json(&body);
 
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(ByokError::Upstream {
-                status: status.as_u16(),
-                body: text,
-            });
-        }
-
-        if stream {
-            let byte_stream: ByteStream =
-                Box::pin(resp.bytes_stream().map(|r| r.map_err(ByokError::from)));
-            Ok(ProviderResponse::Stream(byte_stream))
-        } else {
-            let json: Value = resp.json().await?;
-            Ok(ProviderResponse::Complete(json))
-        }
+        self.ph.send_passthrough(builder, stream).await
     }
 
     fn supported_models(&self) -> Vec<String> {

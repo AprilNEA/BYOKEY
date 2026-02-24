@@ -2,18 +2,15 @@
 //!
 //! Kiro exposes an Anthropic Messages API at its own endpoint.
 //! Format: `OpenAI` -> Anthropic (translate), Anthropic -> `OpenAI` (translate).
+use crate::http_util::ProviderHttp;
 use crate::registry;
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
 use byokey_translate::{ClaudeToOpenAI, OpenAIToClaude};
 use byokey_types::{
-    ByokError, ProviderId,
-    traits::{
-        ByteStream, ProviderExecutor, ProviderResponse, RequestTranslator, ResponseTranslator,
-        Result,
-    },
+    ChatRequest, ProviderId,
+    traits::{ProviderExecutor, ProviderResponse, RequestTranslator, ResponseTranslator, Result},
 };
-use futures_util::StreamExt as _;
 use rquest::Client;
 use serde_json::Value;
 use std::sync::Arc;
@@ -26,7 +23,7 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// Executor for the Kiro API (Anthropic-compatible).
 pub struct KiroExecutor {
-    http: Client,
+    ph: ProviderHttp,
     api_key: Option<String>,
     auth: Arc<AuthManager>,
 }
@@ -35,7 +32,7 @@ impl KiroExecutor {
     /// Creates a new Kiro executor with an optional API key and auth manager.
     pub fn new(http: Client, api_key: Option<String>, auth: Arc<AuthManager>) -> Self {
         Self {
-            http,
+            ph: ProviderHttp::new(http),
             api_key,
             auth,
         }
@@ -53,34 +50,25 @@ impl KiroExecutor {
 
 #[async_trait]
 impl ProviderExecutor for KiroExecutor {
-    async fn chat_completion(&self, request: Value, stream: bool) -> Result<ProviderResponse> {
-        let mut body = OpenAIToClaude.translate_request(request)?;
+    async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
+        let stream = request.stream;
+        let mut body = OpenAIToClaude.translate_request(request.into_body())?;
         body["stream"] = Value::Bool(stream);
 
         let token = self.bearer_token().await?;
-        let resp = self
-            .http
+        let builder = self
+            .ph
+            .client()
             .post(KIRO_API_URL)
             .header("authorization", format!("Bearer {token}"))
             .header("anthropic-version", ANTHROPIC_VERSION)
             .header("content-type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
+            .json(&body);
 
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(ByokError::Upstream {
-                status: status.as_u16(),
-                body: text,
-            });
-        }
+        let resp = self.ph.send(builder).await?;
 
         if stream {
-            let byte_stream: ByteStream =
-                Box::pin(resp.bytes_stream().map(|r| r.map_err(ByokError::from)));
-            Ok(ProviderResponse::Stream(byte_stream))
+            Ok(ProviderResponse::Stream(ProviderHttp::byte_stream(resp)))
         } else {
             let json: Value = resp.json().await?;
             let translated = ClaudeToOpenAI.translate_response(json)?;

@@ -4,14 +4,14 @@
 //! Auth: `Authorization: Bearer {token}` for both OAuth and API key.
 //! Model names are prefixed with `kimi-` locally and stripped before upstream dispatch.
 
+use crate::http_util::ProviderHttp;
 use crate::registry;
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
 use byokey_types::{
-    ByokError, ProviderId,
-    traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
+    ChatRequest, ProviderId,
+    traits::{ProviderExecutor, ProviderResponse, Result},
 };
-use futures_util::StreamExt as _;
 use rquest::Client;
 use serde_json::Value;
 use std::sync::Arc;
@@ -21,7 +21,7 @@ const API_URL: &str = "https://api.kimi.com/coding/v1/chat/completions";
 
 /// Executor for the Moonshot AI (Kimi) API.
 pub struct KimiExecutor {
-    http: Client,
+    ph: ProviderHttp,
     api_key: Option<String>,
     auth: Arc<AuthManager>,
     device_id: String,
@@ -31,7 +31,7 @@ impl KimiExecutor {
     /// Creates a new Kimi executor with an optional API key and auth manager.
     pub fn new(http: Client, api_key: Option<String>, auth: Arc<AuthManager>) -> Self {
         Self {
-            http,
+            ph: ProviderHttp::new(http),
             api_key,
             auth,
             device_id: byokey_auth::kimi::device_id(),
@@ -55,9 +55,9 @@ fn strip_kimi_prefix(model: &str) -> &str {
 
 #[async_trait]
 impl ProviderExecutor for KimiExecutor {
-    async fn chat_completion(&self, request: Value, stream: bool) -> Result<ProviderResponse> {
-        let mut body = request;
-        body["stream"] = Value::Bool(stream);
+    async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
+        let stream = request.stream;
+        let mut body = request.into_body();
 
         if stream {
             body["stream_options"] = serde_json::json!({ "include_usage": true });
@@ -76,8 +76,9 @@ impl ProviderExecutor for KimiExecutor {
             "application/json"
         };
 
-        let resp = self
-            .http
+        let builder = self
+            .ph
+            .client()
             .post(API_URL)
             .header("content-type", "application/json")
             .header("authorization", format!("Bearer {token}"))
@@ -88,27 +89,9 @@ impl ProviderExecutor for KimiExecutor {
             .header("x-msh-device-model", byokey_auth::kimi::DEVICE_MODEL)
             .header("x-msh-device-id", &self.device_id)
             .header("accept", accept)
-            .json(&body)
-            .send()
-            .await?;
+            .json(&body);
 
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(ByokError::Upstream {
-                status: status.as_u16(),
-                body: text,
-            });
-        }
-
-        if stream {
-            let byte_stream: ByteStream =
-                Box::pin(resp.bytes_stream().map(|r| r.map_err(ByokError::from)));
-            Ok(ProviderResponse::Stream(byte_stream))
-        } else {
-            let json: Value = resp.json().await?;
-            Ok(ProviderResponse::Complete(json))
-        }
+        self.ph.send_passthrough(builder, stream).await
     }
 
     fn supported_models(&self) -> Vec<String> {

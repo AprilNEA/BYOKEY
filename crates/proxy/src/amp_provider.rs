@@ -294,13 +294,24 @@ async fn gemini_native_via_backend(
     })?;
 
     // Translate Gemini native request → OpenAI format.
-    let openai_req: Value = byokey_translate::GeminiNativeRequest { body: &body, model }
+    let mut openai_req: Value = byokey_translate::GeminiNativeRequest { body: &body, model }
         .try_into()
         .map_err(ApiError::from)?;
 
+    // Inject stream flag based on the Gemini action URL.
+    openai_req["stream"] = Value::Bool(is_stream);
+
+    // Build a ChatRequest from the translated OpenAI body.
+    let chat_request: byokey_types::ChatRequest =
+        serde_json::from_value(openai_req).map_err(|e| {
+            ApiError::from(ByokError::Translation(format!(
+                "failed to parse translated request: {e}"
+            )))
+        })?;
+
     // Send through the backend executor.
     let provider_resp = executor
-        .chat_completion(openai_req, is_stream)
+        .chat_completion(chat_request)
         .await
         .map_err(ApiError::from)?;
 

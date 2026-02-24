@@ -2,15 +2,14 @@
 //!
 //! Auth: device code flow → GitHub token → exchange for short-lived Copilot API token.
 //! Format: `OpenAI` passthrough (no translation needed).
+use crate::http_util::ProviderHttp;
 use crate::registry;
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
 use byokey_types::{
-    ByokError, ProviderId,
-    traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
+    ByokError, ChatRequest, ProviderId,
+    traits::{ProviderExecutor, ProviderResponse, Result},
 };
-use futures_util::StreamExt as _;
-use rquest::Client;
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -43,7 +42,7 @@ struct CachedToken {
 
 /// Executor for the GitHub Copilot API.
 pub struct CopilotExecutor {
-    http: Client,
+    ph: ProviderHttp,
     api_key: Option<String>,
     auth: Arc<AuthManager>,
     /// Cache: GitHub token → short-lived Copilot API token.
@@ -52,9 +51,9 @@ pub struct CopilotExecutor {
 
 impl CopilotExecutor {
     /// Creates a new Copilot executor with an optional API key and auth manager.
-    pub fn new(http: Client, api_key: Option<String>, auth: Arc<AuthManager>) -> Self {
+    pub fn new(http: rquest::Client, api_key: Option<String>, auth: Arc<AuthManager>) -> Self {
         Self {
-            http,
+            ph: ProviderHttp::new(http),
             api_key,
             auth,
             cache: Mutex::new(HashMap::new()),
@@ -92,7 +91,8 @@ impl CopilotExecutor {
 
         // Exchange GitHub token for Copilot API token
         let resp = self
-            .http
+            .ph
+            .client()
             .get(COPILOT_TOKEN_URL)
             .header("authorization", format!("token {github_token}"))
             .header("accept", "application/json")
@@ -191,33 +191,29 @@ impl CopilotExecutor {
 
     /// Returns the `X-Initiator` header value based on whether the request
     /// contains any assistant/tool messages (agent) or only user messages.
-    fn initiator(body: &Value) -> &'static str {
-        let is_agent = body
-            .get("messages")
-            .and_then(Value::as_array)
-            .is_some_and(|msgs| {
-                msgs.iter().any(|m| {
-                    matches!(
-                        m.get("role").and_then(Value::as_str),
-                        Some("assistant" | "tool")
-                    )
-                })
-            });
+    fn initiator(request: &ChatRequest) -> &'static str {
+        let is_agent = request.messages.iter().any(|m| {
+            matches!(
+                m.get("role").and_then(Value::as_str),
+                Some("assistant" | "tool")
+            )
+        });
         if is_agent { "agent" } else { "user" }
     }
 }
 
 #[async_trait]
 impl ProviderExecutor for CopilotExecutor {
-    async fn chat_completion(&self, request: Value, stream: bool) -> Result<ProviderResponse> {
-        let mut body = request;
-        body["stream"] = Value::Bool(stream);
+    async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
+        let stream = request.stream;
+        let initiator = Self::initiator(&request);
+        let body = request.into_body();
 
-        let initiator = Self::initiator(&body);
         let (token, url) = self.copilot_creds().await?;
 
-        let resp = self
-            .http
+        let builder = self
+            .ph
+            .client()
             .post(&url)
             .header("authorization", format!("Bearer {token}"))
             .header("user-agent", USER_AGENT)
@@ -228,27 +224,9 @@ impl ProviderExecutor for CopilotExecutor {
             .header("x-github-api-version", GITHUB_API_VERSION)
             .header("x-initiator", initiator)
             .header("content-type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
+            .json(&body);
 
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(ByokError::Upstream {
-                status: status.as_u16(),
-                body: text,
-            });
-        }
-
-        if stream {
-            let byte_stream: ByteStream =
-                Box::pin(resp.bytes_stream().map(|r| r.map_err(ByokError::from)));
-            Ok(ProviderResponse::Stream(byte_stream))
-        } else {
-            let json: Value = resp.json().await?;
-            Ok(ProviderResponse::Complete(json))
-        }
+        self.ph.send_passthrough(builder, stream).await
     }
 
     fn supported_models(&self) -> Vec<String> {
@@ -260,6 +238,7 @@ impl ProviderExecutor for CopilotExecutor {
 mod tests {
     use super::*;
     use byokey_store::InMemoryTokenStore;
+    use rquest::Client;
 
     fn make_executor() -> CopilotExecutor {
         let store = Arc::new(InMemoryTokenStore::new());
@@ -275,20 +254,24 @@ mod tests {
 
     #[test]
     fn test_initiator_user() {
-        let body = serde_json::json!({
+        let req: ChatRequest = serde_json::from_value(serde_json::json!({
+            "model": "gpt-4o",
             "messages": [{"role": "user", "content": "hi"}]
-        });
-        assert_eq!(CopilotExecutor::initiator(&body), "user");
+        }))
+        .unwrap();
+        assert_eq!(CopilotExecutor::initiator(&req), "user");
     }
 
     #[test]
     fn test_initiator_agent() {
-        let body = serde_json::json!({
+        let req: ChatRequest = serde_json::from_value(serde_json::json!({
+            "model": "gpt-4o",
             "messages": [
                 {"role": "user", "content": "hi"},
                 {"role": "assistant", "content": "hello"}
             ]
-        });
-        assert_eq!(CopilotExecutor::initiator(&body), "agent");
+        }))
+        .unwrap();
+        assert_eq!(CopilotExecutor::initiator(&req), "agent");
     }
 }
