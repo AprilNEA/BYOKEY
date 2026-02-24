@@ -82,6 +82,18 @@ pub enum TokenState {
     Invalid,
 }
 
+/// Metadata about a stored account (without the token itself).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountInfo {
+    /// Unique identifier within the provider (e.g. `"default"`, `"work"`).
+    pub account_id: String,
+    /// Optional human-readable label for display.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Whether this account is the active one for its provider.
+    pub is_active: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

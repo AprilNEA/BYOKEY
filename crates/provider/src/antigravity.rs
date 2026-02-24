@@ -5,12 +5,13 @@
 //! JSON lines (not SSE), each containing a `response` field with a Gemini
 //! stream chunk.
 
+use crate::http_util::ProviderHttp;
 use crate::registry;
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
 use byokey_translate::{GeminiToOpenAI, OpenAIToGemini};
 use byokey_types::{
-    ByokError, ProviderId, RequestTranslator, ResponseTranslator,
+    ByokError, ChatRequest, ProviderId, RequestTranslator, ResponseTranslator,
     traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
 };
 use bytes::Bytes;
@@ -26,7 +27,7 @@ const FALLBACK_URL: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com";
 
 /// Executor for the Antigravity (Cloud Code) API.
 pub struct AntigravityExecutor {
-    http: Client,
+    ph: ProviderHttp,
     api_key: Option<String>,
     auth: Arc<AuthManager>,
 }
@@ -35,7 +36,7 @@ impl AntigravityExecutor {
     /// Creates a new Antigravity executor with an optional API key and auth manager.
     pub fn new(http: Client, api_key: Option<String>, auth: Arc<AuthManager>) -> Self {
         Self {
-            http,
+            ph: ProviderHttp::new(http),
             api_key,
             auth,
         }
@@ -66,7 +67,8 @@ impl AntigravityExecutor {
 
         let primary = format!("{PRIMARY_URL}{path}");
         let result = self
-            .http
+            .ph
+            .client()
             .post(&primary)
             .header("authorization", format!("Bearer {token}"))
             .header("user-agent", "antigravity/1.104.0 darwin/arm64")
@@ -80,7 +82,8 @@ impl AntigravityExecutor {
             Ok(r) if r.status().as_u16() != 429 => Ok(r),
             _ => {
                 let fallback = format!("{FALLBACK_URL}{path}");
-                self.http
+                self.ph
+                    .client()
                     .post(&fallback)
                     .header("authorization", format!("Bearer {token}"))
                     .header("user-agent", "antigravity/1.104.0 darwin/arm64")
@@ -201,15 +204,18 @@ fn gemini_chunk_to_openai_sse(chunk: &Value, model: &str) -> Option<String> {
 
 #[async_trait]
 impl ProviderExecutor for AntigravityExecutor {
-    async fn chat_completion(&self, request: Value, stream: bool) -> Result<ProviderResponse> {
+    async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
+        let stream = request.stream;
+        let body = request.into_body();
+
         // Extract model from request, strip ag- prefix for the actual API call
-        let model = request.get("model").and_then(Value::as_str).map_or_else(
+        let model = body.get("model").and_then(Value::as_str).map_or_else(
             || "gemini-2.5-pro".to_string(),
             |m| strip_ag_prefix(m).to_string(),
         );
 
         // Translate OpenAI -> Gemini format
-        let mut gemini_body = OpenAIToGemini.translate_request(request)?;
+        let mut gemini_body = OpenAIToGemini.translate_request(body)?;
 
         // Wrap in Antigravity envelope
         let body = wrap_request(&model, &mut gemini_body);

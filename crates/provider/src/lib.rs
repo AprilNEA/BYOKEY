@@ -9,11 +9,13 @@ pub mod claude;
 pub mod codex;
 pub mod copilot;
 pub mod gemini;
+pub mod http_util;
 pub mod iflow;
 pub mod kimi;
 pub mod kiro;
 pub mod qwen;
 pub mod registry;
+pub mod retry;
 pub mod routing;
 
 pub use antigravity::AntigravityExecutor;
@@ -28,11 +30,13 @@ pub use qwen::QwenExecutor;
 pub use registry::resolve_provider;
 pub use routing::CredentialRouter;
 
+pub use http_util::ProviderHttp;
+
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
 use byokey_config::ProviderConfig;
 use byokey_types::{
-    ByokError, ProviderId,
+    ByokError, ChatRequest, ProviderId,
     traits::{ProviderExecutor, ProviderResponse, Result as ProviderResult},
 };
 use rquest::Client;
@@ -46,16 +50,12 @@ struct FallbackExecutor {
 
 #[async_trait]
 impl ProviderExecutor for FallbackExecutor {
-    async fn chat_completion(
-        &self,
-        request: serde_json::Value,
-        stream: bool,
-    ) -> ProviderResult<ProviderResponse> {
-        match self.primary.chat_completion(request.clone(), stream).await {
+    async fn chat_completion(&self, request: ChatRequest) -> ProviderResult<ProviderResponse> {
+        match self.primary.chat_completion(request.clone()).await {
             Ok(resp) => Ok(resp),
             Err(err) => {
                 tracing::warn!(error = %err, "primary provider failed, falling back");
-                self.fallback.chat_completion(request, stream).await
+                self.fallback.chat_completion(request).await
             }
         }
     }
@@ -89,8 +89,9 @@ pub fn make_executor(
 
 /// Create an executor by resolving the model string to its provider.
 ///
-/// Respects `ProviderConfig::backend` (always route to another provider) and
-/// `ProviderConfig::fallback` (wrap with a fallback executor).
+/// Respects `ProviderConfig::backend` (always route to another provider),
+/// `ProviderConfig::fallback` (wrap with a fallback executor), and
+/// `ProviderConfig::api_keys` (multi-key retry with [`retry::RetryExecutor`]).
 ///
 /// # Errors
 ///
@@ -114,7 +115,34 @@ pub fn make_executor_for_model(
             .ok_or_else(|| ByokError::UnsupportedModel(model.to_string()));
     }
 
-    // Build the primary executor.
+    // If multiple API keys are configured, use RetryExecutor for key rotation.
+    let all_keys = config.all_api_keys();
+    if all_keys.len() > 1 {
+        let keys: Vec<String> = all_keys.into_iter().map(String::from).collect();
+        // Need supported_models from a temporary executor to pass to RetryExecutor.
+        let models = make_executor(&provider, None, Arc::clone(&auth), http.clone())
+            .map(|e| e.supported_models())
+            .unwrap_or_default();
+        let primary: Box<dyn ProviderExecutor> = Box::new(retry::RetryExecutor::new(
+            provider.clone(),
+            keys,
+            Arc::clone(&auth),
+            http.clone(),
+            models,
+        ));
+
+        // Wrap with fallback if configured.
+        if let Some(fallback_id) = &config.fallback {
+            let fallback_config = config_fn(fallback_id).unwrap_or_default();
+            if let Some(fallback) = make_executor(fallback_id, fallback_config.api_key, auth, http)
+            {
+                return Ok(Box::new(FallbackExecutor { primary, fallback }));
+            }
+        }
+        return Ok(primary);
+    }
+
+    // Build the primary executor (single key or OAuth).
     let primary = make_executor(&provider, config.api_key, Arc::clone(&auth), http.clone())
         .ok_or_else(|| ByokError::UnsupportedModel(model.to_string()))?;
 
@@ -278,5 +306,56 @@ mod tests {
         // FallbackExecutor delegates supported_models to primary (Gemini)
         let models = ex.unwrap().supported_models();
         assert!(models.iter().any(|m| m.starts_with("gemini-")));
+    }
+
+    #[test]
+    fn test_make_executor_for_model_multi_key_retry() {
+        use byokey_config::ApiKeyEntry;
+
+        let auth = make_auth();
+        let ex = make_executor_for_model(
+            "claude-opus-4-6",
+            |p| match p {
+                ProviderId::Claude => Some(ProviderConfig {
+                    api_keys: vec![
+                        ApiKeyEntry {
+                            api_key: "sk-key-1".into(),
+                            label: None,
+                        },
+                        ApiKeyEntry {
+                            api_key: "sk-key-2".into(),
+                            label: None,
+                        },
+                    ],
+                    ..Default::default()
+                }),
+                _ => None,
+            },
+            auth,
+            make_http(),
+        );
+        assert!(ex.is_ok());
+        // RetryExecutor delegates supported_models from the provider
+        let models = ex.unwrap().supported_models();
+        assert!(models.iter().any(|m| m.starts_with("claude-")));
+    }
+
+    #[test]
+    fn test_make_executor_for_model_single_api_key_no_retry() {
+        let auth = make_auth();
+        // Single api_key → no RetryExecutor, direct executor
+        let ex = make_executor_for_model(
+            "claude-opus-4-6",
+            |p| match p {
+                ProviderId::Claude => Some(ProviderConfig {
+                    api_key: Some("sk-single".into()),
+                    ..Default::default()
+                }),
+                _ => None,
+            },
+            auth,
+            make_http(),
+        );
+        assert!(ex.is_ok());
     }
 }

@@ -9,12 +9,13 @@
 //!   `chatgpt.com/backend-api/codex/responses`.  Request translated with
 //!   [`OpenAIToCodex`]; response parsed from SSE and translated with
 //!   [`CodexToOpenAI`].
+use crate::http_util::ProviderHttp;
 use crate::registry;
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
 use byokey_translate::{CodexToOpenAI, OpenAIToCodex};
 use byokey_types::{
-    ByokError, ProviderId,
+    ByokError, ChatRequest, ProviderId,
     traits::{
         ByteStream, ProviderExecutor, ProviderResponse, RequestTranslator, ResponseTranslator,
         Result,
@@ -40,7 +41,7 @@ const CODEX_USER_AGENT: &str = "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Appl
 
 /// Executor for the `OpenAI` (Codex) API.
 pub struct CodexExecutor {
-    http: Client,
+    ph: ProviderHttp,
     api_key: Option<String>,
     auth: Arc<AuthManager>,
 }
@@ -49,7 +50,7 @@ impl CodexExecutor {
     /// Creates a new Codex executor with an optional API key and auth manager.
     pub fn new(http: Client, api_key: Option<String>, auth: Arc<AuthManager>) -> Self {
         Self {
-            http,
+            ph: ProviderHttp::new(http),
             api_key,
             auth,
         }
@@ -71,7 +72,9 @@ impl CodexExecutor {
     async fn codex_request(&self, body: &Value, token: &str) -> Result<rquest::Response> {
         let url = format!("{CODEX_BASE_URL}/responses");
         let session_id = random_uuid();
-        self.http
+        let builder = self
+            .ph
+            .client()
             .post(&url)
             .header("content-type", "application/json")
             .header("authorization", format!("Bearer {token}"))
@@ -81,50 +84,32 @@ impl CodexExecutor {
             .header("Originator", "codex_cli_rs")
             .header("Accept", "text/event-stream")
             .header("Connection", "Keep-Alive")
-            .json(body)
-            .send()
-            .await
-            .map_err(ByokError::from)
+            .json(body);
+        self.ph.send(builder).await
     }
 
     /// Translates an `OpenAI` Chat request, sends it to the Codex Responses
     /// API, and returns a streaming `ByteStream` of `OpenAI`-format SSE events.
-    async fn codex_stream(&self, request: Value, token: &str) -> Result<ProviderResponse> {
-        let mut codex_body = OpenAIToCodex.translate_request(request)?;
+    async fn codex_stream(&self, body: Value, token: &str) -> Result<ProviderResponse> {
+        let mut codex_body = OpenAIToCodex.translate_request(body)?;
         codex_body["stream"] = Value::Bool(true);
 
         let resp = self.codex_request(&codex_body, token).await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(ByokError::Upstream {
-                status: status.as_u16(),
-                body: text,
-            });
-        }
 
         let model = codex_body["model"].as_str().unwrap_or("codex").to_string();
 
-        let raw: ByteStream = Box::pin(resp.bytes_stream().map(|r| r.map_err(ByokError::from)));
+        let raw: ByteStream = ProviderHttp::byte_stream(resp);
 
         Ok(ProviderResponse::Stream(translate_codex_sse(raw, model)))
     }
 
     /// Like [`codex_stream`] but collects the full SSE response and extracts
     /// the completed OpenAI-format `Value`.
-    async fn codex_complete(&self, request: Value, token: &str) -> Result<ProviderResponse> {
-        let mut codex_body = OpenAIToCodex.translate_request(request)?;
+    async fn codex_complete(&self, body: Value, token: &str) -> Result<ProviderResponse> {
+        let mut codex_body = OpenAIToCodex.translate_request(body)?;
         codex_body["stream"] = Value::Bool(true); // Codex always streams
 
         let resp = self.codex_request(&codex_body, token).await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(ByokError::Upstream {
-                status: status.as_u16(),
-                body: text,
-            });
-        }
 
         let mut all = Vec::new();
         let mut stream = resp.bytes_stream().map_err(ByokError::from);
@@ -306,47 +291,29 @@ fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStream {
 
 #[async_trait]
 impl ProviderExecutor for CodexExecutor {
-    async fn chat_completion(&self, request: Value, stream: bool) -> Result<ProviderResponse> {
+    async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
         let (token, is_oauth) = self.token().await?;
+        let stream = request.stream;
 
         if is_oauth {
-            // Subscription / PKCE token → Codex Responses API
+            let body = request.into_body();
             if stream {
-                return self.codex_stream(request, &token).await;
+                return self.codex_stream(body, &token).await;
             }
-            return self.codex_complete(request, &token).await;
+            return self.codex_complete(body, &token).await;
         }
 
         // API key → standard OpenAI Chat Completions
-        let mut body = request;
-        body["stream"] = Value::Bool(stream);
-
-        let resp = self
-            .http
+        let body = request.into_body();
+        let builder = self
+            .ph
+            .client()
             .post(OPENAI_API_URL)
             .header("authorization", format!("Bearer {token}"))
             .header("content-type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
+            .json(&body);
 
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(ByokError::Upstream {
-                status: status.as_u16(),
-                body: text,
-            });
-        }
-
-        if stream {
-            let byte_stream: ByteStream =
-                Box::pin(resp.bytes_stream().map(|r| r.map_err(ByokError::from)));
-            Ok(ProviderResponse::Stream(byte_stream))
-        } else {
-            let json: Value = resp.json().await?;
-            Ok(ProviderResponse::Complete(json))
-        }
+        self.ph.send_passthrough(builder, stream).await
     }
 
     fn supported_models(&self) -> Vec<String> {

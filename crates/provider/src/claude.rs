@@ -2,12 +2,13 @@
 //!
 //! Auth: `x-api-key` for raw API keys, `Authorization: Bearer` for OAuth tokens.
 //! Format: `OpenAI` -> Anthropic (translate), Anthropic -> `OpenAI` (translate).
+use crate::http_util::ProviderHttp;
 use crate::registry;
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
 use byokey_translate::{ClaudeToOpenAI, OpenAIToClaude, inject_cache_control};
 use byokey_types::{
-    ByokError, ProviderId,
+    ChatRequest, ProviderId,
     traits::{
         ByteStream, ProviderExecutor, ProviderResponse, RequestTranslator, ResponseTranslator,
         Result,
@@ -41,7 +42,7 @@ enum AuthMode {
 
 /// Executor for the Anthropic Claude API.
 pub struct ClaudeExecutor {
-    http: Client,
+    ph: ProviderHttp,
     api_key: Option<String>,
     auth: Arc<AuthManager>,
 }
@@ -50,7 +51,7 @@ impl ClaudeExecutor {
     /// Creates a new Claude executor with an optional API key and auth manager.
     pub fn new(http: Client, api_key: Option<String>, auth: Arc<AuthManager>) -> Self {
         Self {
-            http,
+            ph: ProviderHttp::new(http),
             api_key,
             auth,
         }
@@ -68,15 +69,17 @@ impl ClaudeExecutor {
 
 #[async_trait]
 impl ProviderExecutor for ClaudeExecutor {
-    async fn chat_completion(&self, request: Value, stream: bool) -> Result<ProviderResponse> {
-        let mut body = OpenAIToClaude.translate_request(request)?;
+    async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
+        let stream = request.stream;
+        let mut body = OpenAIToClaude.translate_request(request.into_body())?;
         body = inject_cache_control(body);
         body["stream"] = Value::Bool(stream);
 
         let auth = self.get_auth().await?;
 
         let builder = self
-            .http
+            .ph
+            .client()
             .post(API_URL)
             .header("anthropic-version", ANTHROPIC_VERSION)
             .header("anthropic-beta", ANTHROPIC_BETA)
@@ -90,20 +93,10 @@ impl ProviderExecutor for ClaudeExecutor {
             AuthMode::Bearer(tok) => builder.header("authorization", format!("Bearer {tok}")),
         };
 
-        let resp = builder.json(&body).send().await?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(ByokError::Upstream {
-                status: status.as_u16(),
-                body: text,
-            });
-        }
+        let resp = self.ph.send(builder.json(&body)).await?;
 
         if stream {
-            let byte_stream: ByteStream =
-                Box::pin(resp.bytes_stream().map(|r| r.map_err(ByokError::from)));
+            let byte_stream: ByteStream = ProviderHttp::byte_stream(resp);
             Ok(ProviderResponse::Stream(translate_claude_sse(byte_stream)))
         } else {
             let json: Value = resp.json().await?;

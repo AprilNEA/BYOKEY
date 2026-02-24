@@ -205,7 +205,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_chat_missing_model_returns_400() {
+    async fn test_chat_missing_model_returns_422() {
         use serde_json::json;
 
         let app = make_router(make_state());
@@ -222,8 +222,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Empty model string → UnsupportedModel → 400
-        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+        // Missing required `model` field → axum JSON rejection → 422
+        assert_eq!(resp.status(), axum::http::StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[tokio::test]

@@ -81,6 +81,9 @@ enum Commands {
     Login {
         /// Provider name (claude / codex / copilot / gemini / qwen / kimi / iflow …).
         provider: String,
+        /// Account identifier (e.g. `work`, `personal`). Defaults to `default`.
+        #[arg(long, value_name = "NAME")]
+        account: Option<String>,
         /// SQLite database path (default: ~/.byokey/tokens.db).
         #[arg(long, value_name = "PATH")]
         db: Option<PathBuf>,
@@ -89,12 +92,33 @@ enum Commands {
     Logout {
         /// Provider name.
         provider: String,
+        /// Account identifier. If omitted, removes the active account.
+        #[arg(long, value_name = "NAME")]
+        account: Option<String>,
         /// SQLite database path (default: ~/.byokey/tokens.db).
         #[arg(long, value_name = "PATH")]
         db: Option<PathBuf>,
     },
     /// Show authentication status for all providers.
     Status {
+        /// SQLite database path (default: ~/.byokey/tokens.db).
+        #[arg(long, value_name = "PATH")]
+        db: Option<PathBuf>,
+    },
+    /// List all accounts for a provider.
+    Accounts {
+        /// Provider name.
+        provider: String,
+        /// SQLite database path (default: ~/.byokey/tokens.db).
+        #[arg(long, value_name = "PATH")]
+        db: Option<PathBuf>,
+    },
+    /// Switch the active account for a provider.
+    Switch {
+        /// Provider name.
+        provider: String,
+        /// Account identifier to make active.
+        account: String,
         /// SQLite database path (default: ~/.byokey/tokens.db).
         #[arg(long, value_name = "PATH")]
         db: Option<PathBuf>,
@@ -148,9 +172,23 @@ async fn main() -> Result<()> {
             AutostartAction::Disable => autostart_disable_impl(),
             AutostartAction::Status => autostart_status_impl(),
         },
-        Commands::Login { provider, db } => cmd_login(provider, db).await,
-        Commands::Logout { provider, db } => cmd_logout(provider, db).await,
+        Commands::Login {
+            provider,
+            account,
+            db,
+        } => cmd_login(provider, account, db).await,
+        Commands::Logout {
+            provider,
+            account,
+            db,
+        } => cmd_logout(provider, account, db).await,
         Commands::Status { db } => cmd_status(db).await,
+        Commands::Accounts { provider, db } => cmd_accounts(provider, db).await,
+        Commands::Switch {
+            provider,
+            account,
+            db,
+        } => cmd_switch(provider, account, db).await,
     }
 }
 
@@ -603,26 +641,41 @@ fn autostart_status_impl() -> Result<()> {
 
 // ── Auth commands ─────────────────────────────────────────────────────────────
 
-async fn cmd_login(provider_str: String, db: Option<PathBuf>) -> Result<()> {
+async fn cmd_login(
+    provider_str: String,
+    account: Option<String>,
+    db: Option<PathBuf>,
+) -> Result<()> {
     let provider = provider_str
         .parse::<ProviderId>()
         .map_err(|e| anyhow::anyhow!("unknown provider '{provider_str}': {e}"))?;
     let auth = AuthManager::new(Arc::new(open_store(db).await?));
-    byokey_auth::flow::login(&provider, &auth)
+    byokey_auth::flow::login(&provider, &auth, account.as_deref())
         .await
         .map_err(|e| anyhow::anyhow!("login failed: {e}"))?;
     Ok(())
 }
 
-async fn cmd_logout(provider_str: String, db: Option<PathBuf>) -> Result<()> {
+async fn cmd_logout(
+    provider_str: String,
+    account: Option<String>,
+    db: Option<PathBuf>,
+) -> Result<()> {
     let provider = provider_str
         .parse::<ProviderId>()
         .map_err(|e| anyhow::anyhow!("unknown provider '{provider_str}': {e}"))?;
     let auth = AuthManager::new(Arc::new(open_store(db).await?));
-    auth.remove_token(&provider)
-        .await
-        .map_err(|e| anyhow::anyhow!("logout failed: {e}"))?;
-    println!("{provider_str} logged out");
+    if let Some(account_id) = &account {
+        auth.remove_token_for(&provider, account_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("logout failed: {e}"))?;
+        println!("{provider_str} account '{account_id}' logged out");
+    } else {
+        auth.remove_token(&provider)
+            .await
+            .map_err(|e| anyhow::anyhow!("logout failed: {e}"))?;
+        println!("{provider_str} logged out");
+    }
     Ok(())
 }
 
@@ -640,13 +693,60 @@ async fn cmd_status(db: Option<PathBuf>) -> Result<()> {
         ProviderId::IFlow,
     ];
     for provider in &providers {
-        let status = if auth.is_authenticated(provider).await {
-            "authenticated"
+        let accounts = auth.list_accounts(provider).await.unwrap_or_default();
+        if accounts.is_empty() {
+            println!("{provider}: not authenticated");
+        } else if accounts.len() == 1 {
+            let status = if auth.is_authenticated(provider).await {
+                "authenticated"
+            } else {
+                "expired"
+            };
+            println!("{provider}: {status}");
         } else {
-            "not authenticated"
-        };
-        println!("{provider}: {status}");
+            let active = accounts.iter().find(|a| a.is_active);
+            let label = active
+                .and_then(|a| a.label.as_deref())
+                .unwrap_or_else(|| active.map_or("?", |a| a.account_id.as_str()));
+            println!("{provider}: {} account(s), active: {label}", accounts.len());
+        }
     }
+    Ok(())
+}
+
+async fn cmd_accounts(provider_str: String, db: Option<PathBuf>) -> Result<()> {
+    let provider = provider_str
+        .parse::<ProviderId>()
+        .map_err(|e| anyhow::anyhow!("unknown provider '{provider_str}': {e}"))?;
+    let auth = AuthManager::new(Arc::new(open_store(db).await?));
+    let accounts = auth
+        .list_accounts(&provider)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    if accounts.is_empty() {
+        println!("{provider}: no accounts");
+    } else {
+        for a in &accounts {
+            let marker = if a.is_active { " (active)" } else { "" };
+            let label = a
+                .label
+                .as_deref()
+                .map_or(String::new(), |l| format!(" [{l}]"));
+            println!("  {}{label}{marker}", a.account_id);
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_switch(provider_str: String, account: String, db: Option<PathBuf>) -> Result<()> {
+    let provider = provider_str
+        .parse::<ProviderId>()
+        .map_err(|e| anyhow::anyhow!("unknown provider '{provider_str}': {e}"))?;
+    let auth = AuthManager::new(Arc::new(open_store(db).await?));
+    auth.set_active_account(&provider, &account)
+        .await
+        .map_err(|e| anyhow::anyhow!("switch failed: {e}"))?;
+    println!("{provider_str}: switched to account '{account}'");
     Ok(())
 }
 

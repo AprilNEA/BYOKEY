@@ -10,21 +10,24 @@ use crate::{
 
 /// Run the full interactive login flow for the given provider.
 ///
+/// When `account` is `Some`, the token is stored under that account identifier
+/// instead of the default active account.
+///
 /// # Errors
 ///
 /// Returns an error if the login flow fails for any reason (e.g., network error,
 /// state mismatch, missing callback parameters, or token parse failure).
-pub async fn login(provider: &ProviderId, auth: &AuthManager) -> Result<()> {
+pub async fn login(provider: &ProviderId, auth: &AuthManager, account: Option<&str>) -> Result<()> {
     let http = rquest::Client::new();
     match provider {
-        ProviderId::Claude => login_claude(auth, &http).await,
-        ProviderId::Codex => login_codex(auth, &http).await,
-        ProviderId::Copilot => login_copilot(auth, &http).await,
-        ProviderId::Gemini => login_gemini(auth, &http).await,
-        ProviderId::Antigravity => login_antigravity(auth, &http).await,
-        ProviderId::Qwen => login_qwen(auth, &http).await,
-        ProviderId::Kimi => login_kimi(auth, &http).await,
-        ProviderId::IFlow => login_iflow(auth, &http).await,
+        ProviderId::Claude => login_claude(auth, &http, account).await,
+        ProviderId::Codex => login_codex(auth, &http, account).await,
+        ProviderId::Copilot => login_copilot(auth, &http, account).await,
+        ProviderId::Gemini => login_gemini(auth, &http, account).await,
+        ProviderId::Antigravity => login_antigravity(auth, &http, account).await,
+        ProviderId::Qwen => login_qwen(auth, &http, account).await,
+        ProviderId::Kimi => login_kimi(auth, &http, account).await,
+        ProviderId::IFlow => login_iflow(auth, &http, account).await,
         ProviderId::Kiro => Err(ByokError::Auth(
             "Kiro OAuth login not yet implemented".into(),
         )),
@@ -33,7 +36,11 @@ pub async fn login(provider: &ProviderId, auth: &AuthManager) -> Result<()> {
 
 // ── Claude PKCE flow ──────────────────────────────────────────────────────────
 
-async fn login_claude(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
+async fn login_claude(
+    auth: &AuthManager,
+    http: &rquest::Client,
+    account: Option<&str>,
+) -> Result<()> {
     let (verifier, challenge) = pkce::generate_pkce();
     let state = pkce::random_state();
     let auth_url = claude::build_auth_url(&challenge, &state);
@@ -68,14 +75,18 @@ async fn login_claude(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
         .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
 
     let token = claude::parse_token_response(&json)?;
-    auth.save_token(&ProviderId::Claude, token).await?;
+    save_login_token(auth, &ProviderId::Claude, token, account).await?;
     eprintln!("Claude login successful");
     Ok(())
 }
 
 // ── Codex auth code flow ──────────────────────────────────────────────────────
 
-async fn login_codex(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
+async fn login_codex(
+    auth: &AuthManager,
+    http: &rquest::Client,
+    account: Option<&str>,
+) -> Result<()> {
     let (verifier, challenge) = pkce::generate_pkce();
     let state = pkce::random_state();
     let auth_url = codex::build_auth_url(&challenge, &state);
@@ -109,14 +120,18 @@ async fn login_codex(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
         .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
 
     let token = codex::parse_token_response(&json)?;
-    auth.save_token(&ProviderId::Codex, token).await?;
+    save_login_token(auth, &ProviderId::Codex, token, account).await?;
     eprintln!("Codex login successful");
     Ok(())
 }
 
 // ── Copilot device code flow ──────────────────────────────────────────────────
 
-async fn login_copilot(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
+async fn login_copilot(
+    auth: &AuthManager,
+    http: &rquest::Client,
+    account: Option<&str>,
+) -> Result<()> {
     let scope_str = copilot::SCOPES.join(" ");
     let init_params = [
         ("client_id", copilot::CLIENT_ID),
@@ -181,7 +196,7 @@ async fn login_copilot(auth: &AuthManager, http: &rquest::Client) -> Result<()> 
         }
 
         let token = copilot::parse_token_response(&json)?;
-        auth.save_token(&ProviderId::Copilot, token).await?;
+        save_login_token(auth, &ProviderId::Copilot, token, account).await?;
         eprintln!("Copilot login successful");
         return Ok(());
     }
@@ -189,7 +204,11 @@ async fn login_copilot(auth: &AuthManager, http: &rquest::Client) -> Result<()> 
 
 // ── Gemini PKCE flow ──────────────────────────────────────────────────────────
 
-async fn login_gemini(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
+async fn login_gemini(
+    auth: &AuthManager,
+    http: &rquest::Client,
+    account: Option<&str>,
+) -> Result<()> {
     let creds = credentials::fetch("gemini", http).await?;
     let client_secret = creds
         .client_secret
@@ -229,14 +248,18 @@ async fn login_gemini(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
         .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
 
     let token = gemini::parse_token_response(&json)?;
-    auth.save_token(&ProviderId::Gemini, token).await?;
+    save_login_token(auth, &ProviderId::Gemini, token, account).await?;
     eprintln!("Gemini login successful");
     Ok(())
 }
 
 // ── Antigravity (Google Cloud Code Assist) PKCE flow ─────────────────────────
 
-async fn login_antigravity(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
+async fn login_antigravity(
+    auth: &AuthManager,
+    http: &rquest::Client,
+    account: Option<&str>,
+) -> Result<()> {
     let creds = credentials::fetch("antigravity", http).await?;
     let client_secret = creds
         .client_secret
@@ -277,14 +300,18 @@ async fn login_antigravity(auth: &AuthManager, http: &rquest::Client) -> Result<
         .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
 
     let token = antigravity::parse_token_response(&json)?;
-    auth.save_token(&ProviderId::Antigravity, token).await?;
+    save_login_token(auth, &ProviderId::Antigravity, token, account).await?;
     eprintln!("Antigravity login successful");
     Ok(())
 }
 
 // ── Qwen device code + PKCE flow ──────────────────────────────────────────────
 
-async fn login_qwen(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
+async fn login_qwen(
+    auth: &AuthManager,
+    http: &rquest::Client,
+    account: Option<&str>,
+) -> Result<()> {
     let (verifier, challenge) = pkce::generate_pkce();
     let scope_str = qwen::SCOPES.join(" ");
     let device_params = qwen::build_device_code_params(&challenge, &scope_str);
@@ -343,7 +370,7 @@ async fn login_qwen(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
         }
 
         let token = qwen::parse_token_response(&json)?;
-        auth.save_token(&ProviderId::Qwen, token).await?;
+        save_login_token(auth, &ProviderId::Qwen, token, account).await?;
         eprintln!("Qwen login successful");
         return Ok(());
     }
@@ -351,7 +378,11 @@ async fn login_qwen(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
 
 // ── Kimi device code flow ─────────────────────────────────────────────────────
 
-async fn login_kimi(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
+async fn login_kimi(
+    auth: &AuthManager,
+    http: &rquest::Client,
+    account: Option<&str>,
+) -> Result<()> {
     let scope_str = kimi::SCOPES.join(" ");
     let device_params = kimi::build_device_code_params(&scope_str);
     let msh_headers = kimi::x_msh_headers();
@@ -416,7 +447,7 @@ async fn login_kimi(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
         }
 
         let token = kimi::parse_token_response(&json)?;
-        auth.save_token(&ProviderId::Kimi, token).await?;
+        save_login_token(auth, &ProviderId::Kimi, token, account).await?;
         eprintln!("Kimi login successful");
         return Ok(());
     }
@@ -424,7 +455,11 @@ async fn login_kimi(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
 
 // ── iFlow (Z.ai / GLM) auth code flow ────────────────────────────────────────
 
-async fn login_iflow(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
+async fn login_iflow(
+    auth: &AuthManager,
+    http: &rquest::Client,
+    account: Option<&str>,
+) -> Result<()> {
     let creds = credentials::fetch("iflow", http).await?;
     let client_secret = creds
         .client_secret
@@ -477,12 +512,26 @@ async fn login_iflow(auth: &AuthManager, http: &rquest::Client) -> Result<()> {
         ..token
     };
 
-    auth.save_token(&ProviderId::IFlow, token).await?;
+    save_login_token(auth, &ProviderId::IFlow, token, account).await?;
     eprintln!("iFlow (Z.ai/GLM) login successful");
     Ok(())
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Save a token for a provider, routing to the named account if specified.
+async fn save_login_token(
+    auth: &AuthManager,
+    provider: &ProviderId,
+    token: byokey_types::OAuthToken,
+    account: Option<&str>,
+) -> Result<()> {
+    if let Some(account_id) = account {
+        auth.save_token_for(provider, account_id, None, token).await
+    } else {
+        auth.save_token(provider, token).await
+    }
+}
 
 fn open_browser(url: &str) {
     eprintln!("Opening browser: {url}");
