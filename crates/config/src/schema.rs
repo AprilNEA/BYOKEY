@@ -6,12 +6,25 @@ fn default_true() -> bool {
     true
 }
 
+/// Configuration for a single API key entry within a provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKeyEntry {
+    /// The API key value.
+    pub api_key: String,
+    /// Optional label for identification in logs.
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
 /// Configuration for a single provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
-    /// Raw API key (takes precedence over OAuth tokens).
+    /// Single API key (shorthand, takes precedence for simple configs).
     #[serde(default)]
     pub api_key: Option<String>,
+    /// Multiple API keys with round-robin routing.
+    #[serde(default)]
+    pub api_keys: Vec<ApiKeyEntry>,
     /// Whether this provider is enabled (defaults to `true`).
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -28,10 +41,27 @@ impl Default for ProviderConfig {
     fn default() -> Self {
         Self {
             api_key: None,
+            api_keys: Vec::new(),
             enabled: true,
             backend: None,
             fallback: None,
         }
+    }
+}
+
+impl ProviderConfig {
+    /// Returns all configured API keys (merging `api_key` and `api_keys`).
+    /// If `api_key` is set, it's treated as the first entry.
+    #[must_use]
+    pub fn all_api_keys(&self) -> Vec<&str> {
+        let mut keys: Vec<&str> = Vec::new();
+        if let Some(ref key) = self.api_key {
+            keys.push(key.as_str());
+        }
+        for entry in &self.api_keys {
+            keys.push(entry.api_key.as_str());
+        }
+        keys
     }
 }
 
@@ -235,5 +265,50 @@ providers:
         let gemini = c.providers.get(&ProviderId::Gemini).unwrap();
         assert!(gemini.backend.is_none());
         assert_eq!(gemini.fallback, Some(ProviderId::Copilot));
+    }
+
+    #[test]
+    fn test_from_yaml_api_keys() {
+        let yaml = r#"
+providers:
+  claude:
+    api_keys:
+      - api_key: "sk-key1"
+        label: "team-a"
+      - api_key: "sk-key2"
+"#;
+        let c = Config::from_yaml(yaml).unwrap();
+        let claude = c.providers.get(&ProviderId::Claude).unwrap();
+        assert_eq!(claude.api_keys.len(), 2);
+        assert_eq!(claude.api_keys[0].api_key, "sk-key1");
+        assert_eq!(claude.api_keys[0].label.as_deref(), Some("team-a"));
+        assert_eq!(claude.api_keys[1].api_key, "sk-key2");
+        assert!(claude.api_keys[1].label.is_none());
+    }
+
+    #[test]
+    fn test_all_api_keys_merges() {
+        let pc = ProviderConfig {
+            api_key: Some("single-key".into()),
+            api_keys: vec![
+                ApiKeyEntry {
+                    api_key: "multi-1".into(),
+                    label: None,
+                },
+                ApiKeyEntry {
+                    api_key: "multi-2".into(),
+                    label: None,
+                },
+            ],
+            ..Default::default()
+        };
+        let keys = pc.all_api_keys();
+        assert_eq!(keys, vec!["single-key", "multi-1", "multi-2"]);
+    }
+
+    #[test]
+    fn test_all_api_keys_empty() {
+        let pc = ProviderConfig::default();
+        assert!(pc.all_api_keys().is_empty());
     }
 }

@@ -6,5 +6,5 @@
 pub mod schema;
 pub mod watcher;
 
-pub use schema::{Config, ProviderConfig};
+pub use schema::{ApiKeyEntry, Config, ProviderConfig};
 pub use watcher::ConfigWatcher;
