@@ -66,6 +66,18 @@ impl From<sqlx::Error> for ByokError {
     }
 }
 
+impl ByokError {
+    /// Returns `true` if the error is likely transient and worth retrying.
+    #[must_use]
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Self::Upstream { status, .. } => matches!(status, 408 | 429 | 500 | 502 | 503 | 504),
+            Self::Http(_) => true, // transport errors are retryable
+            _ => false,
+        }
+    }
+}
+
 /// Convenience alias used throughout the workspace.
 pub type Result<T> = std::result::Result<T, ByokError>;
 
@@ -101,5 +113,84 @@ mod tests {
         let json_err = serde_json::from_str::<serde_json::Value>("invalid {{{").unwrap_err();
         let err: ByokError = json_err.into();
         assert!(matches!(err, ByokError::Serialization(_)));
+    }
+
+    #[test]
+    fn test_is_retryable_upstream() {
+        assert!(
+            ByokError::Upstream {
+                status: 429,
+                body: String::new()
+            }
+            .is_retryable()
+        );
+        assert!(
+            ByokError::Upstream {
+                status: 500,
+                body: String::new()
+            }
+            .is_retryable()
+        );
+        assert!(
+            ByokError::Upstream {
+                status: 502,
+                body: String::new()
+            }
+            .is_retryable()
+        );
+        assert!(
+            ByokError::Upstream {
+                status: 503,
+                body: String::new()
+            }
+            .is_retryable()
+        );
+        assert!(
+            ByokError::Upstream {
+                status: 504,
+                body: String::new()
+            }
+            .is_retryable()
+        );
+        assert!(
+            ByokError::Upstream {
+                status: 408,
+                body: String::new()
+            }
+            .is_retryable()
+        );
+        assert!(
+            !ByokError::Upstream {
+                status: 401,
+                body: String::new()
+            }
+            .is_retryable()
+        );
+        assert!(
+            !ByokError::Upstream {
+                status: 403,
+                body: String::new()
+            }
+            .is_retryable()
+        );
+        assert!(
+            !ByokError::Upstream {
+                status: 404,
+                body: String::new()
+            }
+            .is_retryable()
+        );
+    }
+
+    #[test]
+    fn test_is_retryable_http_transport() {
+        assert!(ByokError::Http("connection refused".into()).is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_other_errors() {
+        assert!(!ByokError::Auth("bad".into()).is_retryable());
+        assert!(!ByokError::Config("bad".into()).is_retryable());
+        assert!(!ByokError::UnsupportedModel("gpt-5".into()).is_retryable());
     }
 }

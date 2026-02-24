@@ -48,9 +48,9 @@ pub struct ClaudeExecutor {
 
 impl ClaudeExecutor {
     /// Creates a new Claude executor with an optional API key and auth manager.
-    pub fn new(api_key: Option<String>, auth: Arc<AuthManager>) -> Self {
+    pub fn new(http: Client, api_key: Option<String>, auth: Arc<AuthManager>) -> Self {
         Self {
-            http: Client::new(),
+            http,
             api_key,
             auth,
         }
@@ -95,7 +95,10 @@ impl ProviderExecutor for ClaudeExecutor {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(ByokError::Http(format!("Claude API {status}: {text}")));
+            return Err(ByokError::Upstream {
+                status: status.as_u16(),
+                body: text,
+            });
         }
 
         if stream {
@@ -311,7 +314,7 @@ mod tests {
     fn make_executor() -> ClaudeExecutor {
         let store = Arc::new(InMemoryTokenStore::new());
         let auth = Arc::new(AuthManager::new(store));
-        ClaudeExecutor::new(None, auth)
+        ClaudeExecutor::new(Client::new(), None, auth)
     }
 
     #[test]
@@ -326,7 +329,7 @@ mod tests {
     fn test_supported_models_with_api_key() {
         let store = Arc::new(InMemoryTokenStore::new());
         let auth = Arc::new(AuthManager::new(store));
-        let ex = ClaudeExecutor::new(Some("sk-ant-test".into()), auth);
+        let ex = ClaudeExecutor::new(Client::new(), Some("sk-ant-test".into()), auth);
         assert!(!ex.supported_models().is_empty());
     }
 }

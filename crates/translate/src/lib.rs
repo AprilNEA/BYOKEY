@@ -27,3 +27,6 @@ pub use openai_to_codex::OpenAIToCodex;
 pub use openai_to_gemini::OpenAIToGemini;
 pub use openai_to_gemini_native::{OpenAIResponseToGemini, OpenAISseChunk};
 pub use thinking::ThinkingExtractor;
+pub use thinking::{
+    ModelSuffix, ThinkingConfig, ThinkingLevel, apply_thinking, parse_model_suffix,
+};

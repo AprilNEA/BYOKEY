@@ -26,7 +26,9 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> Json<Value> {
             continue;
         }
         let api_key = provider_config.api_key.clone();
-        if let Some(executor) = make_executor(provider_id, api_key, state.auth.clone()) {
+        if let Some(executor) =
+            make_executor(provider_id, api_key, state.auth.clone(), state.http.clone())
+        {
             for model_id in executor.supported_models() {
                 data.push(json!({
                     "id": model_id,

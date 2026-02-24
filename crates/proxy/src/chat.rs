@@ -8,6 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use byokey_provider::make_executor_for_model;
+use byokey_translate::{apply_thinking, parse_model_suffix};
 use byokey_types::{ProviderId, traits::ProviderResponse};
 use futures_util::TryStreamExt as _;
 use serde_json::Value;
@@ -25,20 +26,34 @@ use crate::{AppState, error::ApiError};
 /// Returns [`ApiError`] if the model is unsupported or the upstream call fails.
 pub async fn chat_completions(
     State(state): State<Arc<AppState>>,
-    Json(body): Json<Value>,
+    Json(mut body): Json<Value>,
 ) -> Result<Response, ApiError> {
-    let model = body
+    let raw_model = body
         .get("model")
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
 
+    // Parse thinking suffix from model name
+    let suffix = parse_model_suffix(&raw_model);
+    let model = &suffix.model;
+
     let config = state.config.load();
     let config_fn = move |p: &ProviderId| config.providers.get(p).cloned();
 
     let executor =
-        make_executor_for_model(&model, config_fn, state.auth.clone()).map_err(ApiError::from)?;
+        make_executor_for_model(model, &config_fn, state.auth.clone(), state.http.clone())
+            .map_err(ApiError::from)?;
+
+    // Replace model name with the clean version (suffix stripped)
+    body["model"] = Value::String(model.clone());
+
+    // Apply thinking config if suffix was parsed
+    if let Some(ref thinking) = suffix.thinking {
+        let provider = byokey_provider::resolve_provider(model).unwrap_or(ProviderId::Claude);
+        body = apply_thinking(body, &provider, thinking);
+    }
 
     match executor
         .chat_completion(body, stream)

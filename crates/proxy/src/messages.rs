@@ -128,9 +128,10 @@ pub async fn anthropic_messages(
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        return Err(ApiError::from(ByokError::Http(format!(
-            "Claude API {status}: {text}"
-        ))));
+        return Err(ApiError::from(ByokError::Upstream {
+            status: status.as_u16(),
+            body: text,
+        }));
     }
 
     let upstream_status = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK);

@@ -67,6 +67,12 @@ pub fn iflow_models() -> Vec<String> {
     ]
 }
 
+/// Returns the list of supported Kimi (Moonshot AI) model identifiers.
+#[must_use]
+pub fn kimi_models() -> Vec<String> {
+    vec!["kimi-k2-0711".into()]
+}
+
 /// Returns the list of supported Antigravity model identifiers.
 ///
 /// Prefixed with `ag-` to avoid conflicts with Claude/Gemini provider models.
@@ -139,8 +145,10 @@ pub fn resolve_provider(model: &str) -> Option<ProviderId> {
         Some(ProviderId::Kiro)
     } else if model.starts_with("qwen") {
         Some(ProviderId::Qwen)
-    } else if model.starts_with("glm-") || model.starts_with("kimi-") {
+    } else if model.starts_with("glm-") || model == "kimi-k2" {
         Some(ProviderId::IFlow)
+    } else if model.starts_with("kimi-") {
+        Some(ProviderId::Kimi)
     } else if matches!(
         model,
         "gpt-4o" | "gpt-4.1" | "gpt-5-mini" | "raptor-mini" | "goldeneye" | "grok-code-fast-1"
@@ -244,6 +252,27 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_kimi() {
+        assert_eq!(resolve_provider("kimi-k2-0711"), Some(ProviderId::Kimi));
+    }
+
+    #[test]
+    fn test_kimi_k2_stays_iflow() {
+        assert_eq!(resolve_provider("kimi-k2"), Some(ProviderId::IFlow));
+    }
+
+    #[test]
+    fn test_kimi_models_resolve_to_kimi() {
+        for m in kimi_models() {
+            assert_eq!(
+                resolve_provider(&m),
+                Some(ProviderId::Kimi),
+                "model {m} should resolve to Kimi"
+            );
+        }
+    }
+
+    #[test]
     fn test_resolve_unknown() {
         assert_eq!(resolve_provider("unknown-model"), None);
         assert_eq!(resolve_provider(""), None);
@@ -259,6 +288,7 @@ mod tests {
         assert!(!antigravity_models().is_empty());
         assert!(!qwen_models().is_empty());
         assert!(!iflow_models().is_empty());
+        assert!(!kimi_models().is_empty());
     }
 
     #[test]

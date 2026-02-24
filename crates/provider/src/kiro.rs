@@ -33,9 +33,9 @@ pub struct KiroExecutor {
 
 impl KiroExecutor {
     /// Creates a new Kiro executor with an optional API key and auth manager.
-    pub fn new(api_key: Option<String>, auth: Arc<AuthManager>) -> Self {
+    pub fn new(http: Client, api_key: Option<String>, auth: Arc<AuthManager>) -> Self {
         Self {
-            http: Client::new(),
+            http,
             api_key,
             auth,
         }
@@ -71,7 +71,10 @@ impl ProviderExecutor for KiroExecutor {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(ByokError::Http(format!("Kiro API {status}: {text}")));
+            return Err(ByokError::Upstream {
+                status: status.as_u16(),
+                body: text,
+            });
         }
 
         if stream {
@@ -98,7 +101,7 @@ mod tests {
     fn make_executor() -> KiroExecutor {
         let store = Arc::new(InMemoryTokenStore::new());
         let auth = Arc::new(AuthManager::new(store));
-        KiroExecutor::new(None, auth)
+        KiroExecutor::new(Client::new(), None, auth)
     }
 
     #[test]

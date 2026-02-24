@@ -52,9 +52,9 @@ pub struct CopilotExecutor {
 
 impl CopilotExecutor {
     /// Creates a new Copilot executor with an optional API key and auth manager.
-    pub fn new(api_key: Option<String>, auth: Arc<AuthManager>) -> Self {
+    pub fn new(http: Client, api_key: Option<String>, auth: Arc<AuthManager>) -> Self {
         Self {
-            http: Client::new(),
+            http,
             api_key,
             auth,
             cache: Mutex::new(HashMap::new()),
@@ -235,7 +235,10 @@ impl ProviderExecutor for CopilotExecutor {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(ByokError::Http(format!("Copilot API {status}: {text}")));
+            return Err(ByokError::Upstream {
+                status: status.as_u16(),
+                body: text,
+            });
         }
 
         if stream {
@@ -261,7 +264,7 @@ mod tests {
     fn make_executor() -> CopilotExecutor {
         let store = Arc::new(InMemoryTokenStore::new());
         let auth = Arc::new(AuthManager::new(store));
-        CopilotExecutor::new(None, auth)
+        CopilotExecutor::new(Client::new(), None, auth)
     }
 
     #[test]

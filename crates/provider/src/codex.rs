@@ -47,9 +47,9 @@ pub struct CodexExecutor {
 
 impl CodexExecutor {
     /// Creates a new Codex executor with an optional API key and auth manager.
-    pub fn new(api_key: Option<String>, auth: Arc<AuthManager>) -> Self {
+    pub fn new(http: Client, api_key: Option<String>, auth: Arc<AuthManager>) -> Self {
         Self {
-            http: Client::new(),
+            http,
             api_key,
             auth,
         }
@@ -97,7 +97,10 @@ impl CodexExecutor {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(ByokError::Http(format!("Codex API {status}: {text}")));
+            return Err(ByokError::Upstream {
+                status: status.as_u16(),
+                body: text,
+            });
         }
 
         let model = codex_body["model"].as_str().unwrap_or("codex").to_string();
@@ -117,7 +120,10 @@ impl CodexExecutor {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(ByokError::Http(format!("Codex API {status}: {text}")));
+            return Err(ByokError::Upstream {
+                status: status.as_u16(),
+                body: text,
+            });
         }
 
         let mut all = Vec::new();
@@ -327,7 +333,10 @@ impl ProviderExecutor for CodexExecutor {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(ByokError::Http(format!("OpenAI API {status}: {text}")));
+            return Err(ByokError::Upstream {
+                status: status.as_u16(),
+                body: text,
+            });
         }
 
         if stream {
@@ -353,7 +362,7 @@ mod tests {
     fn make_executor() -> CodexExecutor {
         let store = Arc::new(InMemoryTokenStore::new());
         let auth = Arc::new(AuthManager::new(store));
-        CodexExecutor::new(None, auth)
+        CodexExecutor::new(Client::new(), None, auth)
     }
 
     #[test]

@@ -111,9 +111,10 @@ pub async fn codex_responses_passthrough(
     let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        return Err(ApiError::from(ByokError::Http(format!(
-            "Responses API {status}: {text}"
-        ))));
+        return Err(ApiError::from(ByokError::Upstream {
+            status: status.as_u16(),
+            body: text,
+        }));
     }
 
     let is_sse = resp
@@ -226,9 +227,10 @@ pub async fn gemini_native_passthrough(
     let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        return Err(ApiError::from(ByokError::Http(format!(
-            "Gemini API {status}: {text}"
-        ))));
+        return Err(ApiError::from(ByokError::Upstream {
+            status: status.as_u16(),
+            body: text,
+        }));
     }
 
     let content_type = resp
@@ -279,13 +281,17 @@ async fn gemini_native_via_backend(
         .get(backend_id)
         .cloned()
         .unwrap_or_default();
-    let executor =
-        byokey_provider::make_executor(backend_id, backend_config.api_key, state.auth.clone())
-            .ok_or_else(|| {
-                ApiError::from(ByokError::UnsupportedModel(format!(
-                    "backend {backend_id:?} has no executor"
-                )))
-            })?;
+    let executor = byokey_provider::make_executor(
+        backend_id,
+        backend_config.api_key,
+        state.auth.clone(),
+        state.http.clone(),
+    )
+    .ok_or_else(|| {
+        ApiError::from(ByokError::UnsupportedModel(format!(
+            "backend {backend_id:?} has no executor"
+        )))
+    })?;
 
     // Translate Gemini native request → OpenAI format.
     let openai_req: Value = byokey_translate::GeminiNativeRequest { body: &body, model }

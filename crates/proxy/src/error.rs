@@ -35,7 +35,8 @@ impl ApiError {
                 "invalid_request_error",
                 "translation_error",
             ),
-            ByokError::Http(m) => classify_http(m),
+            ByokError::Upstream { status, .. } => classify_upstream(*status),
+            ByokError::Http(_) => (StatusCode::BAD_GATEWAY, "server_error", "upstream_error"),
             _ => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "server_error",
@@ -45,27 +46,24 @@ impl ApiError {
     }
 }
 
-fn classify_http(msg: &str) -> (StatusCode, &'static str, &'static str) {
-    if msg.contains("429") {
-        (
+fn classify_upstream(status: u16) -> (StatusCode, &'static str, &'static str) {
+    match status {
+        429 => (
             StatusCode::TOO_MANY_REQUESTS,
             "rate_limit_error",
             "rate_limit_exceeded",
-        )
-    } else if msg.contains("401") {
-        (
+        ),
+        401 => (
             StatusCode::UNAUTHORIZED,
             "authentication_error",
             "invalid_api_key",
-        )
-    } else if msg.contains("403") {
-        (
+        ),
+        403 => (
             StatusCode::FORBIDDEN,
             "permission_error",
             "insufficient_quota",
-        )
-    } else {
-        (StatusCode::BAD_GATEWAY, "server_error", "upstream_error")
+        ),
+        _ => (StatusCode::BAD_GATEWAY, "server_error", "upstream_error"),
     }
 }
 
@@ -144,36 +142,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_http_429_error() {
-        let (status, body) =
-            extract_error_body(ApiError(ByokError::Http("status 429 too many".into()))).await;
+    async fn test_upstream_429_error() {
+        let (status, body) = extract_error_body(ApiError(ByokError::Upstream {
+            status: 429,
+            body: "rate limited".into(),
+        }))
+        .await;
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(body["error"]["type"], "rate_limit_error");
         assert_eq!(body["error"]["code"], "rate_limit_exceeded");
     }
 
     #[tokio::test]
-    async fn test_http_401_error() {
-        let (status, body) =
-            extract_error_body(ApiError(ByokError::Http("status 401 unauthorized".into()))).await;
+    async fn test_upstream_401_error() {
+        let (status, body) = extract_error_body(ApiError(ByokError::Upstream {
+            status: 401,
+            body: "unauthorized".into(),
+        }))
+        .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(body["error"]["type"], "authentication_error");
         assert_eq!(body["error"]["code"], "invalid_api_key");
     }
 
     #[tokio::test]
-    async fn test_http_403_error() {
-        let (status, body) =
-            extract_error_body(ApiError(ByokError::Http("status 403 forbidden".into()))).await;
+    async fn test_upstream_403_error() {
+        let (status, body) = extract_error_body(ApiError(ByokError::Upstream {
+            status: 403,
+            body: "forbidden".into(),
+        }))
+        .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_eq!(body["error"]["type"], "permission_error");
         assert_eq!(body["error"]["code"], "insufficient_quota");
     }
 
     #[tokio::test]
-    async fn test_http_other_error() {
+    async fn test_upstream_500_error() {
+        let (status, body) = extract_error_body(ApiError(ByokError::Upstream {
+            status: 500,
+            body: "server error".into(),
+        }))
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body["error"]["type"], "server_error");
+        assert_eq!(body["error"]["code"], "upstream_error");
+    }
+
+    #[tokio::test]
+    async fn test_http_transport_error() {
         let (status, body) =
-            extract_error_body(ApiError(ByokError::Http("upstream error".into()))).await;
+            extract_error_body(ApiError(ByokError::Http("connection refused".into()))).await;
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(body["error"]["type"], "server_error");
         assert_eq!(body["error"]["code"], "upstream_error");
