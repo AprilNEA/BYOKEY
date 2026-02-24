@@ -49,7 +49,7 @@ impl ProviderExecutor for FallbackExecutor {
         match self.primary.chat_completion(request.clone(), stream).await {
             Ok(resp) => Ok(resp),
             Err(err) => {
-                eprintln!("[byokey] primary provider failed ({err}), falling back to secondary");
+                tracing::warn!(error = %err, "primary provider failed, falling back");
                 self.fallback.chat_completion(request, stream).await
             }
         }

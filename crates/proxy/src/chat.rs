@@ -34,7 +34,7 @@ pub async fn chat_completions(
         .to_string();
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
 
-    let config = state.config.clone();
+    let config = state.config.load();
     let config_fn = move |p: &ProviderId| config.providers.get(p).cloned();
 
     let executor =

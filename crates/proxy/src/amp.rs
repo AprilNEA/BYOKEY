@@ -72,7 +72,8 @@ pub async fn management_proxy(
 ) -> Response {
     let url = format!("{AMP_BACKEND}/v0/management/{path}");
 
-    let strip_client_auth = state.config.amp.upstream_key.is_some();
+    let config = state.config.load();
+    let strip_client_auth = config.amp.upstream_key.is_some();
 
     // Forward headers, skipping hop-by-hop and Host
     let mut header_map = rquest::header::HeaderMap::new();
@@ -92,7 +93,7 @@ pub async fn management_proxy(
         }
     }
 
-    if let Some(key) = &state.config.amp.upstream_key
+    if let Some(key) = &config.amp.upstream_key
         && let (Ok(n_auth), Ok(v_auth), Ok(n_apikey), Ok(v_apikey)) = (
             rquest::header::HeaderName::from_bytes(b"authorization"),
             rquest::header::HeaderValue::from_str(&format!("Bearer {key}")),

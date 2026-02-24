@@ -12,21 +12,21 @@ mod models;
 
 pub use error::ApiError;
 
+use arc_swap::ArcSwap;
 use axum::{
     Router,
-    extract::Request,
-    middleware::{self, Next},
-    response::Response,
     routing::{any, get, post},
 };
 use byokey_auth::AuthManager;
 use byokey_config::Config;
 use std::sync::Arc;
+use tower_http::trace::TraceLayer;
 
 /// Shared application state passed to all route handlers.
 pub struct AppState {
     /// Server configuration (providers, listen address, etc.).
-    pub config: Arc<Config>,
+    /// Atomically swappable for hot-reloading.
+    pub config: Arc<ArcSwap<Config>>,
     /// Token manager for OAuth-based providers.
     pub auth: Arc<AuthManager>,
     /// HTTP client for upstream requests.
@@ -35,21 +35,13 @@ pub struct AppState {
 
 impl AppState {
     /// Creates a new shared application state wrapped in an `Arc`.
-    pub fn new(config: Config, auth: Arc<AuthManager>) -> Arc<Self> {
+    pub fn new(config: Arc<ArcSwap<Config>>, auth: Arc<AuthManager>) -> Arc<Self> {
         Arc::new(Self {
-            config: Arc::new(config),
+            config,
             auth,
             http: rquest::Client::new(),
         })
     }
-}
-
-async fn log_request(req: Request, next: Next) -> Response {
-    let method = req.method().clone();
-    let uri = req.uri().clone();
-    let resp = next.run(req).await;
-    eprintln!("{} {} -> {}", method, uri, resp.status());
-    resp
 }
 
 /// Build the full axum router.
@@ -99,7 +91,7 @@ pub fn make_router(state: Arc<AppState>) -> Router {
         // Catch-all: forward remaining /api/* routes to ampcode.com
         .route("/api/{*path}", any(amp_provider::amp_management_proxy))
         .with_state(state)
-        .layer(middleware::from_fn(log_request))
+        .layer(TraceLayer::new_for_http())
 }
 
 #[cfg(test)]
@@ -114,7 +106,8 @@ mod tests {
     fn make_state() -> Arc<AppState> {
         let store = Arc::new(InMemoryTokenStore::new());
         let auth = Arc::new(AuthManager::new(store));
-        AppState::new(Config::default(), auth)
+        let config = Arc::new(ArcSwap::from_pointee(Config::default()));
+        AppState::new(config, auth)
     }
 
     async fn body_json(resp: axum::response::Response) -> Value {

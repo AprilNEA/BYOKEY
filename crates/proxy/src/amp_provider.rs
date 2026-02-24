@@ -66,8 +66,8 @@ pub async fn codex_responses_passthrough(
     State(state): State<Arc<AppState>>,
     axum::extract::Json(body): axum::extract::Json<Value>,
 ) -> Result<Response, ApiError> {
-    let api_key = state
-        .config
+    let config = state.config.load();
+    let api_key = config
         .providers
         .get(&ProviderId::Codex)
         .and_then(|pc| pc.api_key.clone());
@@ -161,8 +161,8 @@ pub async fn gemini_native_passthrough(
     Query(query_params): Query<HashMap<String, String>>,
     axum::extract::Json(body): axum::extract::Json<Value>,
 ) -> Result<Response, ApiError> {
-    let gemini_config = state
-        .config
+    let config = state.config.load();
+    let gemini_config = config
         .providers
         .get(&ProviderId::Gemini)
         .cloned()
@@ -273,8 +273,8 @@ async fn gemini_native_via_backend(
         || query_params.get("alt").is_some_and(|v| v == "sse");
 
     // Build the executor for the backend provider.
-    let backend_config = state
-        .config
+    let config = state.config.load();
+    let backend_config = config
         .providers
         .get(backend_id)
         .cloned()
@@ -382,9 +382,8 @@ pub async fn amp_management_proxy(
         _ => format!("{AMP_BACKEND}/api/{path}"),
     };
 
-    // Debug: print request and response for /api/internal (only when LOG_LEVEL=debug)
-    let debug = path == "internal"
-        && std::env::var("LOG_LEVEL").is_ok_and(|v| v.eq_ignore_ascii_case("debug"));
+    // Debug logging for /api/internal requests (controlled by tracing level).
+    let debug = path == "internal" && tracing::enabled!(tracing::Level::DEBUG);
     if debug {
         let req_body = std::str::from_utf8(&body)
             .ok()
@@ -393,10 +392,11 @@ pub async fn amp_management_proxy(
                 || format!("{body:?}"),
                 |v| serde_json::to_string_pretty(&v).unwrap_or_default(),
             );
-        eprintln!("[debug] --> {method} {url}\n{req_body}");
+        tracing::debug!(%method, %url, body = %req_body, "amp proxy request");
     }
 
-    let strip_client_auth = state.config.amp.upstream_key.is_some();
+    let config = state.config.load();
+    let strip_client_auth = config.amp.upstream_key.is_some();
 
     let mut upstream_headers = rquest::header::HeaderMap::new();
     for (name, value) in &headers {
@@ -415,7 +415,7 @@ pub async fn amp_management_proxy(
         }
     }
 
-    if let Some(key) = &state.config.amp.upstream_key
+    if let Some(key) = &config.amp.upstream_key
         && let (Ok(n_auth), Ok(v_auth), Ok(n_apikey), Ok(v_apikey)) = (
             rquest::header::HeaderName::from_bytes(b"authorization"),
             rquest::header::HeaderValue::from_str(&format!("Bearer {key}")),
@@ -467,7 +467,7 @@ pub async fn amp_management_proxy(
                 || format!("{body_bytes:?}"),
                 |v| serde_json::to_string_pretty(&v).unwrap_or_default(),
             );
-        eprintln!("[debug] <-- {status}\n{resp_body}");
+        tracing::debug!(%status, body = %resp_body, "amp proxy response");
     }
 
     (status, resp_headers, body_bytes).into_response()

@@ -14,18 +14,18 @@ use crate::AppState;
 /// enabled providers. Providers absent from the config are enabled by default.
 pub async fn list_models(State(state): State<Arc<AppState>>) -> Json<Value> {
     let mut data = Vec::new();
+    let config = state.config.load();
 
     for provider_id in ProviderId::all() {
-        let config = state
-            .config
+        let provider_config = config
             .providers
             .get(provider_id)
             .cloned()
             .unwrap_or_default();
-        if !config.enabled {
+        if !provider_config.enabled {
             continue;
         }
-        let api_key = config.api_key.clone();
+        let api_key = provider_config.api_key.clone();
         if let Some(executor) = make_executor(provider_id, api_key, state.auth.clone()) {
             for model_id in executor.supported_models() {
                 data.push(json!({

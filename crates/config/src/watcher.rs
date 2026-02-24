@@ -76,8 +76,9 @@ impl ConfigWatcher {
                 .expect("failed to watch config file");
 
             for () in rx {
-                if let Err(e) = watcher_self.reload() {
-                    eprintln!("[byokey-config] reload error: {e}");
+                match watcher_self.reload() {
+                    Ok(()) => tracing::info!("configuration reloaded"),
+                    Err(e) => tracing::warn!(error = %e, "config reload failed"),
                 }
             }
         });

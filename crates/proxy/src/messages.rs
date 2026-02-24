@@ -78,7 +78,8 @@ pub async fn anthropic_messages(
     let beta = build_beta_header(&body);
 
     // Resolve Claude auth: config API key takes priority over OAuth token.
-    let provider_cfg = state.config.providers.get(&ProviderId::Claude);
+    let config = state.config.load();
+    let provider_cfg = config.providers.get(&ProviderId::Claude);
     let api_key = provider_cfg.and_then(|pc| pc.api_key.clone());
 
     let accept = if stream {

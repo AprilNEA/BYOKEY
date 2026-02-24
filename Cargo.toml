@@ -73,6 +73,9 @@ clap = { version = "4", features = ["derive"] }
 futures-core = "0.3"
 futures-util = "0.3"
 bytes = "1"
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 
 
 [workspace.lints.rust]
@@ -110,3 +113,6 @@ axum.workspace = true
 clap.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
+arc-swap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

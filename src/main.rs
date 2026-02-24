@@ -1,6 +1,7 @@
 use anyhow::Result;
+use arc_swap::ArcSwap;
 use byokey_auth::AuthManager;
-use byokey_config::Config;
+use byokey_config::{Config, ConfigWatcher};
 use byokey_proxy::AppState;
 use byokey_store::SqliteTokenStore;
 use byokey_types::ProviderId;
@@ -189,6 +190,15 @@ async fn cmd_serve(
     host: Option<String>,
     db: Option<PathBuf>,
 ) -> Result<()> {
+    // Initialize structured logging (reads RUST_LOG, defaults to info).
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_target(true)
+        .init();
+
     let effective_path = config_path.or_else(|| {
         let default = default_config_path();
         if default.exists() {
@@ -197,26 +207,33 @@ async fn cmd_serve(
             None
         }
     });
-    let mut config = if let Some(path) = &effective_path {
-        Config::from_file(path).map_err(|e| anyhow::anyhow!("config error: {e}"))?
+
+    // Load config: if a file exists, use ConfigWatcher for hot-reload.
+    let config_arc: Arc<ArcSwap<Config>> = if let Some(ref path) = effective_path {
+        let watcher = Arc::new(
+            ConfigWatcher::new(path.clone()).map_err(|e| anyhow::anyhow!("config error: {e}"))?,
+        );
+        let arc = watcher.arc();
+        watcher.watch();
+        arc
     } else {
-        Config::default()
+        Arc::new(ArcSwap::from_pointee(Config::default()))
     };
 
-    if let Some(p) = port {
-        config.port = p;
-    }
-    if let Some(h) = host {
-        config.host = h;
-    }
+    // CLI overrides for listen address (read from current config snapshot).
+    let snapshot = config_arc.load();
+    let addr = format!(
+        "{}:{}",
+        host.as_deref().unwrap_or(&snapshot.host),
+        port.unwrap_or(snapshot.port),
+    );
 
-    let addr = format!("{}:{}", config.host, config.port);
     let auth = Arc::new(AuthManager::new(Arc::new(open_store(db).await?)));
-    let state = AppState::new(config, auth);
+    let state = AppState::new(config_arc, auth);
     let app = byokey_proxy::make_router(state);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    eprintln!("byokey listening on http://{addr}");
+    tracing::info!(addr = %addr, "byokey listening");
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -633,7 +650,7 @@ async fn cmd_logout(provider_str: String, db: Option<PathBuf>) -> Result<()> {
     auth.remove_token(&provider)
         .await
         .map_err(|e| anyhow::anyhow!("logout failed: {e}"))?;
-    eprintln!("{provider_str} logged out");
+    println!("{provider_str} logged out");
     Ok(())
 }
 

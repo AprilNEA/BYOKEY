@@ -30,6 +30,8 @@ tokio.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
 bytes.workspace = true
+arc-swap.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
