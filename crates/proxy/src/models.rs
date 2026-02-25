@@ -29,13 +29,42 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> Json<Value> {
         if let Some(executor) =
             make_executor(provider_id, api_key, state.auth.clone(), state.http.clone())
         {
+            let aliases = config.model_alias.get(provider_id);
+
             for model_id in executor.supported_models() {
-                data.push(json!({
-                    "id": model_id,
-                    "object": "model",
-                    "created": 0,
-                    "owned_by": provider_id.to_string(),
-                }));
+                if config.is_model_excluded(provider_id, &model_id) {
+                    continue;
+                }
+
+                // Check if this model has an alias configured.
+                let alias_entry =
+                    aliases.and_then(|a| a.iter().find(|entry| entry.name == model_id));
+
+                if let Some(entry) = alias_entry {
+                    // Always expose the alias name.
+                    data.push(json!({
+                        "id": entry.alias,
+                        "object": "model",
+                        "created": 0,
+                        "owned_by": provider_id.to_string(),
+                    }));
+                    // If fork mode, also keep the original.
+                    if entry.fork {
+                        data.push(json!({
+                            "id": model_id,
+                            "object": "model",
+                            "created": 0,
+                            "owned_by": provider_id.to_string(),
+                        }));
+                    }
+                } else {
+                    data.push(json!({
+                        "id": model_id,
+                        "object": "model",
+                        "created": 0,
+                        "owned_by": provider_id.to_string(),
+                    }));
+                }
             }
         }
     }

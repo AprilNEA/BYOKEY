@@ -27,15 +27,19 @@ pub async fn chat_completions(
     State(state): State<Arc<AppState>>,
     Json(mut request): Json<ChatRequest>,
 ) -> Result<Response, ApiError> {
-    // Parse thinking suffix from model name
-    let suffix = parse_model_suffix(&request.model);
-
     let config = state.config.load();
-    let config_fn = move |p: &ProviderId| config.providers.get(p).cloned();
+
+    // Resolve model alias before anything else.
+    let resolved_model = config.resolve_alias(&request.model);
+
+    // Parse thinking suffix from (possibly alias-resolved) model name.
+    let suffix = parse_model_suffix(&resolved_model);
+
+    let config_fn = |p: &ProviderId| config.providers.get(p).cloned();
 
     let executor = make_executor_for_model(
         &suffix.model,
-        &config_fn,
+        config_fn,
         state.auth.clone(),
         state.http.clone(),
     )
@@ -51,6 +55,17 @@ pub async fn chat_completions(
         let mut body = request.into_body();
         body = apply_thinking(body, &provider, thinking);
         // Re-parse the modified body back into ChatRequest
+        request = serde_json::from_value(body)
+            .map_err(|e| ApiError::from(byokey_types::ByokError::Translation(e.to_string())))?;
+    }
+
+    // Apply payload rules (default/override/filter) based on model name.
+    if !config.payload.default.is_empty()
+        || !config.payload.r#override.is_empty()
+        || !config.payload.filter.is_empty()
+    {
+        let mut body = request.into_body();
+        body = config.apply_payload_rules(body, &suffix.model);
         request = serde_json::from_value(body)
             .map_err(|e| ApiError::from(byokey_types::ByokError::Translation(e.to_string())))?;
     }

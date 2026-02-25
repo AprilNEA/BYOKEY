@@ -35,13 +35,31 @@ pub struct AppState {
 
 impl AppState {
     /// Creates a new shared application state wrapped in an `Arc`.
+    ///
+    /// If the config specifies a `proxy_url`, the HTTP client is built with that proxy.
     pub fn new(config: Arc<ArcSwap<Config>>, auth: Arc<AuthManager>) -> Arc<Self> {
-        Arc::new(Self {
-            config,
-            auth,
-            http: rquest::Client::new(),
-        })
+        let snapshot = config.load();
+        let http = build_http_client(snapshot.proxy_url.as_deref());
+        Arc::new(Self { config, auth, http })
     }
+}
+
+/// Build an HTTP client, optionally configured with a proxy URL.
+fn build_http_client(proxy_url: Option<&str>) -> rquest::Client {
+    if let Some(url) = proxy_url {
+        match rquest::Proxy::all(url) {
+            Ok(proxy) => {
+                return rquest::Client::builder()
+                    .proxy(proxy)
+                    .build()
+                    .unwrap_or_else(|_| rquest::Client::new());
+            }
+            Err(e) => {
+                tracing::warn!(url = url, error = %e, "invalid proxy_url, using direct connection");
+            }
+        }
+    }
+    rquest::Client::new()
 }
 
 /// Build the full axum router.

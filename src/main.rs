@@ -245,9 +245,26 @@ async fn cmd_serve(
     let state = AppState::new(config_arc, auth);
     let app = byokey_proxy::make_router(state);
 
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-    tracing::info!(addr = %addr, "byokey listening");
-    axum::serve(listener, app).await?;
+    // Check for TLS configuration.
+    let tls_config = snapshot.tls.as_ref().filter(|t| t.enable);
+
+    if let Some(tls) = tls_config {
+        let rustls_config =
+            axum_server::tls_rustls::RustlsConfig::from_pem_file(&tls.cert, &tls.key)
+                .await
+                .map_err(|e| anyhow::anyhow!("TLS config error: {e}"))?;
+        let addr: std::net::SocketAddr = addr
+            .parse()
+            .map_err(|e| anyhow::anyhow!("invalid address: {e}"))?;
+        tracing::info!(%addr, "byokey listening (TLS)");
+        axum_server::bind_rustls(addr, rustls_config)
+            .serve(app.into_make_service())
+            .await?;
+    } else {
+        let listener = tokio::net::TcpListener::bind(&addr).await?;
+        tracing::info!(addr = %addr, "byokey listening");
+        axum::serve(listener, app).await?;
+    }
     Ok(())
 }
 
