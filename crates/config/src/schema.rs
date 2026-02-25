@@ -134,6 +134,9 @@ pub struct Config {
     /// Payload rules for modifying request bodies.
     #[serde(default)]
     pub payload: PayloadRules,
+    /// Logging configuration.
+    #[serde(default)]
+    pub log: LogConfig,
 }
 
 /// Rules for modifying request payloads based on model patterns.
@@ -214,6 +217,39 @@ impl Default for StreamingConfig {
     }
 }
 
+/// Logging configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogConfig {
+    /// Output format: "text" (default) or "json".
+    #[serde(default = "default_log_format")]
+    pub format: String,
+    /// Optional log file path. If set, logs are written to this file
+    /// with daily rotation. Stdout logging continues alongside.
+    #[serde(default)]
+    pub file: Option<String>,
+    /// Log level override (default: "info"). Overridden by `RUST_LOG` env var.
+    #[serde(default = "default_log_level")]
+    pub level: String,
+}
+
+fn default_log_format() -> String {
+    "text".to_string()
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
+impl Default for LogConfig {
+    fn default() -> Self {
+        Self {
+            format: default_log_format(),
+            file: None,
+            level: default_log_level(),
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -227,6 +263,7 @@ impl Default for Config {
             streaming: StreamingConfig::default(),
             tls: None,
             payload: PayloadRules::default(),
+            log: LogConfig::default(),
         }
     }
 }
@@ -862,5 +899,27 @@ payload:
         dot_path_remove(&mut val3, "a.b");
         assert!(val3["a"].as_object().unwrap().get("b").is_none());
         assert_eq!(val3["a"]["c"], 2);
+    }
+
+    #[test]
+    fn test_default_log_config() {
+        let c = Config::default();
+        assert_eq!(c.log.format, "text");
+        assert!(c.log.file.is_none());
+        assert_eq!(c.log.level, "info");
+    }
+
+    #[test]
+    fn test_from_yaml_log_config() {
+        let yaml = r#"
+log:
+  format: "json"
+  file: "/tmp/byokey.log"
+  level: "debug"
+"#;
+        let c = Config::from_yaml(yaml).unwrap();
+        assert_eq!(c.log.format, "json");
+        assert_eq!(c.log.file.as_deref(), Some("/tmp/byokey.log"));
+        assert_eq!(c.log.level, "debug");
     }
 }

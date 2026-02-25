@@ -9,12 +9,15 @@ mod chat;
 mod error;
 mod messages;
 mod models;
+pub mod usage;
 
 pub use error::ApiError;
+pub use usage::UsageStats;
 
 use arc_swap::ArcSwap;
 use axum::{
-    Router,
+    Json, Router,
+    extract::State,
     routing::{any, get, post},
 };
 use byokey_auth::AuthManager;
@@ -31,6 +34,8 @@ pub struct AppState {
     pub auth: Arc<AuthManager>,
     /// HTTP client for upstream requests.
     pub http: rquest::Client,
+    /// In-memory usage statistics.
+    pub usage: Arc<UsageStats>,
 }
 
 impl AppState {
@@ -40,7 +45,12 @@ impl AppState {
     pub fn new(config: Arc<ArcSwap<Config>>, auth: Arc<AuthManager>) -> Arc<Self> {
         let snapshot = config.load();
         let http = build_http_client(snapshot.proxy_url.as_deref());
-        Arc::new(Self { config, auth, http })
+        Arc::new(Self {
+            config,
+            auth,
+            http,
+            usage: Arc::new(UsageStats::new()),
+        })
     }
 }
 
@@ -108,8 +118,15 @@ pub fn make_router(state: Arc<AppState>) -> Router {
         )
         // Catch-all: forward remaining /api/* routes to ampcode.com
         .route("/api/{*path}", any(amp_provider::amp_management_proxy))
+        // Management API
+        .route("/v0/management/usage", get(usage_handler))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
+}
+
+async fn usage_handler(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let snap = state.usage.snapshot();
+    Json(serde_json::to_value(snap).unwrap_or_default())
 }
 
 #[cfg(test)]

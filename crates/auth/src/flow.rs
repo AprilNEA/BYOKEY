@@ -76,7 +76,7 @@ async fn login_claude(
 
     let token = claude::parse_token_response(&json)?;
     save_login_token(auth, &ProviderId::Claude, token, account).await?;
-    eprintln!("Claude login successful");
+    tracing::info!("Claude login successful");
     Ok(())
 }
 
@@ -121,7 +121,7 @@ async fn login_codex(
 
     let token = codex::parse_token_response(&json)?;
     save_login_token(auth, &ProviderId::Codex, token, account).await?;
-    eprintln!("Codex login successful");
+    tracing::info!("Codex login successful");
     Ok(())
 }
 
@@ -152,8 +152,7 @@ async fn login_copilot(
 
     let dc = copilot::parse_device_code_response(&json)?;
 
-    eprintln!("Visit: {}", dc.verification_uri);
-    eprintln!("Enter verification code: {}", dc.user_code);
+    tracing::info!(uri = %dc.verification_uri, code = %dc.user_code, "visit URL and enter verification code");
     let _ = open::that(&dc.verification_uri);
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(dc.expires_in);
@@ -197,7 +196,7 @@ async fn login_copilot(
 
         let token = copilot::parse_token_response(&json)?;
         save_login_token(auth, &ProviderId::Copilot, token, account).await?;
-        eprintln!("Copilot login successful");
+        tracing::info!("Copilot login successful");
         return Ok(());
     }
 }
@@ -249,7 +248,7 @@ async fn login_gemini(
 
     let token = gemini::parse_token_response(&json)?;
     save_login_token(auth, &ProviderId::Gemini, token, account).await?;
-    eprintln!("Gemini login successful");
+    tracing::info!("Gemini login successful");
     Ok(())
 }
 
@@ -301,7 +300,7 @@ async fn login_antigravity(
 
     let token = antigravity::parse_token_response(&json)?;
     save_login_token(auth, &ProviderId::Antigravity, token, account).await?;
-    eprintln!("Antigravity login successful");
+    tracing::info!("Antigravity login successful");
     Ok(())
 }
 
@@ -330,8 +329,7 @@ async fn login_qwen(
 
     let dc = qwen::parse_device_code_response(&json)?;
 
-    eprintln!("Visit: {}", dc.verification_uri);
-    eprintln!("Enter verification code: {}", dc.user_code);
+    tracing::info!(uri = %dc.verification_uri, code = %dc.user_code, "visit URL and enter verification code");
     let _ = open::that(&dc.verification_uri);
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(dc.expires_in);
@@ -371,7 +369,7 @@ async fn login_qwen(
 
         let token = qwen::parse_token_response(&json)?;
         save_login_token(auth, &ProviderId::Qwen, token, account).await?;
-        eprintln!("Qwen login successful");
+        tracing::info!("Qwen login successful");
         return Ok(());
     }
 }
@@ -404,8 +402,7 @@ async fn login_kimi(
 
     let dc = kimi::parse_device_code_response(&json)?;
 
-    eprintln!("Visit: {}", dc.verification_uri);
-    eprintln!("Enter verification code: {}", dc.user_code);
+    tracing::info!(uri = %dc.verification_uri, code = %dc.user_code, "visit URL and enter verification code");
     let _ = open::that(&dc.verification_uri);
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(dc.expires_in);
@@ -448,7 +445,7 @@ async fn login_kimi(
 
         let token = kimi::parse_token_response(&json)?;
         save_login_token(auth, &ProviderId::Kimi, token, account).await?;
-        eprintln!("Kimi login successful");
+        tracing::info!("Kimi login successful");
         return Ok(());
     }
 }
@@ -513,7 +510,7 @@ async fn login_iflow(
     };
 
     save_login_token(auth, &ProviderId::IFlow, token, account).await?;
-    eprintln!("iFlow (Z.ai/GLM) login successful");
+    tracing::info!("iFlow (Z.ai/GLM) login successful");
     Ok(())
 }
 
@@ -534,10 +531,8 @@ async fn save_login_token(
 }
 
 fn open_browser(url: &str) {
-    eprintln!("Opening browser: {url}");
+    tracing::info!(url = %url, "opening browser for OAuth login");
     if let Err(e) = open::that(url) {
-        eprintln!("Failed to open browser automatically: {e}");
-        eprintln!("Please open the following URL manually to complete login:");
-        eprintln!("{url}");
+        tracing::warn!(error = %e, url = %url, "failed to open browser, open URL manually");
     }
 }

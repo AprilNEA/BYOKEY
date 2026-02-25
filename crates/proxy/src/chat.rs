@@ -15,6 +15,20 @@ use std::sync::Arc;
 
 use crate::{AppState, error::ApiError};
 
+/// Extract input/output token counts from an OpenAI-compatible usage response.
+fn extract_usage_tokens(json: &serde_json::Value) -> (u64, u64) {
+    let usage = json.get("usage");
+    let input = usage
+        .and_then(|u| u.get("prompt_tokens"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let output = usage
+        .and_then(|u| u.get("completion_tokens"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    (input, output)
+}
+
 /// Handles `POST /v1/chat/completions` requests.
 ///
 /// Resolves the model to a provider, forwards the request, and returns
@@ -45,6 +59,15 @@ pub async fn chat_completions(
     )
     .map_err(ApiError::from)?;
 
+    let provider = byokey_provider::resolve_provider(&suffix.model)
+        .map_or_else(|| "unknown".to_string(), |p| p.to_string());
+    tracing::info!(
+        model = %suffix.model,
+        provider = %provider,
+        stream = request.stream,
+        "chat completion request"
+    );
+
     // Replace model name with the clean version (suffix stripped)
     request.model.clone_from(&suffix.model);
 
@@ -70,13 +93,20 @@ pub async fn chat_completions(
             .map_err(|e| ApiError::from(byokey_types::ByokError::Translation(e.to_string())))?;
     }
 
-    match executor
-        .chat_completion(request)
-        .await
-        .map_err(ApiError::from)?
-    {
-        ProviderResponse::Complete(json) => Ok(Json(json).into_response()),
-        ProviderResponse::Stream(byte_stream) => {
+    let model_name = suffix.model.clone();
+    match executor.chat_completion(request).await {
+        Ok(ProviderResponse::Complete(json)) => {
+            // Extract token usage from the response if available.
+            let (input_tok, output_tok) = extract_usage_tokens(&json);
+            state
+                .usage
+                .record_success(&model_name, input_tok, output_tok);
+            tracing::debug!(model = %model_name, "chat completion complete");
+            Ok(Json(json).into_response())
+        }
+        Ok(ProviderResponse::Stream(byte_stream)) => {
+            state.usage.record_success(&model_name, 0, 0);
+            tracing::debug!(model = %model_name, "streaming chat completion");
             // Convert ByokError → std::io::Error for Body::from_stream
             let mapped = byte_stream.map_err(|e| std::io::Error::other(e.to_string()));
             let body = Body::from_stream(mapped);
@@ -87,6 +117,10 @@ pub async fn chat_completions(
                 .header("x-accel-buffering", "no")
                 .body(body)
                 .expect("valid response"))
+        }
+        Err(e) => {
+            state.usage.record_failure(&model_name);
+            Err(ApiError::from(e))
         }
     }
 }

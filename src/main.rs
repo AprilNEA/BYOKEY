@@ -200,15 +200,6 @@ async fn cmd_serve(
     host: Option<String>,
     db: Option<PathBuf>,
 ) -> Result<()> {
-    // Initialize structured logging (reads RUST_LOG, defaults to info).
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .with_target(true)
-        .init();
-
     let effective_path = config_path.or_else(|| {
         let default = default_config_path();
         if default.exists() {
@@ -218,7 +209,7 @@ async fn cmd_serve(
         }
     });
 
-    // Load config: if a file exists, use ConfigWatcher for hot-reload.
+    // Load config first so we can use log settings.
     let config_arc: Arc<ArcSwap<Config>> = if let Some(ref path) = effective_path {
         let watcher = Arc::new(
             ConfigWatcher::new(path.clone()).map_err(|e| anyhow::anyhow!("config error: {e}"))?,
@@ -230,8 +221,56 @@ async fn cmd_serve(
         Arc::new(ArcSwap::from_pointee(Config::default()))
     };
 
-    // CLI overrides for listen address (read from current config snapshot).
     let snapshot = config_arc.load();
+
+    // Initialize structured logging based on config.
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&snapshot.log.level));
+
+    // _log_guard must be held until server exits to flush buffered writes.
+    let _log_guard: Option<tracing_appender::non_blocking::WorkerGuard>;
+
+    if let Some(ref log_path) = snapshot.log.file {
+        let path = std::path::Path::new(log_path);
+        let dir = path.parent().unwrap_or(std::path::Path::new("."));
+        let filename = path
+            .file_name()
+            .unwrap_or(std::ffi::OsStr::new("byokey.log"));
+        let file_appender = tracing_appender::rolling::daily(dir, filename);
+        let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+        _log_guard = Some(guard);
+
+        if snapshot.log.format == "json" {
+            tracing_subscriber::fmt()
+                .json()
+                .with_env_filter(env_filter)
+                .with_target(true)
+                .with_writer(non_blocking)
+                .init();
+        } else {
+            tracing_subscriber::fmt()
+                .with_env_filter(env_filter)
+                .with_target(true)
+                .with_writer(non_blocking)
+                .init();
+        }
+    } else {
+        _log_guard = None;
+        if snapshot.log.format == "json" {
+            tracing_subscriber::fmt()
+                .json()
+                .with_env_filter(env_filter)
+                .with_target(true)
+                .init();
+        } else {
+            tracing_subscriber::fmt()
+                .with_env_filter(env_filter)
+                .with_target(true)
+                .init();
+        }
+    }
+
+    // CLI overrides for listen address.
     let addr = format!(
         "{}:{}",
         host.as_deref().unwrap_or(&snapshot.host),
