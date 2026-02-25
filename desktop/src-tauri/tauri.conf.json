@@ -2,18 +2,21 @@
   "$schema": "https://raw.githubusercontent.com/nicohman/tauri-apps-tauri/refs/heads/dev/crates/tauri-utils/schema.json",
   "productName": "BYOKEY",
   "version": "0.2.0",
-  "identifier": "com.byokey.desktop",
+  "identifier": "io.byokey.desktop",
   "build": {
-    "frontendDist": "../src"
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "windows": [
       {
         "label": "main",
         "title": "BYOKEY",
-        "width": 320,
-        "height": 460,
+        "width": 360,
+        "height": 520,
         "resizable": false,
         "decorations": false,
         "visible": false,
@@ -23,12 +26,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'"
-    },
-    "trayIcon": {
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": true,
-      "tooltip": "BYOKEY"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost"
     },
     "macOSPrivateApi": true
   },
@@ -38,7 +36,8 @@
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
-      "icons/128x128@2x.png"
+      "icons/128x128@2x.png",
+      "icons/icon.icns"
     ],
     "macOS": {
       "minimumSystemVersion": "10.15"

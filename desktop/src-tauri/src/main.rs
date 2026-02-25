@@ -41,6 +41,41 @@ struct ProxyStatusResponse {
     port: u16,
 }
 
+#[derive(serde::Serialize)]
+struct ProviderConfigResponse {
+    enabled: bool,
+    backend: Option<String>,
+    fallback: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct AppConfigResponse {
+    host: String,
+    port: u16,
+    providers: std::collections::HashMap<String, ProviderConfigResponse>,
+}
+
+#[derive(serde::Deserialize)]
+struct ProviderConfigInput {
+    enabled: bool,
+    backend: Option<String>,
+    fallback: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct AppConfigInput {
+    host: String,
+    port: u16,
+    providers: std::collections::HashMap<String, ProviderConfigInput>,
+}
+
+#[derive(serde::Serialize)]
+struct AccountInfoResponse {
+    account_id: String,
+    label: Option<String>,
+    is_active: bool,
+}
+
 // ── Tauri commands ───────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -89,7 +124,7 @@ async fn toggle_proxy(state: tauri::State<'_, AppState>) -> Result<ProxyStatusRe
 
         tokio::spawn(async move {
             let addr = format!("{}:{}", config.host, port);
-            let config_arc = Arc::new(arc_swap::ArcSwap::from_pointee((*config).clone()));
+            let config_arc = Arc::new(arc_swap::ArcSwap::from_pointee(config.clone()));
             let app_state = byokey_proxy::AppState::new(config_arc, auth);
             let app = byokey_proxy::make_router(app_state);
 
@@ -136,6 +171,127 @@ async fn logout_provider(
     state
         .auth
         .remove_token(&provider_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_config(
+    state: tauri::State<'_, AppState>,
+) -> Result<AppConfigResponse, String> {
+    let config = &*state.config;
+    let mut providers = std::collections::HashMap::new();
+    for (id, pc) in &config.providers {
+        providers.insert(
+            id.to_string(),
+            ProviderConfigResponse {
+                enabled: pc.enabled,
+                backend: pc.backend.as_ref().map(ToString::to_string),
+                fallback: pc.fallback.as_ref().map(ToString::to_string),
+            },
+        );
+    }
+    Ok(AppConfigResponse {
+        host: config.host.clone(),
+        port: config.port,
+        providers,
+    })
+}
+
+#[tauri::command]
+async fn save_config(config: AppConfigInput) -> Result<(), String> {
+    let mut providers = std::collections::HashMap::new();
+    for (id_str, pc) in config.providers {
+        let provider_id: ProviderId = id_str
+            .parse()
+            .map_err(|e: byokey_types::ByokError| e.to_string())?;
+        let backend = pc
+            .backend
+            .map(|s| s.parse::<ProviderId>())
+            .transpose()
+            .map_err(|e: byokey_types::ByokError| e.to_string())?;
+        let fallback = pc
+            .fallback
+            .map(|s| s.parse::<ProviderId>())
+            .transpose()
+            .map_err(|e: byokey_types::ByokError| e.to_string())?;
+        providers.insert(
+            provider_id,
+            byokey_config::ProviderConfig {
+                enabled: pc.enabled,
+                backend,
+                fallback,
+                ..Default::default()
+            },
+        );
+    }
+    let new_config = Config {
+        host: config.host,
+        port: config.port,
+        providers,
+        ..Default::default()
+    };
+
+    let yaml = serde_yaml::to_string(&new_config).map_err(|e| e.to_string())?;
+    let path = dirs_config_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, yaml).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn list_accounts(
+    provider: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<AccountInfoResponse>, String> {
+    let provider_id: ProviderId = provider
+        .parse()
+        .map_err(|e: byokey_types::ByokError| e.to_string())?;
+    let accounts = state
+        .auth
+        .list_accounts(&provider_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(accounts
+        .into_iter()
+        .map(|a| AccountInfoResponse {
+            account_id: a.account_id,
+            label: a.label,
+            is_active: a.is_active,
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn switch_account(
+    provider: String,
+    account: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let provider_id: ProviderId = provider
+        .parse()
+        .map_err(|e: byokey_types::ByokError| e.to_string())?;
+    state
+        .auth
+        .set_active_account(&provider_id, &account)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn logout_account(
+    provider: String,
+    account: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let provider_id: ProviderId = provider
+        .parse()
+        .map_err(|e: byokey_types::ByokError| e.to_string())?;
+    state
+        .auth
+        .remove_token_for(&provider_id, &account)
         .await
         .map_err(|e| e.to_string())
 }
@@ -204,6 +360,11 @@ fn main() {
             toggle_proxy,
             login_provider,
             logout_provider,
+            get_config,
+            save_config,
+            list_accounts,
+            switch_account,
+            logout_account,
         ])
         .setup(|app| {
             use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -217,7 +378,11 @@ fn main() {
                 .item(&quit)
                 .build()?;
 
+            let icon = tauri::include_image!("icons/tray-mask.png");
+
             TrayIconBuilder::new()
+                .icon(icon)
+                .icon_as_template(true)
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .tooltip("BYOKEY")
@@ -255,6 +420,14 @@ fn main() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Reopen { .. } = event
+                && let Some(w) = app.get_webview_window("main")
+            {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        });
 }
