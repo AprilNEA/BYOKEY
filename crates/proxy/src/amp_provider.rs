@@ -489,6 +489,7 @@ pub async fn amp_management_proxy(
         }
         if let Ok(rewritten) = serde_json::to_vec(&json) {
             body_bytes = Bytes::from(rewritten);
+            resp_headers.remove(axum::http::header::CONTENT_LENGTH);
         }
     }
 
