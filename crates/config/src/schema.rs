@@ -81,6 +81,10 @@ pub struct AmpConfig {
     /// 不设置则保持 BYOK 透传行为（默认）。
     #[serde(default)]
     pub upstream_key: Option<String>,
+    /// 拦截 `getUserFreeTierStatus` 响应，将 `canUseAmpFree` 和
+    /// `isDailyGrantEnabled` 改为 `false`，隐藏免费层提示（默认关闭）。
+    #[serde(default)]
+    pub hide_free_tier: bool,
 }
 
 /// Top-level application configuration.

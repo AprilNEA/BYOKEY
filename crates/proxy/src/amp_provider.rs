@@ -474,7 +474,23 @@ pub async fn amp_management_proxy(
         }
     }
 
-    let body_bytes = resp.bytes().await.unwrap_or_default();
+    let mut body_bytes = resp.bytes().await.unwrap_or_default();
+
+    // Hide free-tier ads: rewrite getUserFreeTierStatus response when enabled.
+    if config.amp.hide_free_tier
+        && query
+            .as_deref()
+            .is_some_and(|q| q.contains("getUserFreeTierStatus"))
+        && let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(&body_bytes)
+    {
+        if let Some(result) = json.get_mut("result").and_then(|r| r.as_object_mut()) {
+            result.insert("canUseAmpFree".into(), serde_json::Value::Bool(false));
+            result.insert("isDailyGrantEnabled".into(), serde_json::Value::Bool(false));
+        }
+        if let Ok(rewritten) = serde_json::to_vec(&json) {
+            body_bytes = Bytes::from(rewritten);
+        }
+    }
 
     if debug {
         let resp_body = std::str::from_utf8(&body_bytes)
