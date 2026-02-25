@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-proxy-v0.4.0...byokey-proxy-v0.5.0) - 2026-02-25
+
+### Added
+
+- observability — structured logging, usage stats, request tracing
+- config enhancements — proxy_url, model alias/exclusion, payload rules, TLS, streaming config
+- *(amp)* add hide_free_tier option to suppress free-tier ads
+
+### Fixed
+
+- *(amp)* remove Content-Length header after rewriting free-tier response
+
 ## [0.4.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-proxy-v0.3.0...byokey-proxy-v0.4.0) - 2026-02-24
 
 ### Added

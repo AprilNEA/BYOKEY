@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/AprilNEA/BYOKEY/compare/v0.4.0...v0.5.0) - 2026-02-25
+
+### Added
+
+- observability — structured logging, usage stats, request tracing
+- config enhancements — proxy_url, model alias/exclusion, payload rules, TLS, streaming config
+
+### Other
+
+- add AGENTS.md, CLAUDE.md and update .gitignore
+- *(desktop)* rewrite frontend with React + Webpack + Tailwind + Base UI
+- replace cross with native ubuntu-22.04-arm runner for aarch64
+
 ## [0.4.0](https://github.com/AprilNEA/BYOKEY/compare/v0.3.0...v0.4.0) - 2026-02-24
 
 ### Added
