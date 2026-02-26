@@ -69,6 +69,8 @@ async-trait = "0.1"
 serde_urlencoded = "0.7"
 # CLI
 clap = { version = "4", features = ["derive"] }
+# Regex (used by amp patch)
+regex = "1"
 # Futures
 futures-core = "0.3"
 futures-util = "0.3"
@@ -122,3 +124,5 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 axum-server.workspace = true
 tracing-appender.workspace = true
+serde_json.workspace = true
+regex.workspace = true

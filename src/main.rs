@@ -123,6 +123,30 @@ enum Commands {
         #[arg(long, value_name = "PATH")]
         db: Option<PathBuf>,
     },
+    /// Amp-related utilities.
+    Amp {
+        #[command(subcommand)]
+        action: AmpAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum AmpAction {
+    /// Inject the byokey proxy URL into Amp configuration.
+    Inject {
+        /// The proxy URL to inject (default: http://localhost:8018).
+        #[arg(long)]
+        url: Option<String>,
+    },
+    /// Patch Amp to hide ads (preserves impression telemetry).
+    DisableAds {
+        /// Explicit path(s) to the bundle file. Auto-detected if omitted.
+        #[arg(value_name = "PATH")]
+        paths: Vec<PathBuf>,
+        /// Restore the original bundle from backup.
+        #[arg(long)]
+        restore: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -189,6 +213,10 @@ async fn main() -> Result<()> {
             account,
             db,
         } => cmd_switch(provider, account, db).await,
+        Commands::Amp { action } => match action {
+            AmpAction::Inject { url } => cmd_amp_inject(url),
+            AmpAction::DisableAds { paths, restore } => cmd_amp_disable_ads(paths, restore),
+        },
     }
 }
 
@@ -807,6 +835,382 @@ async fn cmd_switch(provider_str: String, account: String, db: Option<PathBuf>) 
         .map_err(|e| anyhow::anyhow!("switch failed: {e}"))?;
     println!("{provider_str}: switched to account '{account}'");
     Ok(())
+}
+
+// ── Amp commands ─────────────────────────────────────────────────────────────
+
+fn cmd_amp_inject(url: Option<String>) -> Result<()> {
+    let url = url.unwrap_or_else(|| "http://localhost:8018/amp".to_string());
+    let settings_path = amp_settings_path();
+
+    if let Some(parent) = settings_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Read existing settings or start with an empty object.
+    let mut map: serde_json::Map<String, serde_json::Value> = if settings_path.exists() {
+        let content = std::fs::read_to_string(&settings_path)?;
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        serde_json::Map::new()
+    };
+
+    map.insert(
+        "amp.url".to_string(),
+        serde_json::Value::String(url.clone()),
+    );
+
+    let json = serde_json::to_string_pretty(&serde_json::Value::Object(map))?;
+    std::fs::write(&settings_path, format!("{json}\n"))?;
+    println!("amp.url set to {url}");
+    println!("config: {}", settings_path.display());
+    Ok(())
+}
+
+fn cmd_amp_disable_ads(paths: Vec<PathBuf>, restore: bool) -> Result<()> {
+    let bundles = if paths.is_empty() {
+        println!("searching for amp bundle...");
+        let found = find_amp_bundles();
+        if found.is_empty() {
+            println!("no amp bundle found — falling back to hide_free_tier");
+            set_hide_free_tier(true)?;
+            return Ok(());
+        }
+        for p in &found {
+            println!("  found: {}", p.display());
+        }
+        found
+    } else {
+        paths
+    };
+
+    if restore {
+        for bundle_path in &bundles {
+            println!("\nrestoring: {}", bundle_path.display());
+            amp_restore(bundle_path)?;
+        }
+        println!("\nrestart amp / reload editor window to apply.");
+        return Ok(());
+    }
+
+    let mut any_patched = false;
+    let mut all_failed = true;
+
+    for bundle_path in &bundles {
+        println!("\npatching: {}", bundle_path.display());
+
+        let data = match std::fs::read(bundle_path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("  ERROR reading file: {e}");
+                continue;
+            }
+        };
+        println!("  size: {} bytes", data.len());
+
+        match amp_patch(&data) {
+            Ok(Some(patched)) => {
+                let bak = bundle_path.with_extension("js.bak");
+                if !bak.exists() {
+                    std::fs::copy(bundle_path, &bak)?;
+                    println!("  backup saved: {}", bak.display());
+                }
+                std::fs::write(bundle_path, patched)?;
+                println!("  patched successfully");
+                any_patched = true;
+                all_failed = false;
+            }
+            Ok(None) => {
+                println!("  already patched — skipping");
+                all_failed = false;
+            }
+            Err(e) => eprintln!("  ERROR: {e}"),
+        }
+    }
+
+    if all_failed {
+        println!("\nbinary patch failed — enabling hide_free_tier as fallback");
+        set_hide_free_tier(true)?;
+    } else if any_patched {
+        println!("\nrestart amp / reload editor window to apply.");
+    }
+
+    Ok(())
+}
+
+/// Enable or disable `amp.hide_free_tier` in the byokey config file.
+fn set_hide_free_tier(enabled: bool) -> Result<()> {
+    let config_path = default_config_path();
+
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let mut map: serde_json::Map<String, serde_json::Value> = if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path)?;
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        serde_json::Map::new()
+    };
+
+    // Ensure `amp` object exists.
+    let amp = map
+        .entry("amp")
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    if let Some(obj) = amp.as_object_mut() {
+        obj.insert(
+            "hide_free_tier".to_string(),
+            serde_json::Value::Bool(enabled),
+        );
+    }
+
+    let json = serde_json::to_string_pretty(&serde_json::Value::Object(map))?;
+    std::fs::write(&config_path, format!("{json}\n"))?;
+    println!(
+        "  amp.hide_free_tier = {enabled} in {}",
+        config_path.display()
+    );
+    Ok(())
+}
+
+// ── Amp ad-patch helpers ─────────────────────────────────────────────────────
+
+const AMP_PATCH_MARKER: &[u8] = b"/*ampatch*";
+
+/// Discover patchable Amp bundles: CLI binary on PATH + editor extensions.
+fn find_amp_bundles() -> Vec<PathBuf> {
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+
+    // 1. Resolve `amp` from PATH.
+    if let Ok(output) = std::process::Command::new("which")
+        .arg("amp")
+        .stderr(Stdio::null())
+        .output()
+        && let Ok(raw) = std::str::from_utf8(&output.stdout)
+    {
+        let raw = raw.trim();
+        if !raw.is_empty()
+            && let Ok(real) = std::fs::canonicalize(raw)
+            && has_ad_code(&real)
+            && seen.insert(real.clone())
+        {
+            result.push(real);
+        }
+    }
+
+    // 2. VS Code / Cursor / Windsurf extensions.
+    if let Ok(home) = std::env::var("HOME") {
+        let home = PathBuf::from(home);
+        for editor_dir in &[".vscode", ".vscode-insiders", ".cursor", ".windsurf"] {
+            let ext_root = home.join(editor_dir).join("extensions");
+            if !ext_root.is_dir() {
+                continue;
+            }
+            if let Ok(entries) = std::fs::read_dir(&ext_root) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy();
+                    if !name_str.starts_with("sourcegraph.amp-") {
+                        continue;
+                    }
+                    if let Ok(walker) = glob_walk(&entry.path()) {
+                        for js_file in walker {
+                            if let Ok(meta) = js_file.metadata()
+                                && meta.len() > 1_000_000
+                                && let Ok(real) = std::fs::canonicalize(&js_file)
+                                && has_ad_code(&real)
+                                && seen.insert(real.clone())
+                            {
+                                result.push(real);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    result
+}
+
+/// Recursively yield `.js` files under `dir`.
+fn glob_walk(dir: &std::path::Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            if let Ok(sub) = glob_walk(&path) {
+                files.extend(sub);
+            }
+        } else if path.extension().is_some_and(|e| e == "js") {
+            files.push(path);
+        }
+    }
+    Ok(files)
+}
+
+fn has_ad_code(path: &std::path::Path) -> bool {
+    std::fs::read(path)
+        .map(|data| {
+            data.windows(b"fireImpressionIfNeeded".len())
+                .any(|w| w == b"fireImpressionIfNeeded")
+        })
+        .unwrap_or(false)
+}
+
+/// Patch the ad widget `build()` to return a zero-height spacer.
+/// Returns `Ok(Some(patched))` on success, `Ok(None)` if already patched.
+fn amp_patch(data: &[u8]) -> Result<Option<Vec<u8>>> {
+    if data
+        .windows(AMP_PATCH_MARKER.len())
+        .any(|w| w == AMP_PATCH_MARKER)
+    {
+        return Ok(None);
+    }
+
+    // 1. Find spacer widget constructor: `new <Name>({height:0})`
+    let spacer_re = regex::bytes::Regex::new(r"new (\w+)\(\{height:0\}\)").expect("valid regex");
+    let spacer_match = spacer_re.captures(data).ok_or_else(|| {
+        anyhow::anyhow!("cannot find spacer widget pattern  new <X>({{height:0}})")
+    })?;
+    let spacer = &spacer_match[1];
+    println!(
+        "  spacer widget constructor: {}",
+        std::str::from_utf8(spacer).unwrap_or("?")
+    );
+
+    // 2. Anchor on `fireImpressionIfNeeded(){`
+    let anchor_re = regex::bytes::Regex::new(r"fireImpressionIfNeeded\(\)\{").expect("valid regex");
+    let anchor = anchor_re
+        .find(data)
+        .ok_or_else(|| anyhow::anyhow!("cannot find fireImpressionIfNeeded(){{"))?;
+    println!(
+        "  anchor: fireImpressionIfNeeded() at byte {}",
+        anchor.start()
+    );
+
+    let fire_body_end = find_brace_match(data, anchor.end() - 1)?;
+
+    // 3. Locate `build(<arg>){` immediately after.
+    let search_window = 300;
+    let search_end = (fire_body_end + search_window).min(data.len());
+    let build_re = regex::bytes::Regex::new(r"build\(\w{1,4}\)\{").expect("valid regex");
+    let build_match = build_re
+        .find(&data[fire_body_end..search_end])
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "cannot find build() within {search_window} bytes after \
+                 fireImpressionIfNeeded (byte {fire_body_end})"
+            )
+        })?;
+
+    let body_open = fire_body_end + build_match.end() - 1; // position of `{`
+    let body_close = find_brace_match(data, body_open)?; // matching `}`
+    let body_len = body_close - body_open - 1; // bytes between { and }
+
+    println!(
+        "  build() body: {body_len} bytes  [{}..{body_close})",
+        body_open + 1
+    );
+
+    // 4. Build same-length replacement: `return new <Spacer>({height:0})/*ampatch*<pad>*/`
+    let mut ret_stmt = Vec::new();
+    ret_stmt.extend_from_slice(b"return new ");
+    ret_stmt.extend_from_slice(spacer);
+    ret_stmt.extend_from_slice(b"({height:0})");
+    ret_stmt.extend_from_slice(AMP_PATCH_MARKER);
+
+    let suffix = b"*/";
+    let pad = body_len
+        .checked_sub(ret_stmt.len() + suffix.len())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "replacement ({} bytes) exceeds original body ({body_len} bytes)",
+                ret_stmt.len() + suffix.len()
+            )
+        })?;
+
+    let mut replacement = ret_stmt;
+    replacement.resize(replacement.len() + pad, b' ');
+    replacement.extend_from_slice(suffix);
+    assert_eq!(replacement.len(), body_len);
+
+    // 5. Splice.
+    let mut out = Vec::with_capacity(data.len());
+    out.extend_from_slice(&data[..body_open + 1]);
+    out.extend_from_slice(&replacement);
+    out.extend_from_slice(&data[body_close..]);
+    assert_eq!(out.len(), data.len(), "file length must not change");
+
+    let preview_len = 80.min(replacement.len());
+    let preview = String::from_utf8_lossy(&replacement[..preview_len]);
+    let ellipsis = if replacement.len() > 80 { "..." } else { "" };
+    println!("  injected: {preview}{ellipsis}");
+
+    Ok(Some(out))
+}
+
+/// Match the `}` that balances the `{` at `start`, respecting string literals.
+fn find_brace_match(data: &[u8], start: usize) -> Result<usize> {
+    if data.get(start) != Some(&b'{') {
+        anyhow::bail!("expected '{{' at byte {start}");
+    }
+
+    let mut depth: usize = 1;
+    let mut pos = start + 1;
+    let mut in_str: u8 = 0; // 0 = not in string; otherwise the quote char
+    let mut esc = false;
+
+    while pos < data.len() && depth > 0 {
+        let b = data[pos];
+        if esc {
+            esc = false;
+        } else if in_str != 0 {
+            if b == b'\\' {
+                esc = true;
+            } else if b == in_str {
+                in_str = 0;
+            }
+        } else {
+            match b {
+                b'"' | b'\'' | b'`' => in_str = b,
+                b'{' => depth += 1,
+                b'}' => depth -= 1,
+                _ => {}
+            }
+        }
+        pos += 1;
+    }
+
+    if depth != 0 {
+        anyhow::bail!("unmatched brace starting at byte {start}");
+    }
+    Ok(pos - 1)
+}
+
+/// Restore a bundle from its `.bak` backup.
+fn amp_restore(bundle_path: &std::path::Path) -> Result<()> {
+    let bak = bundle_path.with_extension("js.bak");
+    if !bak.exists() {
+        // Try the Python-style `.bak` extension too (appended, not replaced).
+        let bak_alt = PathBuf::from(format!("{}.bak", bundle_path.display()));
+        if bak_alt.exists() {
+            std::fs::copy(&bak_alt, bundle_path)?;
+            println!("  restored from {}", bak_alt.display());
+            return Ok(());
+        }
+        anyhow::bail!("no backup found at {}", bak.display());
+    }
+    std::fs::copy(&bak, bundle_path)?;
+    println!("  restored from {}", bak.display());
+    Ok(())
+}
+
+fn amp_settings_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".amp").join("settings.json")
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
