@@ -77,6 +77,12 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
 
 ## 安装
 
+**Homebrew（macOS / Linux）**
+
+```sh
+brew install AprilNEA/tap/byokey
+```
+
 **从 crates.io 安装**
 
 ```sh
