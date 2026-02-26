@@ -917,6 +917,7 @@ fn cmd_amp_disable_ads(paths: Vec<PathBuf>, restore: bool) -> Result<()> {
                 }
                 std::fs::write(bundle_path, patched)?;
                 println!("  patched successfully");
+                resign_adhoc(bundle_path);
                 any_patched = true;
                 all_failed = false;
             }
@@ -992,6 +993,8 @@ fn find_amp_bundles() -> Vec<PathBuf> {
         let raw = raw.trim();
         if !raw.is_empty()
             && let Ok(real) = std::fs::canonicalize(raw)
+            // Skip native binaries (Mach-O / ELF) — only patch JS text files.
+            && !is_native_binary(&real)
             && has_ad_code(&real)
             && seen.insert(real.clone())
         {
@@ -1049,6 +1052,45 @@ fn glob_walk(dir: &std::path::Path) -> std::io::Result<Vec<PathBuf>> {
         }
     }
     Ok(files)
+}
+
+/// Ad-hoc re-sign a binary after patching (macOS only).
+/// Silently skips on non-macOS or if `codesign` is unavailable.
+#[cfg(target_os = "macos")]
+fn resign_adhoc(path: &std::path::Path) {
+    let status = std::process::Command::new("codesign")
+        .args(["--sign", "-", "--force", "--preserve-metadata=entitlements"])
+        .arg(path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    match status {
+        Ok(s) if s.success() => println!("  re-signed (ad-hoc)"),
+        Ok(s) => eprintln!("  WARNING: codesign exited with {s}"),
+        Err(e) => eprintln!("  WARNING: codesign not available: {e}"),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn resign_adhoc(_path: &std::path::Path) {}
+
+/// Return `true` if the file starts with a Mach-O or ELF magic number.
+fn is_native_binary(path: &std::path::Path) -> bool {
+    use std::io::Read as _;
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut magic = [0u8; 4];
+    if f.read_exact(&mut magic).is_err() {
+        return false;
+    }
+    let m = u32::from_be_bytes(magic);
+    // Mach-O: fat (0xcafebabe), 64-bit LE (0xcffaedfe), 32-bit BE (0xfeedface),
+    //         64-bit BE (0xfeedfacf), 32-bit LE (0xcefaedfe)
+    matches!(
+        m,
+        0xcafe_babe | 0xcffa_edfe | 0xfeed_face | 0xfeed_facf | 0xcefa_edfe
+    ) || magic == [0x7f, b'E', b'L', b'F'] // ELF
 }
 
 fn has_ad_code(path: &std::path::Path) -> bool {
