@@ -8,6 +8,7 @@ pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod copilot;
+pub mod factory;
 pub mod gemini;
 pub mod http_util;
 pub mod iflow;
@@ -22,6 +23,7 @@ pub use antigravity::AntigravityExecutor;
 pub use claude::ClaudeExecutor;
 pub use codex::CodexExecutor;
 pub use copilot::CopilotExecutor;
+pub use factory::FactoryExecutor;
 pub use gemini::GeminiExecutor;
 pub use iflow::IFlowExecutor;
 pub use kimi::KimiExecutor;
@@ -84,6 +86,7 @@ pub fn make_executor(
         ProviderId::Qwen => Some(Box::new(QwenExecutor::new(http, api_key, auth))),
         ProviderId::IFlow => Some(Box::new(IFlowExecutor::new(http, api_key, auth))),
         ProviderId::Kimi => Some(Box::new(KimiExecutor::new(http, api_key, auth))),
+        ProviderId::Factory => Some(Box::new(FactoryExecutor::new(http, api_key, auth))),
     }
 }
 
@@ -236,6 +239,14 @@ mod tests {
                 .iter()
                 .any(|m| m.starts_with("kimi-"))
         );
+    }
+
+    #[test]
+    fn test_make_executor_factory() {
+        let auth = make_auth();
+        let ex = make_executor(&ProviderId::Factory, None, auth, make_http());
+        assert!(ex.is_some());
+        assert!(ex.unwrap().supported_models().is_empty());
     }
 
     #[test]

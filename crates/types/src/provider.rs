@@ -16,6 +16,7 @@ pub enum ProviderId {
     Qwen,
     Kimi,
     IFlow,
+    Factory,
 }
 
 impl fmt::Display for ProviderId {
@@ -30,6 +31,7 @@ impl fmt::Display for ProviderId {
             Self::Qwen => write!(f, "qwen"),
             Self::Kimi => write!(f, "kimi"),
             Self::IFlow => write!(f, "iflow"),
+            Self::Factory => write!(f, "factory"),
         }
     }
 }
@@ -54,6 +56,7 @@ impl std::str::FromStr for ProviderId {
             "qwen" | "alibaba" => Ok(Self::Qwen),
             "kimi" | "moonshot" => Ok(Self::Kimi),
             "iflow" | "zai" | "glm" => Ok(Self::IFlow),
+            "factory" | "droid" => Ok(Self::Factory),
             other => Err(crate::ByokError::UnsupportedModel(other.to_string())),
         }
     }
@@ -73,6 +76,7 @@ impl ProviderId {
             Self::Qwen,
             Self::Kimi,
             Self::IFlow,
+            Self::Factory,
         ]
     }
 }
@@ -102,6 +106,7 @@ mod tests {
         assert_eq!(ProviderId::Qwen.to_string(), "qwen");
         assert_eq!(ProviderId::Kimi.to_string(), "kimi");
         assert_eq!(ProviderId::IFlow.to_string(), "iflow");
+        assert_eq!(ProviderId::Factory.to_string(), "factory");
     }
 
     #[test]
@@ -121,6 +126,10 @@ mod tests {
         assert_eq!(ProviderId::from_str("qwen").unwrap(), ProviderId::Qwen);
         assert_eq!(ProviderId::from_str("kimi").unwrap(), ProviderId::Kimi);
         assert_eq!(ProviderId::from_str("iflow").unwrap(), ProviderId::IFlow);
+        assert_eq!(
+            ProviderId::from_str("factory").unwrap(),
+            ProviderId::Factory
+        );
     }
 
     #[test]
@@ -136,6 +145,7 @@ mod tests {
         assert_eq!(ProviderId::from_str("moonshot").unwrap(), ProviderId::Kimi);
         assert_eq!(ProviderId::from_str("zai").unwrap(), ProviderId::IFlow);
         assert_eq!(ProviderId::from_str("glm").unwrap(), ProviderId::IFlow);
+        assert_eq!(ProviderId::from_str("droid").unwrap(), ProviderId::Factory);
     }
 
     #[test]
@@ -156,6 +166,7 @@ mod tests {
             ProviderId::Qwen,
             ProviderId::Kimi,
             ProviderId::IFlow,
+            ProviderId::Factory,
         ] {
             let json = serde_json::to_string(&p).unwrap();
             let back: ProviderId = serde_json::from_str(&json).unwrap();
