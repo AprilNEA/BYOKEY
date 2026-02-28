@@ -182,11 +182,40 @@ pub async fn copilot_anthropic_messages(
     copilot_messages(&state, body, stream, &beta).await
 }
 
+/// Build a Copilot Messages API request with standard headers.
+fn build_copilot_messages_request(
+    http: &rquest::Client,
+    url: &str,
+    token: &str,
+    beta: &str,
+    accept: &str,
+    initiator: &str,
+    body: &Value,
+) -> rquest::RequestBuilder {
+    http.post(url)
+        .header("authorization", format!("Bearer {token}"))
+        .header("anthropic-version", ANTHROPIC_VERSION)
+        .header("anthropic-beta", beta)
+        .header("content-type", "application/json")
+        .header("accept", accept)
+        .header("user-agent", COPILOT_USER_AGENT)
+        .header("editor-version", COPILOT_EDITOR_VERSION)
+        .header("editor-plugin-version", COPILOT_PLUGIN_VERSION)
+        .header("copilot-integration-id", COPILOT_INTEGRATION_ID)
+        .header("openai-intent", COPILOT_OPENAI_INTENT)
+        .header("x-github-api-version", COPILOT_GITHUB_API_VERSION)
+        .header("x-initiator", initiator)
+        .json(body)
+}
+
 /// Route Anthropic-format request to Copilot's native `/v1/messages` endpoint.
 ///
 /// Copilot provides a native Anthropic-compatible Messages API at
 /// `api.githubcopilot.com/v1/messages`. This handler authenticates via
 /// the Copilot token exchange flow and forwards the request verbatim.
+///
+/// With multiple Copilot accounts, retries with quota-aware rotation
+/// on transient failures.
 async fn copilot_messages(
     state: &Arc<AppState>,
     body: Value,
@@ -207,46 +236,90 @@ async fn copilot_messages(
         state.auth.clone(),
     );
 
-    let (token, endpoint) = executor.copilot_token().await.map_err(ApiError::from)?;
-    let url = format!("{endpoint}/v1/messages");
+    let accounts = state
+        .auth
+        .list_accounts(&ProviderId::Copilot)
+        .await
+        .unwrap_or_default();
+    let max_attempts = if accounts.len() > 1 {
+        accounts.len().min(3)
+    } else {
+        1
+    };
 
     let accept = if stream {
         "text/event-stream"
     } else {
         "application/json"
     };
-
     let initiator = detect_initiator(&body);
 
-    tracing::info!(
-        url = %url,
-        model = %body.get("model").and_then(|v| v.as_str()).unwrap_or("unknown"),
-        stream = stream,
-        initiator = initiator,
-        "routing Anthropic messages through Copilot"
-    );
+    let mut last_err = None;
+    for attempt in 0..max_attempts {
+        let (token, endpoint) = match executor.copilot_token().await {
+            Ok(t) => t,
+            Err(e) => {
+                if max_attempts > 1 {
+                    tracing::warn!(attempt, error = %e, "copilot token failed, trying next account");
+                    CopilotExecutor::invalidate_current_account();
+                    last_err = Some(ApiError::from(e));
+                    continue;
+                }
+                return Err(ApiError::from(e));
+            }
+        };
+        let url = format!("{endpoint}/v1/messages");
 
-    let resp = state
-        .http
-        .post(&url)
-        .header("authorization", format!("Bearer {token}"))
-        .header("anthropic-version", ANTHROPIC_VERSION)
-        .header("anthropic-beta", beta)
-        .header("content-type", "application/json")
-        .header("accept", accept)
-        .header("user-agent", COPILOT_USER_AGENT)
-        .header("editor-version", COPILOT_EDITOR_VERSION)
-        .header("editor-plugin-version", COPILOT_PLUGIN_VERSION)
-        .header("copilot-integration-id", COPILOT_INTEGRATION_ID)
-        .header("openai-intent", COPILOT_OPENAI_INTENT)
-        .header("x-github-api-version", COPILOT_GITHUB_API_VERSION)
-        .header("x-initiator", initiator)
-        .json(&body)
+        tracing::info!(
+            url = %url,
+            model = %body.get("model").and_then(|v| v.as_str()).unwrap_or("unknown"),
+            stream, initiator, attempt,
+            "routing Anthropic messages through Copilot"
+        );
+
+        let resp = build_copilot_messages_request(
+            &state.http,
+            &url,
+            &token,
+            beta,
+            accept,
+            initiator,
+            &body,
+        )
         .send()
-        .await
-        .map_err(|e| ApiError(ByokError::from(e)))?;
+        .await;
 
-    forward_response(resp, stream).await
+        match resp {
+            Ok(r) if r.status().is_success() => return forward_response(r, stream).await,
+            Ok(r) => {
+                let status = r.status().as_u16();
+                let text = r.text().await.unwrap_or_default();
+                let err = ByokError::Upstream { status, body: text };
+                if !err.is_retryable() || attempt + 1 >= max_attempts {
+                    return Err(ApiError(err));
+                }
+                tracing::warn!(
+                    attempt,
+                    status,
+                    "copilot messages failed, trying next account"
+                );
+                CopilotExecutor::invalidate_current_account();
+                last_err = Some(ApiError(err));
+            }
+            Err(e) => {
+                let err = ByokError::from(e);
+                if !err.is_retryable() || attempt + 1 >= max_attempts {
+                    return Err(ApiError(err));
+                }
+                tracing::warn!(attempt, error = %err, "copilot messages transport error, trying next");
+                CopilotExecutor::invalidate_current_account();
+                last_err = Some(ApiError(err));
+            }
+        }
+    }
+
+    Err(last_err
+        .unwrap_or_else(|| ApiError(ByokError::Auth("no copilot accounts available".into()))))
 }
 
 /// Forward an upstream response back to the client (shared by both backends).
