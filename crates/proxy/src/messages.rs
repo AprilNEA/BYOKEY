@@ -1,8 +1,14 @@
 //! Anthropic Messages API passthrough handler.
 //!
-//! Accepts requests in native Anthropic format and forwards them directly to
-//! `api.anthropic.com/v1/messages` without any format translation.  The
-//! response (streaming SSE or complete JSON) is returned as-is.
+//! Accepts requests in native Anthropic format and forwards them to
+//! either `api.anthropic.com/v1/messages` (default) or
+//! `api.githubcopilot.com/v1/messages` (Copilot backend).
+//!
+//! Copilot routing is triggered by:
+//! 1. `POST /copilot/v1/messages` — dedicated route, always goes through Copilot.
+//! 2. `claude.backend: copilot` config — global override on `/v1/messages`.
+//!
+//! The response (streaming SSE or complete JSON) is returned as-is.
 
 use axum::{
     body::Body,
@@ -10,6 +16,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use byokey_provider::CopilotExecutor;
 use byokey_types::{ByokError, ProviderId};
 use futures_util::TryStreamExt as _;
 use serde_json::Value;
@@ -21,6 +28,14 @@ const API_URL: &str = "https://api.anthropic.com/v1/messages?beta=true";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const ANTHROPIC_BETA_BASE: &str = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,prompt-caching-2024-07-31";
 const USER_AGENT: &str = "claude-cli/2.1.44 (external, sdk-cli)";
+
+// Copilot identification headers (matching VS Code Copilot Chat extension).
+const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.35.0";
+const COPILOT_EDITOR_VERSION: &str = "vscode/1.107.0";
+const COPILOT_PLUGIN_VERSION: &str = "copilot-chat/0.35.0";
+const COPILOT_INTEGRATION_ID: &str = "vscode-chat";
+const COPILOT_OPENAI_INTENT: &str = "conversation-panel";
+const COPILOT_GITHUB_API_VERSION: &str = "2025-04-01";
 
 /// Handles `POST /v1/messages` — Anthropic native format passthrough.
 ///
@@ -68,6 +83,22 @@ fn build_beta_header(body: &Value) -> String {
     betas
 }
 
+/// Detect the `X-Initiator` value from Anthropic-format messages.
+fn detect_initiator(body: &Value) -> &'static str {
+    let is_agent = body
+        .get("messages")
+        .and_then(Value::as_array)
+        .is_some_and(|msgs| {
+            msgs.iter().any(|m| {
+                matches!(
+                    m.get("role").and_then(Value::as_str),
+                    Some("assistant" | "tool")
+                )
+            })
+        });
+    if is_agent { "agent" } else { "user" }
+}
+
 pub async fn anthropic_messages(
     State(state): State<Arc<AppState>>,
     body: axum::extract::Json<Value>,
@@ -77,8 +108,19 @@ pub async fn anthropic_messages(
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let beta = build_beta_header(&body);
 
-    // Resolve Claude auth: config API key takes priority over OAuth token.
+    // Global backend override: `claude.backend: copilot`.
     let config = state.config.load();
+    let claude_config = config
+        .providers
+        .get(&ProviderId::Claude)
+        .cloned()
+        .unwrap_or_default();
+
+    if claude_config.backend.as_ref() == Some(&ProviderId::Copilot) {
+        return copilot_messages(&state, body, stream, &beta).await;
+    }
+
+    // Default: passthrough to Anthropic API.
     let provider_cfg = config.providers.get(&ProviderId::Claude);
     let api_key = provider_cfg.and_then(|pc| pc.api_key.clone());
 
@@ -125,6 +167,90 @@ pub async fn anthropic_messages(
         .await
         .map_err(|e| ApiError(ByokError::from(e)))?;
 
+    forward_response(resp, stream).await
+}
+
+/// Handles `POST /copilot/v1/messages` — always routes through Copilot.
+pub async fn copilot_anthropic_messages(
+    State(state): State<Arc<AppState>>,
+    body: axum::extract::Json<Value>,
+) -> Result<Response, ApiError> {
+    let mut body = body.0;
+    sanitize_thinking(&mut body);
+    let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
+    let beta = build_beta_header(&body);
+    copilot_messages(&state, body, stream, &beta).await
+}
+
+/// Route Anthropic-format request to Copilot's native `/v1/messages` endpoint.
+///
+/// Copilot provides a native Anthropic-compatible Messages API at
+/// `api.githubcopilot.com/v1/messages`. This handler authenticates via
+/// the Copilot token exchange flow and forwards the request verbatim.
+async fn copilot_messages(
+    state: &Arc<AppState>,
+    body: Value,
+    stream: bool,
+    beta: &str,
+) -> Result<Response, ApiError> {
+    let copilot_config = state
+        .config
+        .load()
+        .providers
+        .get(&ProviderId::Copilot)
+        .cloned()
+        .unwrap_or_default();
+
+    let executor = CopilotExecutor::new(
+        state.http.clone(),
+        copilot_config.api_key,
+        state.auth.clone(),
+    );
+
+    let (token, endpoint) = executor.copilot_token().await.map_err(ApiError::from)?;
+    let url = format!("{endpoint}/v1/messages");
+
+    let accept = if stream {
+        "text/event-stream"
+    } else {
+        "application/json"
+    };
+
+    let initiator = detect_initiator(&body);
+
+    tracing::info!(
+        url = %url,
+        model = %body.get("model").and_then(|v| v.as_str()).unwrap_or("unknown"),
+        stream = stream,
+        initiator = initiator,
+        "routing Anthropic messages through Copilot"
+    );
+
+    let resp = state
+        .http
+        .post(&url)
+        .header("authorization", format!("Bearer {token}"))
+        .header("anthropic-version", ANTHROPIC_VERSION)
+        .header("anthropic-beta", beta)
+        .header("content-type", "application/json")
+        .header("accept", accept)
+        .header("user-agent", COPILOT_USER_AGENT)
+        .header("editor-version", COPILOT_EDITOR_VERSION)
+        .header("editor-plugin-version", COPILOT_PLUGIN_VERSION)
+        .header("copilot-integration-id", COPILOT_INTEGRATION_ID)
+        .header("openai-intent", COPILOT_OPENAI_INTENT)
+        .header("x-github-api-version", COPILOT_GITHUB_API_VERSION)
+        .header("x-initiator", initiator)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| ApiError(ByokError::from(e)))?;
+
+    forward_response(resp, stream).await
+}
+
+/// Forward an upstream response back to the client (shared by both backends).
+async fn forward_response(resp: rquest::Response, stream: bool) -> Result<Response, ApiError> {
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();

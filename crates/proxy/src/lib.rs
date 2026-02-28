@@ -77,6 +77,7 @@ fn build_http_client(proxy_url: Option<&str>) -> rquest::Client {
 /// Routes:
 /// - POST /v1/chat/completions                          OpenAI-compatible
 /// - POST /v1/messages                                  Anthropic native passthrough
+/// - POST /copilot/v1/messages                          Anthropic via Copilot
 /// - GET  /v1/models
 /// - GET  /amp/v1/login
 /// - ANY  /amp/v0/management/{*path}
@@ -93,6 +94,10 @@ pub fn make_router(state: Arc<AppState>) -> Router {
         // Standard routes
         .route("/v1/chat/completions", post(chat::chat_completions))
         .route("/v1/messages", post(messages::anthropic_messages))
+        .route(
+            "/copilot/v1/messages",
+            post(messages::copilot_anthropic_messages),
+        )
         .route("/v1/models", get(models::list_models))
         // Amp CLI routes
         .route("/amp/auth/cli-login", get(amp::cli_login_redirect))

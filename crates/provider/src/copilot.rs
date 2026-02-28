@@ -60,14 +60,22 @@ impl CopilotExecutor {
         }
     }
 
-    /// Obtains the Copilot API token and endpoint to use for a request.
+    /// Returns the Copilot API token and base endpoint URL (without path suffix).
     ///
     /// When `api_key` is set it is used directly (skip token exchange).
     /// Otherwise the stored GitHub token is exchanged for a short-lived
     /// Copilot API token via `api.github.com/copilot_internal/v2/token`.
-    async fn copilot_creds(&self) -> Result<(String, String)> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ByokError::Auth`] if the token exchange fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal token cache mutex is poisoned.
+    pub async fn copilot_token(&self) -> Result<(String, String)> {
         if let Some(key) = &self.api_key {
-            return Ok((key.clone(), format!("{API_BASE_URL}/chat/completions")));
+            return Ok((key.clone(), API_BASE_URL.to_string()));
         }
 
         let github_token = self
@@ -82,10 +90,7 @@ impl CopilotExecutor {
             if let Some(cached) = cache.get(&github_token)
                 && cached.expires_at > Instant::now()
             {
-                return Ok((
-                    cached.token.clone(),
-                    format!("{}/chat/completions", cached.api_endpoint),
-                ));
+                return Ok((cached.token.clone(), cached.api_endpoint.clone()));
             }
         }
 
@@ -145,8 +150,6 @@ impl CopilotExecutor {
             .and_then(Value::as_str)
             .is_none_or(|plan| plan != "copilot_free");
 
-        let chat_url = format!("{api_endpoint}/chat/completions");
-
         // Cache the new token
         {
             let mut cache = self.cache.lock().unwrap();
@@ -154,14 +157,20 @@ impl CopilotExecutor {
                 github_token,
                 CachedToken {
                     token: api_token.clone(),
-                    api_endpoint,
+                    api_endpoint: api_endpoint.clone(),
                     expires_at: Instant::now() + ttl,
                     is_pro,
                 },
             );
         }
 
-        Ok((api_token, chat_url))
+        Ok((api_token, api_endpoint))
+    }
+
+    /// Obtains the Copilot API token and chat completions URL.
+    async fn copilot_creds(&self) -> Result<(String, String)> {
+        let (token, endpoint) = self.copilot_token().await?;
+        Ok((token, format!("{endpoint}/chat/completions")))
     }
 
     /// Returns `true` if the current Copilot token belongs to a Pro/Business/Enterprise plan.
