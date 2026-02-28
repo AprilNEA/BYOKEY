@@ -767,6 +767,26 @@ async fn cmd_logout(
 }
 
 async fn cmd_status(db: Option<PathBuf>) -> Result<()> {
+    // Server running status
+    let pid_path = default_pid_path();
+    if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
+        let pid = pid_str.trim();
+        let alive = std::process::Command::new("kill")
+            .args(["-0", pid])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        if alive {
+            println!("server: running (pid {pid})");
+        } else {
+            println!("server: not running (stale pid file)");
+        }
+    } else {
+        println!("server: not running");
+    }
+    println!();
+
     let auth = AuthManager::new(Arc::new(open_store(db).await?), rquest::Client::new());
     let providers = [
         ProviderId::Claude,
