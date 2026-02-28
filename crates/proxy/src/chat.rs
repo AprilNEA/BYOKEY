@@ -29,6 +29,14 @@ fn extract_usage_tokens(json: &serde_json::Value) -> (u64, u64) {
     (input, output)
 }
 
+/// Handles `POST /copilot/v1/chat/completions` — always routes through Copilot.
+pub async fn copilot_chat_completions(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<ChatRequest>,
+) -> Result<Response, ApiError> {
+    chat_completions_inner(state, request, true).await
+}
+
 /// Handles `POST /v1/chat/completions` requests.
 ///
 /// Resolves the model to a provider, forwards the request, and returns
@@ -39,7 +47,15 @@ fn extract_usage_tokens(json: &serde_json::Value) -> (u64, u64) {
 /// Returns [`ApiError`] if the model is unsupported or the upstream call fails.
 pub async fn chat_completions(
     State(state): State<Arc<AppState>>,
-    Json(mut request): Json<ChatRequest>,
+    Json(request): Json<ChatRequest>,
+) -> Result<Response, ApiError> {
+    chat_completions_inner(state, request, false).await
+}
+
+async fn chat_completions_inner(
+    state: Arc<AppState>,
+    mut request: ChatRequest,
+    force_copilot: bool,
 ) -> Result<Response, ApiError> {
     let config = state.config.load();
 
@@ -49,7 +65,13 @@ pub async fn chat_completions(
     // Parse thinking suffix from (possibly alias-resolved) model name.
     let suffix = parse_model_suffix(&resolved_model);
 
-    let config_fn = |p: &ProviderId| config.providers.get(p).cloned();
+    let config_fn = |p: &ProviderId| {
+        let mut pc = config.providers.get(p).cloned().unwrap_or_default();
+        if force_copilot && *p != ProviderId::Copilot {
+            pc.backend = Some(ProviderId::Copilot);
+        }
+        Some(pc)
+    };
 
     let executor = make_executor_for_model(
         &suffix.model,

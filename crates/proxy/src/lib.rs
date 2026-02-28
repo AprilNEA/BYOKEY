@@ -98,6 +98,10 @@ pub fn make_router(state: Arc<AppState>) -> Router {
             "/copilot/v1/messages",
             post(messages::copilot_anthropic_messages),
         )
+        .route(
+            "/copilot/v1/chat/completions",
+            post(chat::copilot_chat_completions),
+        )
         .route("/v1/models", get(models::list_models))
         // Amp CLI routes
         .route("/amp/auth/cli-login", get(amp::cli_login_redirect))
