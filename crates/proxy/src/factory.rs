@@ -15,8 +15,8 @@ use axum::{
     http::{HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
 };
-use bytes::Bytes;
 use byokey_types::{ByokError, ProviderId};
+use bytes::Bytes;
 use futures_util::TryStreamExt as _;
 use std::sync::Arc;
 
@@ -50,7 +50,7 @@ async fn resolve_token(state: &AppState) -> Result<String, ApiError> {
 }
 
 /// Generic Factory passthrough handler.
-async fn factory_proxy(
+pub(crate) async fn factory_proxy(
     state: Arc<AppState>,
     provider: &str,
     llm_path: &str,
@@ -69,10 +69,7 @@ async fn factory_proxy(
         .header("user-agent", USER_AGENT)
         .header("x-api-provider", provider)
         .header("x-session-id", uuid::Uuid::new_v4().to_string())
-        .header(
-            "x-assistant-message-id",
-            uuid::Uuid::new_v4().to_string(),
-        );
+        .header("x-assistant-message-id", uuid::Uuid::new_v4().to_string());
 
     // Forward original headers, stripping hop-by-hop and auth.
     for (name, value) in &headers {
@@ -118,7 +115,11 @@ async fn factory_proxy(
             .get("accept")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("application/json");
-        Ok((upstream_status, [(axum::http::header::CONTENT_TYPE, content_type)], resp_bytes)
+        Ok((
+            upstream_status,
+            [(axum::http::header::CONTENT_TYPE, content_type)],
+            resp_bytes,
+        )
             .into_response())
     }
 }
