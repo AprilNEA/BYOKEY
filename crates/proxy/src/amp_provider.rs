@@ -25,7 +25,7 @@ use futures_util::TryStreamExt as _;
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
-use crate::{AppState, error::ApiError};
+use crate::{AppState, error::ApiError, factory::factory_proxy};
 
 /// Codex OAuth Responses endpoint (`ChatGPT` subscription).
 const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
@@ -153,9 +153,12 @@ pub async fn codex_responses_passthrough(
 /// `gemini-3-pro:generateContent` or `gemini-3-flash:streamGenerateContent`.
 /// Query parameters (e.g. `?alt=sse`) are forwarded verbatim to the upstream.
 ///
-/// When the Gemini provider has `backend` configured (e.g. `backend: copilot`),
-/// the request is translated from Google native format to `OpenAI` format,
-/// sent to the backend provider, and the response is translated back.
+/// When the Gemini provider has `backend: factory`, the request is forwarded in
+/// native Google format to Factory (`/api/llm/g/{action}`).
+///
+/// For other backend values (e.g. `backend: copilot`), the request is
+/// translated from Google native format to `OpenAI` format, sent to the backend
+/// provider, and the response is translated back.
 pub async fn gemini_native_passthrough(
     State(state): State<Arc<AppState>>,
     Path(action): Path<String>,
@@ -174,7 +177,34 @@ pub async fn gemini_native_passthrough(
         .split_once(':')
         .map_or(action.as_str(), |(model, _)| model);
 
-    // If a backend override is configured, translate and route through it.
+    // Rebuild query string from parsed params.
+    let qs: String = query_params
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("&");
+
+    // Factory backend: native passthrough (no OpenAI translation).
+    if let Some(ProviderId::Factory) = gemini_config.backend.as_ref() {
+        let sub_path = if qs.is_empty() {
+            action.clone()
+        } else {
+            format!("{action}?{qs}")
+        };
+        let body_bytes = serde_json::to_vec(&body).map_err(|e| ApiError(ByokError::from(e)))?;
+        return factory_proxy(
+            state,
+            "google",
+            "g",
+            &sub_path,
+            Method::POST,
+            HeaderMap::new(),
+            Bytes::from(body_bytes),
+        )
+        .await;
+    }
+
+    // Other backend override: translate and route through OpenAI-compatible executor.
     if let Some(backend_id) = &gemini_config.backend {
         return gemini_native_via_backend(
             &state,
@@ -189,13 +219,6 @@ pub async fn gemini_native_passthrough(
 
     // Direct passthrough to Gemini API.
     let api_key = gemini_config.api_key;
-
-    // Rebuild query string from parsed params.
-    let qs: String = query_params
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect::<Vec<_>>()
-        .join("&");
     let url = if qs.is_empty() {
         format!("{GEMINI_MODELS_BASE}/{action}")
     } else {
