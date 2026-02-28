@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3](https://github.com/AprilNEA/BYOKEY/compare/byokey-proxy-v0.5.2...byokey-proxy-v0.5.3) - 2026-02-28
+
+### Added
+
+- *(proxy)* add /copilot/v1/chat/completions route
+- *(proxy)* route Anthropic messages through Copilot's native /v1/messages endpoint
+
 ## [0.5.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-proxy-v0.4.0...byokey-proxy-v0.5.0) - 2026-02-25
 
 ### Added
