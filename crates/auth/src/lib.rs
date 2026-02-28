@@ -10,6 +10,7 @@ pub mod claude;
 pub mod codex;
 pub mod copilot;
 pub mod credentials;
+pub mod factory;
 pub mod flow;
 pub mod gemini;
 pub mod iflow;

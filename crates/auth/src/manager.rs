@@ -210,6 +210,11 @@ impl AuthManager {
             )));
         }
 
+        // Factory uses WorkOS token endpoint directly (no CDN credentials needed).
+        if *provider == ProviderId::Factory {
+            return self.refresh_factory(token, refresh_token).await;
+        }
+
         // Fetch credentials (client_id, client_secret, token_url) from CDN.
         let provider_name = provider.to_string();
         let creds = credentials::fetch(&provider_name, &self.http).await?;
@@ -342,6 +347,54 @@ impl AuthManager {
             access_token: api_key,
             ..token
         })
+    }
+
+    /// Factory-specific refresh via `WorkOS`: POST form with `grant_type=refresh_token`
+    /// and the Factory `CLIENT_ID`. No `client_secret` is needed.
+    async fn refresh_factory(&self, token: &OAuthToken, refresh_token: &str) -> Result<OAuthToken> {
+        use crate::factory;
+
+        let params = [
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+            ("client_id", factory::CLIENT_ID),
+        ];
+
+        let resp = self
+            .http
+            .post(factory::TOKEN_URL)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .form(&params)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ByokError::Auth(format!("failed to parse refresh response: {e}")))?;
+
+        if !status.is_success() {
+            let error_desc = json
+                .get("error_description")
+                .or_else(|| json.get("error"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown error");
+            return Err(ByokError::Auth(format!(
+                "Factory refresh failed ({status}): {error_desc}"
+            )));
+        }
+
+        let mut new_token = factory::parse_token_response(&json)?;
+
+        // Preserve the old refresh_token if the response didn't include a new one.
+        if new_token.refresh_token.is_none() {
+            new_token.refresh_token = token.refresh_token.clone();
+        }
+
+        self.store.save(&ProviderId::Factory, &new_token).await?;
+        tracing::info!("Factory token refreshed successfully");
+        Ok(new_token)
     }
 }
 

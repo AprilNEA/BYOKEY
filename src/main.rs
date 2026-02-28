@@ -778,6 +778,7 @@ async fn cmd_status(db: Option<PathBuf>) -> Result<()> {
         ProviderId::Qwen,
         ProviderId::Kimi,
         ProviderId::IFlow,
+        ProviderId::Factory,
     ];
     for provider in &providers {
         let accounts = auth.list_accounts(provider).await.unwrap_or_default();

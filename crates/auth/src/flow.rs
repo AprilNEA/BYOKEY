@@ -4,8 +4,8 @@ use byokey_types::{ByokError, ProviderId, traits::Result};
 use std::time::Duration;
 
 use crate::{
-    AuthManager, antigravity, callback, claude, codex, copilot, credentials, gemini, iflow, kimi,
-    pkce, qwen,
+    AuthManager, antigravity, callback, claude, codex, copilot, credentials, factory, gemini,
+    iflow, kimi, pkce, qwen,
 };
 
 /// Run the full interactive login flow for the given provider.
@@ -28,6 +28,7 @@ pub async fn login(provider: &ProviderId, auth: &AuthManager, account: Option<&s
         ProviderId::Qwen => login_qwen(auth, &http, account).await,
         ProviderId::Kimi => login_kimi(auth, &http, account).await,
         ProviderId::IFlow => login_iflow(auth, &http, account).await,
+        ProviderId::Factory => login_factory(auth, &http, account).await,
         ProviderId::Kiro => Err(ByokError::Auth(
             "Kiro OAuth login not yet implemented".into(),
         )),
@@ -512,6 +513,110 @@ async fn login_iflow(
     save_login_token(auth, &ProviderId::IFlow, token, account).await?;
     tracing::info!("iFlow (Z.ai/GLM) login successful");
     Ok(())
+}
+
+// ── Factory device code flow (via WorkOS) ─────────────────────────────────────
+
+async fn login_factory(
+    auth: &AuthManager,
+    http: &rquest::Client,
+    account: Option<&str>,
+) -> Result<()> {
+    let init_params = [("client_id", factory::CLIENT_ID)];
+
+    let resp = http
+        .post(factory::DEVICE_CODE_URL)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .form(&init_params)
+        .send()
+        .await?;
+
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| ByokError::Auth(format!("failed to parse device code response: {e}")))?;
+
+    let dc = factory::parse_device_code_response(&json)?;
+
+    tracing::info!(uri = %dc.verification_uri, code = %dc.user_code, "visit URL and enter verification code");
+    let _ = open::that(&dc.verification_uri);
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(dc.expires_in);
+    let mut interval = dc.interval;
+    let device_code = dc.device_code.clone();
+
+    loop {
+        tokio::time::sleep(Duration::from_secs(interval)).await;
+
+        if tokio::time::Instant::now() >= deadline {
+            return Err(ByokError::Auth("device code expired".into()));
+        }
+
+        let token_params = [
+            ("client_id", factory::CLIENT_ID),
+            ("device_code", device_code.as_str()),
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+        ];
+
+        let resp = http
+            .post(factory::TOKEN_URL)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .form(&token_params)
+            .send()
+            .await?;
+
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
+
+        match json.get("error").and_then(|v| v.as_str()) {
+            Some("authorization_pending") => continue,
+            Some("slow_down") => {
+                interval += 5;
+                continue;
+            }
+            Some(e) => return Err(ByokError::Auth(format!("device flow error: {e}"))),
+            None => {}
+        }
+
+        let mut token = factory::parse_token_response(&json)?;
+
+        // Resolve org and re-issue token with org scope.
+        let org_id = factory::resolve_org(&token.access_token, http).await?;
+        tracing::info!(org_id = %org_id, "resolved Factory organization");
+
+        let refresh_params = [
+            ("grant_type", "refresh_token"),
+            (
+                "refresh_token",
+                token
+                    .refresh_token
+                    .as_deref()
+                    .ok_or_else(|| ByokError::Auth("missing refresh_token".into()))?,
+            ),
+            ("client_id", factory::CLIENT_ID),
+            ("organization_id", &org_id),
+        ];
+
+        let resp = http
+            .post(factory::TOKEN_URL)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .form(&refresh_params)
+            .send()
+            .await?;
+
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ByokError::Auth(format!("failed to parse scoped token: {e}")))?;
+
+        token = factory::parse_token_response(&json)?;
+
+        save_login_token(auth, &ProviderId::Factory, token, account).await?;
+        tracing::info!("Factory login successful");
+        return Ok(());
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

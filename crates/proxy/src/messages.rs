@@ -7,15 +7,16 @@
 use axum::{
     body::Body,
     extract::State,
-    http::StatusCode,
+    http::{Method, StatusCode},
     response::{IntoResponse, Response},
 };
 use byokey_types::{ByokError, ProviderId};
+use bytes::Bytes;
 use futures_util::TryStreamExt as _;
 use serde_json::Value;
 use std::sync::Arc;
 
-use crate::{AppState, error::ApiError};
+use crate::{AppState, error::ApiError, factory::factory_proxy};
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages?beta=true";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -77,10 +78,29 @@ pub async fn anthropic_messages(
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let beta = build_beta_header(&body);
 
-    // Resolve Claude auth: config API key takes priority over OAuth token.
-    let config = state.config.load();
-    let provider_cfg = config.providers.get(&ProviderId::Claude);
-    let api_key = provider_cfg.and_then(|pc| pc.api_key.clone());
+    let (backend, api_key) = {
+        let config = state.config.load();
+        let provider_cfg = config.providers.get(&ProviderId::Claude);
+        (
+            provider_cfg.and_then(|pc| pc.backend.clone()),
+            provider_cfg.and_then(|pc| pc.api_key.clone()),
+        )
+    };
+
+    // If Claude is configured to route through Factory, passthrough to Factory instead.
+    if matches!(backend, Some(ProviderId::Factory)) {
+        let body_bytes = serde_json::to_vec(&body).map_err(|e| ApiError(ByokError::from(e)))?;
+        return factory_proxy(
+            state,
+            "anthropic",
+            "a",
+            "v1/messages",
+            Method::POST,
+            axum::http::HeaderMap::new(),
+            Bytes::from(body_bytes),
+        )
+        .await;
+    }
 
     let accept = if stream {
         "text/event-stream"

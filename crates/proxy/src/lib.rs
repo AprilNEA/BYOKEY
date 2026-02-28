@@ -7,6 +7,7 @@ mod amp;
 mod amp_provider;
 mod chat;
 mod error;
+mod factory;
 mod messages;
 mod models;
 pub mod usage;
@@ -116,6 +117,13 @@ pub fn make_router(state: Arc<AppState>) -> Router {
             "/api/provider/google/v1beta/models/{action}",
             post(amp_provider::gemini_native_passthrough),
         )
+        // Factory passthrough routes
+        .route(
+            "/factory/anthropic/{*path}",
+            any(factory::factory_anthropic),
+        )
+        .route("/factory/openai/{*path}", any(factory::factory_openai))
+        .route("/factory/google/{*path}", any(factory::factory_google))
         // Catch-all: forward remaining /api/* routes to ampcode.com
         .route("/api/{*path}", any(amp_provider::amp_management_proxy))
         // Management API
