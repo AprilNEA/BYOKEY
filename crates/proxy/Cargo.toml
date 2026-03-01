@@ -32,6 +32,7 @@ futures-util.workspace = true
 bytes.workspace = true
 arc-swap.workspace = true
 tracing.workspace = true
+utoipa.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

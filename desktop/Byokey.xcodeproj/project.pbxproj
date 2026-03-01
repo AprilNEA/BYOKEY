@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BA0A10052F5460010096A005 /* OpenAPIRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = BA0A10022F5460010096A002 /* OpenAPIRuntime */; };
+		BA0A10062F5460010096A006 /* OpenAPIURLSession in Frameworks */ = {isa = PBXBuildFile; productRef = BA0A10032F5460010096A003 /* OpenAPIURLSession */; };
 		BAD6C0D12F53FC2500968364 /* io.byokey.desktop.daemon.plist in Copy LaunchDaemon Plist */ = {isa = PBXBuildFile; fileRef = BAD6C0D02F53FC2500968364 /* io.byokey.desktop.daemon.plist */; };
 /* End PBXBuildFile section */
 
@@ -14,7 +16,7 @@
 		BAD6C0D42F53FC2500968364 /* Copy LaunchDaemon Plist */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = "Contents/Library/LaunchAgents";
+			dstPath = Contents/Library/LaunchAgents;
 			dstSubfolderSpec = 1;
 			files = (
 				BAD6C0D12F53FC2500968364 /* io.byokey.desktop.daemon.plist in Copy LaunchDaemon Plist */,
@@ -42,6 +44,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BA0A10052F5460010096A005 /* OpenAPIRuntime in Frameworks */,
+				BA0A10062F5460010096A006 /* OpenAPIURLSession in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -96,6 +100,8 @@
 			);
 			name = Byokey;
 			packageProductDependencies = (
+				BA0A10022F5460010096A002 /* OpenAPIRuntime */,
+				BA0A10032F5460010096A003 /* OpenAPIURLSession */,
 			);
 			productName = Byokey;
 			productReference = BAD6C0B52F53FC2500968364 /* Byokey.app */;
@@ -116,7 +122,7 @@
 					};
 				};
 			};
-			buildConfigurationList = BAD6C0B02F53FC2500968364 /* Build configuration list for PBXProject "byokey" */;
+			buildConfigurationList = BAD6C0B02F53FC2500968364 /* Build configuration list for PBXProject "Byokey" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -125,6 +131,10 @@
 			);
 			mainGroup = BAD6C0AC2F53FC2500968364;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				BA0A10012F5460010096A001 /* XCRemoteSwiftPackageReference "swift-openapi-runtime" */,
+				BAD6C10E2F544FFC00968364 /* XCRemoteSwiftPackageReference "swift-openapi-urlsession" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BAD6C0B62F53FC2500968364 /* Products */;
 			projectDirPath = "";
@@ -363,7 +373,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		BAD6C0B02F53FC2500968364 /* Build configuration list for PBXProject "byokey" */ = {
+		BAD6C0B02F53FC2500968364 /* Build configuration list for PBXProject "Byokey" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				BAD6C0C22F53FC2500968364 /* Debug */,
@@ -382,6 +392,38 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		BA0A10012F5460010096A001 /* XCRemoteSwiftPackageReference "swift-openapi-runtime" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-openapi-runtime";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.8.2;
+			};
+		};
+		BAD6C10E2F544FFC00968364 /* XCRemoteSwiftPackageReference "swift-openapi-urlsession" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-openapi-urlsession";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.2.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		BA0A10022F5460010096A002 /* OpenAPIRuntime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BA0A10012F5460010096A001 /* XCRemoteSwiftPackageReference "swift-openapi-runtime" */;
+			productName = OpenAPIRuntime;
+		};
+		BA0A10032F5460010096A003 /* OpenAPIURLSession */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BAD6C10E2F544FFC00968364 /* XCRemoteSwiftPackageReference "swift-openapi-urlsession" */;
+			productName = OpenAPIURLSession;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = BAD6C0AD2F53FC2500968364 /* Project object */;
 }

@@ -84,6 +84,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"]
 # TLS
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 tracing-appender = "0.2"
+# OpenAPI
+utoipa = "5"
 
 
 [workspace.lints.rust]
@@ -131,3 +133,4 @@ axum-server.workspace = true
 tracing-appender.workspace = true
 serde_json.workspace = true
 regex.workspace = true
+utoipa.workspace = true

@@ -22,6 +22,7 @@ thiserror.workspace = true
 async-trait.workspace = true
 futures-core.workspace = true
 bytes.workspace = true
+utoipa.workspace = true
 
 # Optional — enable `From<rquest::Error>` / `From<sqlx::Error>` for `ByokError`.
 rquest = { workspace = true, optional = true }

@@ -9,9 +9,13 @@ mod chat;
 mod error;
 mod messages;
 mod models;
+#[allow(clippy::needless_for_each)]
+pub mod openapi;
+pub mod status;
 pub mod usage;
 
 pub use error::ApiError;
+pub use openapi::ApiDoc;
 pub use usage::UsageStats;
 
 use arc_swap::ArcSwap;
@@ -128,7 +132,9 @@ pub fn make_router(state: Arc<AppState>) -> Router {
         // Catch-all: forward remaining /api/* routes to ampcode.com
         .route("/api/{*path}", any(amp_provider::amp_management_proxy))
         // Management API
+        .route("/v0/management/status", get(status::status_handler))
         .route("/v0/management/usage", get(usage_handler))
+        .route("/openapi.json", get(openapi::openapi_json))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
 }

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Identifies a supported upstream AI provider.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderId {
     Claude,
@@ -60,6 +60,22 @@ impl std::str::FromStr for ProviderId {
 }
 
 impl ProviderId {
+    /// Returns a human-readable display name for the provider.
+    #[must_use]
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Claude => "Claude (Anthropic)",
+            Self::Codex => "Codex (OpenAI)",
+            Self::Gemini => "Gemini (Google)",
+            Self::Kiro => "Kiro (AWS)",
+            Self::Copilot => "GitHub Copilot",
+            Self::Antigravity => "Antigravity",
+            Self::Qwen => "Qwen (Alibaba)",
+            Self::Kimi => "Kimi (Moonshot)",
+            Self::IFlow => "iFlow (Z.ai)",
+        }
+    }
+
     /// Returns all known provider variants.
     #[must_use]
     pub fn all() -> &'static [Self] {

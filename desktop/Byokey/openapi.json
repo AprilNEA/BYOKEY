@@ -1,0 +1,124 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "byokey-proxy",
+    "description": "Bring Your Own Keys \u2014 AI subscription-to-API proxy gateway",
+    "contact": {
+      "name": "AprilNEA",
+      "email": "github@sku.moe"
+    },
+    "license": {
+      "name": "MIT OR Apache-2.0",
+      "identifier": "MIT OR Apache-2.0"
+    },
+    "version": "0.5.3"
+  },
+  "paths": {
+    "/v0/management/status": {
+      "get": {
+        "tags": [
+          "management"
+        ],
+        "summary": "Returns the current server and provider status.",
+        "operationId": "status_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AuthStatus": {
+        "type": "string",
+        "description": "Authentication state for a provider.",
+        "enum": [
+          "valid",
+          "expired",
+          "not_configured"
+        ]
+      },
+      "ProviderStatus": {
+        "type": "object",
+        "description": "Per-provider status summary.",
+        "required": [
+          "id",
+          "display_name",
+          "enabled",
+          "auth_status",
+          "models_count"
+        ],
+        "properties": {
+          "auth_status": {
+            "$ref": "#/components/schemas/AuthStatus"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "models_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ServerInfo": {
+        "type": "object",
+        "description": "Server listen address.",
+        "required": [
+          "host",
+          "port"
+        ],
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "StatusResponse": {
+        "type": "object",
+        "description": "Top-level status response.",
+        "required": [
+          "server",
+          "providers"
+        ],
+        "properties": {
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderStatus"
+            }
+          },
+          "server": {
+            "$ref": "#/components/schemas/ServerInfo"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "management",
+      "description": "Daemon management API"
+    }
+  ]
+}

@@ -126,6 +126,8 @@ enum Commands {
         #[command(subcommand)]
         action: AmpAction,
     },
+    /// Export the OpenAPI specification as JSON.
+    Openapi,
     /// Generate shell completions.
     Completions {
         /// Shell to generate completions for.
@@ -200,6 +202,14 @@ async fn main() -> Result<()> {
             AmpAction::Inject { url } => cmd_amp_inject(url),
             AmpAction::DisableAds { paths, restore } => cmd_amp_disable_ads(paths, restore),
         },
+        Commands::Openapi => {
+            use utoipa::OpenApi as _;
+            let spec = byokey_proxy::ApiDoc::openapi()
+                .to_json()
+                .expect("OpenAPI spec serialization failed");
+            println!("{spec}");
+            Ok(())
+        }
         Commands::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "byokey", &mut std::io::stdout());
             Ok(())

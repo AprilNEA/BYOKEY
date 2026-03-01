@@ -131,6 +131,22 @@ pub fn is_copilot_free_model(model: &str) -> bool {
     )
 }
 
+/// Returns the model list for a given provider.
+#[must_use]
+pub fn models_for_provider(provider: &ProviderId) -> Vec<String> {
+    match provider {
+        ProviderId::Claude => claude_models(),
+        ProviderId::Codex => codex_models(),
+        ProviderId::Gemini => gemini_models(),
+        ProviderId::Kiro => kiro_models(),
+        ProviderId::Copilot => copilot_models(),
+        ProviderId::Antigravity => antigravity_models(),
+        ProviderId::Qwen => qwen_models(),
+        ProviderId::Kimi => kimi_models(),
+        ProviderId::IFlow => iflow_models(),
+    }
+}
+
 /// Map a model string to its backing provider.
 /// Returns `None` if the model is not recognised.
 #[must_use]

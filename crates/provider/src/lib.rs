@@ -27,7 +27,7 @@ pub use iflow::IFlowExecutor;
 pub use kimi::KimiExecutor;
 pub use kiro::KiroExecutor;
 pub use qwen::QwenExecutor;
-pub use registry::resolve_provider;
+pub use registry::{models_for_provider, resolve_provider};
 pub use routing::CredentialRouter;
 
 pub use http_util::ProviderHttp;
