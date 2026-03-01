@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/types",
+    "crates/daemon",
     "crates/config",
     "crates/store",
     "crates/auth",
@@ -32,6 +33,7 @@ byokey-auth = { version = "0.5.3", path = "crates/auth" }
 byokey-translate = { version = "0.5.3", path = "crates/translate" }
 byokey-provider = { version = "0.5.3", path = "crates/provider" }
 byokey-proxy = { version = "0.5.3", path = "crates/proxy" }
+byokey-daemon = { version = "0.5.3", path = "crates/daemon" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -115,6 +117,7 @@ byokey-config.workspace = true
 byokey-auth.workspace = true
 byokey-store.workspace = true
 byokey-types.workspace = true
+byokey-daemon.workspace = true
 axum.workspace = true
 clap.workspace = true
 clap_complete.workspace = true

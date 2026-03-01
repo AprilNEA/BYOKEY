@@ -2,21 +2,12 @@ use anyhow::Result;
 use arc_swap::ArcSwap;
 use byokey_auth::AuthManager;
 use byokey_config::{Config, ConfigWatcher};
+use byokey_daemon::process::ServerStatus;
 use byokey_proxy::AppState;
 use byokey_store::SqliteTokenStore;
 use byokey_types::ProviderId;
 use clap::{CommandFactory, Parser, Subcommand};
 use std::{path::PathBuf, process::Stdio, sync::Arc};
-
-#[cfg(unix)]
-use std::os::unix::process::CommandExt as _;
-
-/// `launchd` service label (macOS).
-#[cfg(target_os = "macos")]
-const LAUNCHD_LABEL: &str = "io.byokey.server";
-/// `systemd` unit name (Linux).
-#[cfg(target_os = "linux")]
-const SYSTEMD_UNIT: &str = "byokey";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -184,9 +175,9 @@ async fn main() -> Result<()> {
         Commands::Stop => cmd_stop(),
         Commands::Restart { daemon } => cmd_restart(daemon),
         Commands::Autostart { action } => match action {
-            AutostartAction::Enable { daemon } => autostart_enable_impl(daemon),
-            AutostartAction::Disable => autostart_disable_impl(),
-            AutostartAction::Status => autostart_status_impl(),
+            AutostartAction::Enable { daemon } => cmd_autostart_enable(daemon),
+            AutostartAction::Disable => cmd_autostart_disable(),
+            AutostartAction::Status => cmd_autostart_status(),
         },
         Commands::Login {
             provider,
@@ -226,7 +217,7 @@ async fn cmd_serve(args: ServerArgs) -> Result<()> {
         db,
     } = args;
     let effective_path = config_path.or_else(|| {
-        let default = default_config_path();
+        let default = byokey_daemon::paths::config_path().ok()?;
         if default.exists() {
             Some(default)
         } else {
@@ -332,382 +323,78 @@ async fn cmd_serve(args: ServerArgs) -> Result<()> {
     Ok(())
 }
 
-// ── Background start / stop / restart ────────────────────────────────────────
+// ── Background start / stop / restart (thin wrappers) ────────────────────────
+
+fn daemon_start_opts(args: DaemonArgs) -> byokey_daemon::process::StartOptions {
+    byokey_daemon::process::StartOptions {
+        exe: None,
+        config: args.server.config,
+        port: args.server.port,
+        host: args.server.host,
+        db: args.server.db,
+        log_file: args.log_file,
+        pid_file: None,
+    }
+}
 
 fn cmd_start(args: DaemonArgs) -> Result<()> {
-    let ServerArgs {
-        config: config_path,
-        port,
-        host,
-        db,
-    } = args.server;
-    let log_file = args.log_file;
-    let pid_path = default_pid_path();
-
-    // Detect stale or live PID file.
-    if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
-        let pid = pid_str.trim().to_owned();
-        let alive = std::process::Command::new("kill")
-            .args(["-0", &pid])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success());
-        if alive {
-            anyhow::bail!("byokey is already running (pid {pid})");
-        }
-        // Stale PID — clean up and continue.
-        let _ = std::fs::remove_file(&pid_path);
-    }
-
-    let log_path = log_file.unwrap_or_else(default_log_path);
-    if let Some(parent) = log_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let log_f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)?;
-    let log_f2 = log_f.try_clone()?;
-
-    let exe = std::env::current_exe()?;
-    let mut cmd = std::process::Command::new(&exe);
-    cmd.arg("serve");
-    if let Some(p) = &config_path {
-        cmd.args(["--config", &p.to_string_lossy()]);
-    }
-    if let Some(p) = port {
-        cmd.args(["--port", &p.to_string()]);
-    }
-    if let Some(h) = &host {
-        cmd.args(["--host", h]);
-    }
-    if let Some(d) = &db {
-        cmd.args(["--db", &d.to_string_lossy()]);
-    }
-    cmd.stdout(log_f).stderr(log_f2).stdin(Stdio::null());
-    // Detach from the terminal's process group so the child survives terminal close.
-    #[cfg(unix)]
-    cmd.process_group(0);
-
-    let child = cmd.spawn()?;
-    let pid = child.id();
-
-    if let Some(parent) = pid_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&pid_path, pid.to_string())?;
-
-    println!("byokey started (pid {pid})");
-    println!("logs: {}", log_path.display());
+    let result = byokey_daemon::process::start(daemon_start_opts(args))?;
+    println!("byokey started (pid {})", result.pid);
+    println!("logs: {}", result.log_path.display());
     Ok(())
 }
 
 fn cmd_stop() -> Result<()> {
-    let pid_path = default_pid_path();
-    let pid_str = std::fs::read_to_string(&pid_path)
-        .map_err(|_| anyhow::anyhow!("byokey is not running (PID file not found)"))?;
-    let pid = pid_str.trim().to_owned();
-
-    let ok = std::process::Command::new("kill")
-        .arg(&pid)
-        .status()
-        .is_ok_and(|s| s.success());
-    let _ = std::fs::remove_file(&pid_path);
-
-    if ok {
-        println!("byokey stopped (pid {pid})");
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!("failed to stop process {pid}"))
-    }
+    let result = byokey_daemon::process::stop()?;
+    println!("byokey stopped (pid {})", result.pid);
+    Ok(())
 }
 
 fn cmd_restart(args: DaemonArgs) -> Result<()> {
-    if let Err(e) = cmd_stop() {
-        eprintln!("stop: {e}");
-    }
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    cmd_start(args)
+    let result = byokey_daemon::process::restart(daemon_start_opts(args))?;
+    println!("byokey started (pid {})", result.pid);
+    println!("logs: {}", result.log_path.display());
+    Ok(())
 }
 
-// ── Autostart — macOS (launchd) ───────────────────────────────────────────────
+// ── Autostart (thin wrappers) ────────────────────────────────────────────────
 
-#[cfg(target_os = "macos")]
-fn launchd_plist_path() -> PathBuf {
-    home_dir()
-        .join("Library")
-        .join("LaunchAgents")
-        .join(format!("{LAUNCHD_LABEL}.plist"))
+fn cmd_autostart_enable(args: DaemonArgs) -> Result<()> {
+    let opts = byokey_daemon::autostart::AutostartOptions {
+        exe: None,
+        config: args.server.config,
+        port: args.server.port,
+        host: args.server.host,
+        db: args.server.db,
+        log_file: args.log_file,
+    };
+    let result = byokey_daemon::autostart::enable(opts)?;
+    println!("autostart enabled ({})", result.backend);
+    println!("service file: {}", result.service_file.display());
+    Ok(())
 }
 
-#[cfg(target_os = "macos")]
-fn autostart_enable_impl(args: DaemonArgs) -> Result<()> {
-    let ServerArgs {
-        config: config_path,
-        port,
-        host,
-        db,
-    } = args.server;
-    let exe = std::env::current_exe()?;
-    let log_path = args.log_file.unwrap_or_else(default_log_path);
-    if let Some(parent) = log_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    // Build the <array> of ProgramArguments entries.
-    let mut args = format!(
-        "        <string>{}</string>\n        <string>serve</string>\n",
-        exe.to_string_lossy()
-    );
-    if let Some(p) = &config_path {
-        args.push_str(&format!(
-            "        <string>--config</string>\n        <string>{}</string>\n",
-            p.to_string_lossy()
-        ));
-    }
-    if let Some(p) = port {
-        args.push_str(&format!(
-            "        <string>--port</string>\n        <string>{p}</string>\n"
-        ));
-    }
-    if let Some(h) = &host {
-        args.push_str(&format!(
-            "        <string>--host</string>\n        <string>{h}</string>\n"
-        ));
-    }
-    if let Some(d) = &db {
-        args.push_str(&format!(
-            "        <string>--db</string>\n        <string>{}</string>\n",
-            d.to_string_lossy()
-        ));
-    }
-
-    let log = log_path.to_string_lossy();
-    let plist = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>{LAUNCHD_LABEL}</string>
-    <key>ProgramArguments</key>
-    <array>
-{args}    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>{log}</string>
-    <key>StandardErrorPath</key>
-    <string>{log}</string>
-</dict>
-</plist>
-"#
-    );
-
-    let plist_path = launchd_plist_path();
-    if let Some(parent) = plist_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&plist_path, plist)?;
-
-    // Unload first in case a previous version is already loaded.
-    let _ = std::process::Command::new("launchctl")
-        .args(["unload", &plist_path.to_string_lossy()])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-
-    let ok = std::process::Command::new("launchctl")
-        .args(["load", &plist_path.to_string_lossy()])
-        .status()
-        .is_ok_and(|s| s.success());
-
-    if ok {
-        println!("autostart enabled (launchd)");
-        println!("plist: {}", plist_path.display());
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!("launchctl load failed"))
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn autostart_disable_impl() -> Result<()> {
-    let plist_path = launchd_plist_path();
-    if !plist_path.exists() {
-        anyhow::bail!("autostart is not enabled");
-    }
-    let _ = std::process::Command::new("launchctl")
-        .args(["unload", &plist_path.to_string_lossy()])
-        .status();
-    std::fs::remove_file(&plist_path)?;
+fn cmd_autostart_disable() -> Result<()> {
+    byokey_daemon::autostart::disable()?;
     println!("autostart disabled");
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
-fn autostart_status_impl() -> Result<()> {
-    let plist_path = launchd_plist_path();
-    if !plist_path.exists() {
+fn cmd_autostart_status() -> Result<()> {
+    let st = byokey_daemon::autostart::status()?;
+    if !st.enabled {
         println!("autostart: disabled");
         return Ok(());
     }
     println!("autostart: enabled");
-    println!("plist:     {}", plist_path.display());
-    let running = std::process::Command::new("launchctl")
-        .args(["list", LAUNCHD_LABEL])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success());
+    if let Some(ref path) = st.service_file {
+        println!("service:   {}", path.display());
+    }
     println!(
-        "service:   {}",
-        if running { "running" } else { "not running" }
+        "running:   {}",
+        if st.service_running { "yes" } else { "no" }
     );
     Ok(())
-}
-
-// ── Autostart — Linux (systemd user) ─────────────────────────────────────────
-
-#[cfg(target_os = "linux")]
-fn systemd_unit_path() -> PathBuf {
-    home_dir()
-        .join(".config")
-        .join("systemd")
-        .join("user")
-        .join(format!("{SYSTEMD_UNIT}.service"))
-}
-
-#[cfg(target_os = "linux")]
-fn autostart_enable_impl(args: DaemonArgs) -> Result<()> {
-    let ServerArgs {
-        config: config_path,
-        port,
-        host,
-        db,
-    } = args.server;
-    let exe = std::env::current_exe()?;
-    let log_path = args.log_file.unwrap_or_else(default_log_path);
-    if let Some(parent) = log_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let mut exec_args = vec![exe.to_string_lossy().into_owned(), "serve".to_owned()];
-    if let Some(p) = &config_path {
-        exec_args.extend(["--config".to_owned(), p.to_string_lossy().into_owned()]);
-    }
-    if let Some(p) = port {
-        exec_args.extend(["--port".to_owned(), p.to_string()]);
-    }
-    if let Some(h) = &host {
-        exec_args.extend(["--host".to_owned(), h.clone()]);
-    }
-    if let Some(d) = &db {
-        exec_args.extend(["--db".to_owned(), d.to_string_lossy().into_owned()]);
-    }
-
-    let log = log_path.to_string_lossy();
-    let unit = format!(
-        "[Unit]\n\
-         Description=byokey AI proxy gateway\n\
-         After=network.target\n\
-         \n\
-         [Service]\n\
-         ExecStart={exec}\n\
-         Restart=on-failure\n\
-         StandardOutput=append:{log}\n\
-         StandardError=append:{log}\n\
-         \n\
-         [Install]\n\
-         WantedBy=default.target\n",
-        exec = exec_args.join(" "),
-    );
-
-    let unit_path = systemd_unit_path();
-    if let Some(parent) = unit_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&unit_path, unit)?;
-
-    let _ = std::process::Command::new("systemctl")
-        .args(["--user", "daemon-reload"])
-        .status();
-
-    let ok = std::process::Command::new("systemctl")
-        .args(["--user", "enable", "--now", SYSTEMD_UNIT])
-        .status()
-        .is_ok_and(|s| s.success());
-
-    if ok {
-        println!("autostart enabled (systemd user)");
-        println!("unit: {}", unit_path.display());
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!("systemctl enable failed"))
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn autostart_disable_impl() -> Result<()> {
-    let unit_path = systemd_unit_path();
-    if !unit_path.exists() {
-        anyhow::bail!("autostart is not enabled");
-    }
-    let _ = std::process::Command::new("systemctl")
-        .args(["--user", "disable", "--now", SYSTEMD_UNIT])
-        .status();
-    std::fs::remove_file(&unit_path)?;
-    let _ = std::process::Command::new("systemctl")
-        .args(["--user", "daemon-reload"])
-        .status();
-    println!("autostart disabled");
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn autostart_status_impl() -> Result<()> {
-    let unit_path = systemd_unit_path();
-    if !unit_path.exists() {
-        println!("autostart: disabled");
-        return Ok(());
-    }
-    println!("autostart: enabled");
-    println!("unit:      {}", unit_path.display());
-    let running = std::process::Command::new("systemctl")
-        .args(["--user", "is-active", "--quiet", SYSTEMD_UNIT])
-        .status()
-        .is_ok_and(|s| s.success());
-    println!(
-        "service:   {}",
-        if running { "running" } else { "not running" }
-    );
-    Ok(())
-}
-
-// ── Autostart — unsupported platforms ────────────────────────────────────────
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn autostart_enable_impl(_args: DaemonArgs) -> Result<()> {
-    Err(anyhow::anyhow!(
-        "autostart is not supported on this platform"
-    ))
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn autostart_disable_impl() -> Result<()> {
-    Err(anyhow::anyhow!(
-        "autostart is not supported on this platform"
-    ))
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn autostart_status_impl() -> Result<()> {
-    Err(anyhow::anyhow!(
-        "autostart is not supported on this platform"
-    ))
 }
 
 // ── Auth commands ─────────────────────────────────────────────────────────────
@@ -746,22 +433,10 @@ async fn cmd_logout(
 
 async fn cmd_status(db: Option<PathBuf>) -> Result<()> {
     // Server running status
-    let pid_path = default_pid_path();
-    if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
-        let pid = pid_str.trim();
-        let alive = std::process::Command::new("kill")
-            .args(["-0", pid])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success());
-        if alive {
-            println!("server: running (pid {pid})");
-        } else {
-            println!("server: not running (stale pid file)");
-        }
-    } else {
-        println!("server: not running");
+    match byokey_daemon::process::status() {
+        Ok(ServerStatus::Running { pid }) => println!("server: running (pid {pid})"),
+        Ok(ServerStatus::Stale { .. }) => println!("server: not running (stale pid file)"),
+        Ok(ServerStatus::Stopped) | Err(_) => println!("server: not running"),
     }
     println!();
 
@@ -922,7 +597,7 @@ fn cmd_amp_disable_ads(paths: Vec<PathBuf>, restore: bool) -> Result<()> {
 
 /// Enable or disable `amp.hide_free_tier` in the byokey config file.
 fn set_hide_free_tier(enabled: bool) -> Result<()> {
-    let config_path = default_config_path();
+    let config_path = byokey_daemon::paths::config_path()?;
 
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -984,8 +659,7 @@ fn find_amp_bundles() -> Vec<PathBuf> {
     }
 
     // 2. VS Code / Cursor / Windsurf extensions.
-    {
-        let home = home_dir();
+    if let Ok(home) = byokey_daemon::paths::home_dir() {
         for editor_dir in &[".vscode", ".vscode-insiders", ".cursor", ".windsurf"] {
             let ext_root = home.join(editor_dir).join("extensions");
             if !ext_root.is_dir() {
@@ -1232,13 +906,19 @@ fn amp_restore(bundle_path: &std::path::Path) -> Result<()> {
 }
 
 fn amp_settings_path() -> PathBuf {
-    home_dir().join(".amp").join("settings.json")
+    byokey_daemon::paths::home_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(".amp")
+        .join("settings.json")
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async fn open_store(db: Option<PathBuf>) -> Result<SqliteTokenStore> {
-    let path = db.unwrap_or_else(default_db_path);
+    let path = match db {
+        Some(p) => p,
+        None => byokey_daemon::paths::db_path()?,
+    };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -1246,27 +926,4 @@ async fn open_store(db: Option<PathBuf>) -> Result<SqliteTokenStore> {
     SqliteTokenStore::new(&url)
         .await
         .map_err(|e| anyhow::anyhow!("database error: {e}"))
-}
-
-fn home_dir() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
-}
-
-fn default_config_path() -> PathBuf {
-    home_dir()
-        .join(".config")
-        .join("byokey")
-        .join("settings.json")
-}
-
-fn default_db_path() -> PathBuf {
-    home_dir().join(".byokey").join("tokens.db")
-}
-
-fn default_pid_path() -> PathBuf {
-    home_dir().join(".byokey").join("byokey.pid")
-}
-
-fn default_log_path() -> PathBuf {
-    home_dir().join(".byokey").join("server.log")
 }

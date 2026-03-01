@@ -399,6 +399,7 @@ dependencies = [
  "axum-server",
  "byokey-auth",
  "byokey-config",
+ "byokey-daemon",
  "byokey-proxy",
  "byokey-store",
  "byokey-types",
@@ -451,6 +452,13 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "byokey-daemon"
+version = "0.5.3"
+dependencies = [
+ "thiserror 2.0.18",
 ]
 
 [[package]]

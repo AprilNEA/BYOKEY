@@ -1,0 +1,15 @@
+[package]
+name = "byokey-daemon"
+version.workspace = true
+edition.workspace = true
+authors.workspace    = true
+description.workspace = true
+license.workspace    = true
+repository.workspace = true
+homepage.workspace   = true
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
