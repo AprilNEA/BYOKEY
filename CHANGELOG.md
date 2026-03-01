@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4](https://github.com/AprilNEA/BYOKEY/compare/v0.5.3...v0.5.4) - 2026-03-01
+
+### Added
+
+- *(desktop)* replace Tauri with native Swift app embedding Rust daemon
+- *(cli)* show server running status in byokey status
+
+### Other
+
+- extract daemon management into byokey-daemon crate
+- *(cli)* reduce duplication and improve ergonomics
+- release v0.5.3 ([#26](https://github.com/AprilNEA/BYOKEY/pull/26))
+
 ## [0.5.3](https://github.com/AprilNEA/BYOKEY/compare/v0.5.2...v0.5.3) - 2026-02-28
 
 ### Other
