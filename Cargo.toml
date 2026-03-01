@@ -69,6 +69,7 @@ async-trait = "0.1"
 serde_urlencoded = "0.7"
 # CLI
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 # Regex (used by amp patch)
 regex = "1"
 # Futures
@@ -116,6 +117,7 @@ byokey-store.workspace = true
 byokey-types.workspace = true
 axum.workspace = true
 clap.workspace = true
+clap_complete.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
 arc-swap.workspace = true

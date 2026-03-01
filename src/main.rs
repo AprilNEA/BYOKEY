@@ -5,7 +5,7 @@ use byokey_config::{Config, ConfigWatcher};
 use byokey_proxy::AppState;
 use byokey_store::SqliteTokenStore;
 use byokey_types::ProviderId;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use std::{path::PathBuf, process::Stdio, sync::Arc};
 
 #[cfg(unix)]
@@ -19,7 +19,11 @@ const LAUNCHD_LABEL: &str = "io.byokey.server";
 const SYSTEMD_UNIT: &str = "byokey";
 
 #[derive(Parser, Debug)]
-#[command(name = "byokey", about = "byokey — Bring Your Own Keys AI proxy")]
+#[command(
+    name = "byokey",
+    about = "byokey — Bring Your Own Keys AI proxy",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -53,6 +57,14 @@ struct DaemonArgs {
     log_file: Option<PathBuf>,
 }
 
+/// Shared arguments for commands that access the token store.
+#[derive(clap::Args, Debug)]
+struct StoreArgs {
+    /// SQLite database path (default: ~/.byokey/tokens.db).
+    #[arg(long, value_name = "PATH")]
+    db: Option<PathBuf>,
+}
+
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Start the proxy server (foreground).
@@ -79,54 +91,54 @@ enum Commands {
     },
     /// Authenticate with a provider.
     Login {
-        /// Provider name (claude / codex / copilot / gemini / qwen / kimi / iflow …).
-        provider: String,
+        /// Provider name.
+        provider: ProviderId,
         /// Account identifier (e.g. `work`, `personal`). Defaults to `default`.
         #[arg(long, value_name = "NAME")]
         account: Option<String>,
-        /// SQLite database path (default: ~/.byokey/tokens.db).
-        #[arg(long, value_name = "PATH")]
-        db: Option<PathBuf>,
+        #[command(flatten)]
+        store: StoreArgs,
     },
     /// Remove stored credentials for a provider.
     Logout {
         /// Provider name.
-        provider: String,
+        provider: ProviderId,
         /// Account identifier. If omitted, removes the active account.
         #[arg(long, value_name = "NAME")]
         account: Option<String>,
-        /// SQLite database path (default: ~/.byokey/tokens.db).
-        #[arg(long, value_name = "PATH")]
-        db: Option<PathBuf>,
+        #[command(flatten)]
+        store: StoreArgs,
     },
     /// Show authentication status for all providers.
     Status {
-        /// SQLite database path (default: ~/.byokey/tokens.db).
-        #[arg(long, value_name = "PATH")]
-        db: Option<PathBuf>,
+        #[command(flatten)]
+        store: StoreArgs,
     },
     /// List all accounts for a provider.
     Accounts {
         /// Provider name.
-        provider: String,
-        /// SQLite database path (default: ~/.byokey/tokens.db).
-        #[arg(long, value_name = "PATH")]
-        db: Option<PathBuf>,
+        provider: ProviderId,
+        #[command(flatten)]
+        store: StoreArgs,
     },
     /// Switch the active account for a provider.
     Switch {
         /// Provider name.
-        provider: String,
+        provider: ProviderId,
         /// Account identifier to make active.
         account: String,
-        /// SQLite database path (default: ~/.byokey/tokens.db).
-        #[arg(long, value_name = "PATH")]
-        db: Option<PathBuf>,
+        #[command(flatten)]
+        store: StoreArgs,
     },
     /// Amp-related utilities.
     Amp {
         #[command(subcommand)]
         action: AmpAction,
+    },
+    /// Generate shell completions.
+    Completions {
+        /// Shell to generate completions for.
+        shell: clap_complete::Shell,
     },
 }
 
@@ -167,67 +179,52 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Serve { server } => {
-            cmd_serve(server.config, server.port, server.host, server.db).await
-        }
-        Commands::Start { daemon } => cmd_start(
-            daemon.server.config,
-            daemon.server.port,
-            daemon.server.host,
-            daemon.server.db,
-            daemon.log_file,
-        ),
+        Commands::Serve { server } => cmd_serve(server).await,
+        Commands::Start { daemon } => cmd_start(daemon),
         Commands::Stop => cmd_stop(),
-        Commands::Restart { daemon } => cmd_restart(
-            daemon.server.config,
-            daemon.server.port,
-            daemon.server.host,
-            daemon.server.db,
-            daemon.log_file,
-        ),
+        Commands::Restart { daemon } => cmd_restart(daemon),
         Commands::Autostart { action } => match action {
-            AutostartAction::Enable { daemon } => autostart_enable_impl(
-                daemon.server.config,
-                daemon.server.port,
-                daemon.server.host,
-                daemon.server.db,
-                daemon.log_file,
-            ),
+            AutostartAction::Enable { daemon } => autostart_enable_impl(daemon),
             AutostartAction::Disable => autostart_disable_impl(),
             AutostartAction::Status => autostart_status_impl(),
         },
         Commands::Login {
             provider,
             account,
-            db,
-        } => cmd_login(provider, account, db).await,
+            store,
+        } => cmd_login(provider, account, store.db).await,
         Commands::Logout {
             provider,
             account,
-            db,
-        } => cmd_logout(provider, account, db).await,
-        Commands::Status { db } => cmd_status(db).await,
-        Commands::Accounts { provider, db } => cmd_accounts(provider, db).await,
+            store,
+        } => cmd_logout(provider, account, store.db).await,
+        Commands::Status { store } => cmd_status(store.db).await,
+        Commands::Accounts { provider, store } => cmd_accounts(provider, store.db).await,
         Commands::Switch {
             provider,
             account,
-            db,
-        } => cmd_switch(provider, account, db).await,
+            store,
+        } => cmd_switch(provider, account, store.db).await,
         Commands::Amp { action } => match action {
             AmpAction::Inject { url } => cmd_amp_inject(url),
             AmpAction::DisableAds { paths, restore } => cmd_amp_disable_ads(paths, restore),
         },
+        Commands::Completions { shell } => {
+            clap_complete::generate(shell, &mut Cli::command(), "byokey", &mut std::io::stdout());
+            Ok(())
+        }
     }
 }
 
 // ── Foreground serve ─────────────────────────────────────────────────────────
 
-async fn cmd_serve(
-    config_path: Option<PathBuf>,
-    port: Option<u16>,
-    host: Option<String>,
-    db: Option<PathBuf>,
-) -> Result<()> {
+async fn cmd_serve(args: ServerArgs) -> Result<()> {
+    let ServerArgs {
+        config: config_path,
+        port,
+        host,
+        db,
+    } = args;
     let effective_path = config_path.or_else(|| {
         let default = default_config_path();
         if default.exists() {
@@ -337,13 +334,14 @@ async fn cmd_serve(
 
 // ── Background start / stop / restart ────────────────────────────────────────
 
-fn cmd_start(
-    config_path: Option<PathBuf>,
-    port: Option<u16>,
-    host: Option<String>,
-    db: Option<PathBuf>,
-    log_file: Option<PathBuf>,
-) -> Result<()> {
+fn cmd_start(args: DaemonArgs) -> Result<()> {
+    let ServerArgs {
+        config: config_path,
+        port,
+        host,
+        db,
+    } = args.server;
+    let log_file = args.log_file;
     let pid_path = default_pid_path();
 
     // Detect stale or live PID file.
@@ -425,41 +423,34 @@ fn cmd_stop() -> Result<()> {
     }
 }
 
-fn cmd_restart(
-    config_path: Option<PathBuf>,
-    port: Option<u16>,
-    host: Option<String>,
-    db: Option<PathBuf>,
-    log_file: Option<PathBuf>,
-) -> Result<()> {
+fn cmd_restart(args: DaemonArgs) -> Result<()> {
     if let Err(e) = cmd_stop() {
         eprintln!("stop: {e}");
     }
     std::thread::sleep(std::time::Duration::from_millis(500));
-    cmd_start(config_path, port, host, db, log_file)
+    cmd_start(args)
 }
 
 // ── Autostart — macOS (launchd) ───────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
 fn launchd_plist_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
+    home_dir()
         .join("Library")
         .join("LaunchAgents")
         .join(format!("{LAUNCHD_LABEL}.plist"))
 }
 
 #[cfg(target_os = "macos")]
-fn autostart_enable_impl(
-    config_path: Option<PathBuf>,
-    port: Option<u16>,
-    host: Option<String>,
-    db: Option<PathBuf>,
-    log_file: Option<PathBuf>,
-) -> Result<()> {
+fn autostart_enable_impl(args: DaemonArgs) -> Result<()> {
+    let ServerArgs {
+        config: config_path,
+        port,
+        host,
+        db,
+    } = args.server;
     let exe = std::env::current_exe()?;
-    let log_path = log_file.unwrap_or_else(default_log_path);
+    let log_path = args.log_file.unwrap_or_else(default_log_path);
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -583,8 +574,7 @@ fn autostart_status_impl() -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn systemd_unit_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
+    home_dir()
         .join(".config")
         .join("systemd")
         .join("user")
@@ -592,15 +582,15 @@ fn systemd_unit_path() -> PathBuf {
 }
 
 #[cfg(target_os = "linux")]
-fn autostart_enable_impl(
-    config_path: Option<PathBuf>,
-    port: Option<u16>,
-    host: Option<String>,
-    db: Option<PathBuf>,
-    log_file: Option<PathBuf>,
-) -> Result<()> {
+fn autostart_enable_impl(args: DaemonArgs) -> Result<()> {
+    let ServerArgs {
+        config: config_path,
+        port,
+        host,
+        db,
+    } = args.server;
     let exe = std::env::current_exe()?;
-    let log_path = log_file.unwrap_or_else(default_log_path);
+    let log_path = args.log_file.unwrap_or_else(default_log_path);
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -700,13 +690,7 @@ fn autostart_status_impl() -> Result<()> {
 // ── Autostart — unsupported platforms ────────────────────────────────────────
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn autostart_enable_impl(
-    _config_path: Option<PathBuf>,
-    _port: Option<u16>,
-    _host: Option<String>,
-    _db: Option<PathBuf>,
-    _log_file: Option<PathBuf>,
-) -> Result<()> {
+fn autostart_enable_impl(_args: DaemonArgs) -> Result<()> {
     Err(anyhow::anyhow!(
         "autostart is not supported on this platform"
     ))
@@ -729,13 +713,10 @@ fn autostart_status_impl() -> Result<()> {
 // ── Auth commands ─────────────────────────────────────────────────────────────
 
 async fn cmd_login(
-    provider_str: String,
+    provider: ProviderId,
     account: Option<String>,
     db: Option<PathBuf>,
 ) -> Result<()> {
-    let provider = provider_str
-        .parse::<ProviderId>()
-        .map_err(|e| anyhow::anyhow!("unknown provider '{provider_str}': {e}"))?;
     let auth = AuthManager::new(Arc::new(open_store(db).await?), rquest::Client::new());
     byokey_auth::flow::login(&provider, &auth, account.as_deref())
         .await
@@ -744,24 +725,21 @@ async fn cmd_login(
 }
 
 async fn cmd_logout(
-    provider_str: String,
+    provider: ProviderId,
     account: Option<String>,
     db: Option<PathBuf>,
 ) -> Result<()> {
-    let provider = provider_str
-        .parse::<ProviderId>()
-        .map_err(|e| anyhow::anyhow!("unknown provider '{provider_str}': {e}"))?;
     let auth = AuthManager::new(Arc::new(open_store(db).await?), rquest::Client::new());
     if let Some(account_id) = &account {
         auth.remove_token_for(&provider, account_id)
             .await
             .map_err(|e| anyhow::anyhow!("logout failed: {e}"))?;
-        println!("{provider_str} account '{account_id}' logged out");
+        println!("{provider} account '{account_id}' logged out");
     } else {
         auth.remove_token(&provider)
             .await
             .map_err(|e| anyhow::anyhow!("logout failed: {e}"))?;
-        println!("{provider_str} logged out");
+        println!("{provider} logged out");
     }
     Ok(())
 }
@@ -788,18 +766,7 @@ async fn cmd_status(db: Option<PathBuf>) -> Result<()> {
     println!();
 
     let auth = AuthManager::new(Arc::new(open_store(db).await?), rquest::Client::new());
-    let providers = [
-        ProviderId::Claude,
-        ProviderId::Codex,
-        ProviderId::Copilot,
-        ProviderId::Gemini,
-        ProviderId::Kiro,
-        ProviderId::Antigravity,
-        ProviderId::Qwen,
-        ProviderId::Kimi,
-        ProviderId::IFlow,
-    ];
-    for provider in &providers {
+    for provider in ProviderId::all() {
         let accounts = auth.list_accounts(provider).await.unwrap_or_default();
         if accounts.is_empty() {
             println!("{provider}: not authenticated");
@@ -821,10 +788,7 @@ async fn cmd_status(db: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_accounts(provider_str: String, db: Option<PathBuf>) -> Result<()> {
-    let provider = provider_str
-        .parse::<ProviderId>()
-        .map_err(|e| anyhow::anyhow!("unknown provider '{provider_str}': {e}"))?;
+async fn cmd_accounts(provider: ProviderId, db: Option<PathBuf>) -> Result<()> {
     let auth = AuthManager::new(Arc::new(open_store(db).await?), rquest::Client::new());
     let accounts = auth
         .list_accounts(&provider)
@@ -845,15 +809,12 @@ async fn cmd_accounts(provider_str: String, db: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_switch(provider_str: String, account: String, db: Option<PathBuf>) -> Result<()> {
-    let provider = provider_str
-        .parse::<ProviderId>()
-        .map_err(|e| anyhow::anyhow!("unknown provider '{provider_str}': {e}"))?;
+async fn cmd_switch(provider: ProviderId, account: String, db: Option<PathBuf>) -> Result<()> {
     let auth = AuthManager::new(Arc::new(open_store(db).await?), rquest::Client::new());
     auth.set_active_account(&provider, &account)
         .await
         .map_err(|e| anyhow::anyhow!("switch failed: {e}"))?;
-    println!("{provider_str}: switched to account '{account}'");
+    println!("{provider}: switched to account '{account}'");
     Ok(())
 }
 
@@ -1023,8 +984,8 @@ fn find_amp_bundles() -> Vec<PathBuf> {
     }
 
     // 2. VS Code / Cursor / Windsurf extensions.
-    if let Ok(home) = std::env::var("HOME") {
-        let home = PathBuf::from(home);
+    {
+        let home = home_dir();
         for editor_dir in &[".vscode", ".vscode-insiders", ".cursor", ".windsurf"] {
             let ext_root = home.join(editor_dir).join("extensions");
             if !ext_root.is_dir() {
@@ -1271,8 +1232,7 @@ fn amp_restore(bundle_path: &std::path::Path) -> Result<()> {
 }
 
 fn amp_settings_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".amp").join("settings.json")
+    home_dir().join(".amp").join("settings.json")
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1288,25 +1248,25 @@ async fn open_store(db: Option<PathBuf>) -> Result<SqliteTokenStore> {
         .map_err(|e| anyhow::anyhow!("database error: {e}"))
 }
 
+fn home_dir() -> PathBuf {
+    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+}
+
 fn default_config_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
+    home_dir()
         .join(".config")
         .join("byokey")
         .join("settings.json")
 }
 
 fn default_db_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".byokey").join("tokens.db")
+    home_dir().join(".byokey").join("tokens.db")
 }
 
 fn default_pid_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".byokey").join("byokey.pid")
+    home_dir().join(".byokey").join("byokey.pid")
 }
 
 fn default_log_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".byokey").join("server.log")
+    home_dir().join(".byokey").join("server.log")
 }
