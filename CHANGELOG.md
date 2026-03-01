@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/AprilNEA/BYOKEY/compare/v0.5.3...v0.6.0) - 2026-03-01
+
+### Added
+
+- *(proxy,desktop)* add account management API, rate limits, and Accounts UI
+- *(desktop)* add management API, provider status UI, settings, and log viewer
+- *(desktop)* replace Tauri with native Swift app embedding Rust daemon
+- *(cli)* show server running status in byokey status
+
+### Fixed
+
+- *(desktop)* use LaunchAgent, add app icon, fix SMAppService registration
+
+### Other
+
+- update READMEs with current model names, CLI commands, and config format
+- extract daemon management into byokey-daemon crate
+- *(cli)* reduce duplication and improve ergonomics
+- release v0.5.3 ([#26](https://github.com/AprilNEA/BYOKEY/pull/26))
+
 ## [0.5.3](https://github.com/AprilNEA/BYOKEY/compare/v0.5.2...v0.5.3) - 2026-02-28
 
 ### Other
