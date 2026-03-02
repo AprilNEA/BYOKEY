@@ -20,6 +20,9 @@ pub struct OAuthCredentials {
     /// OAuth 2.0 token endpoint URL (used for both initial exchange and refresh).
     #[serde(default)]
     pub token_url: Option<String>,
+    /// Device code endpoint URL (device code flows only).
+    #[serde(default)]
+    pub device_code_url: Option<String>,
 }
 
 /// Fetch credentials for `provider_name` (e.g. `"gemini"`, `"antigravity"`).

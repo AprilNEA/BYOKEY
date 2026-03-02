@@ -14,8 +14,6 @@ use byokey_types::{ByokError, OAuthToken, traits::Result};
 pub const CALLBACK_PORT: u16 = 11451;
 /// iFlow authorization endpoint.
 pub const AUTH_URL: &str = "https://iflow.cn/oauth";
-/// iFlow token endpoint.
-pub const TOKEN_URL: &str = "https://iflow.cn/oauth/token";
 const REDIRECT_URI: &str = "http://localhost:11451/callback";
 const REDIRECT_URI_ENCODED: &str = "http%3A%2F%2Flocalhost%3A11451%2Fcallback";
 

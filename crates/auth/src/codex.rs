@@ -11,9 +11,6 @@ pub const CALLBACK_PORT: u16 = 1455;
 /// `OpenAI` OAuth authorization endpoint.
 pub const AUTH_URL: &str = "https://auth.openai.com/oauth/authorize";
 
-/// `OpenAI` OAuth token endpoint.
-pub const TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
-
 /// OAuth scopes requested during authorization.
 pub const SCOPES: &[&str] = &["openid", "email", "profile", "offline_access"];
 

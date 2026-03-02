@@ -4,8 +4,6 @@
 use byokey_types::{ByokError, OAuthToken, traits::Result};
 use rand::RngCore as _;
 
-pub const DEVICE_CODE_URL: &str = "https://auth.kimi.com/api/oauth/device_authorization";
-pub const TOKEN_URL: &str = "https://auth.kimi.com/api/oauth/token";
 pub const SCOPES: &[&str] = &["openid", "offline_access"];
 pub const PLATFORM: &str = "mac";
 pub const VERSION: &str = "0.13.0";

@@ -4,8 +4,6 @@
 //! Slow-down multiplier: 1.5x.
 use byokey_types::{ByokError, OAuthToken, traits::Result};
 
-pub const DEVICE_CODE_URL: &str = "https://chat.qwen.ai/api/v1/oauth2/device/code";
-pub const TOKEN_URL: &str = "https://chat.qwen.ai/api/v1/oauth2/token";
 pub const SCOPES: &[&str] = &["openid", "profile", "email", "model.completion"];
 pub const SLOW_DOWN_MULTIPLIER: f64 = 1.5;
 

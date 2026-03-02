@@ -14,9 +14,6 @@ pub const CALLBACK_PORT: u16 = 51121;
 /// Google OAuth 2.0 authorization endpoint.
 pub const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 
-/// Google OAuth 2.0 token endpoint.
-pub const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
-
 /// OAuth scopes requested during authorization.
 pub const SCOPES: &[&str] = &[
     "openid",
@@ -159,6 +156,5 @@ mod tests {
     fn test_constants() {
         assert_eq!(CALLBACK_PORT, 51121);
         assert_eq!(AUTH_URL, "https://accounts.google.com/o/oauth2/v2/auth");
-        assert_eq!(TOKEN_URL, "https://oauth2.googleapis.com/token");
     }
 }

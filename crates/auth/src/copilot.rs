@@ -5,12 +5,6 @@
 
 use byokey_types::{ByokError, OAuthToken, traits::Result};
 
-/// GitHub device code request endpoint.
-pub const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
-
-/// GitHub OAuth token endpoint.
-pub const TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
-
 /// OAuth scopes requested during authorization.
 pub const SCOPES: &[&str] = &["read:user"];
 

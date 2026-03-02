@@ -14,9 +14,6 @@ pub const CALLBACK_PORT: u16 = 8085;
 /// Google OAuth 2.0 authorization endpoint.
 pub const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 
-/// Google OAuth 2.0 token endpoint.
-pub const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
-
 /// OAuth scopes requested during authorization.
 pub const SCOPES: &[&str] = &[
     "openid",

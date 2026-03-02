@@ -42,6 +42,10 @@ async fn login_claude(
     account: Option<&str>,
 ) -> Result<()> {
     let creds = credentials::fetch("claude", http).await?;
+    let token_url = creds
+        .token_url
+        .as_deref()
+        .ok_or_else(|| ByokError::Auth("claude credentials missing token_url".into()))?;
     let (verifier, challenge) = pkce::generate_pkce();
     let state = pkce::random_state();
     let auth_url = claude::build_auth_url(&creds.client_id, &challenge, &state);
@@ -64,7 +68,7 @@ async fn login_claude(
 
     let body = claude::build_token_request(&creds.client_id, code, &verifier, &state);
     let resp = http
-        .post(claude::TOKEN_URL)
+        .post(token_url)
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
@@ -89,6 +93,10 @@ async fn login_codex(
     account: Option<&str>,
 ) -> Result<()> {
     let creds = credentials::fetch("codex", http).await?;
+    let token_url = creds
+        .token_url
+        .as_deref()
+        .ok_or_else(|| ByokError::Auth("codex credentials missing token_url".into()))?;
     let (verifier, challenge) = pkce::generate_pkce();
     let state = pkce::random_state();
     let auth_url = codex::build_auth_url(&creds.client_id, &challenge, &state);
@@ -110,7 +118,7 @@ async fn login_codex(
 
     let token_params = codex::token_form_params(&creds.client_id, code, &verifier);
     let resp = http
-        .post(codex::TOKEN_URL)
+        .post(token_url)
         .header("Accept", "application/json")
         .form(&token_params)
         .send()
@@ -135,6 +143,14 @@ async fn login_copilot(
     account: Option<&str>,
 ) -> Result<()> {
     let creds = credentials::fetch("copilot", http).await?;
+    let device_code_url = creds
+        .device_code_url
+        .as_deref()
+        .ok_or_else(|| ByokError::Auth("copilot credentials missing device_code_url".into()))?;
+    let token_url = creds
+        .token_url
+        .as_deref()
+        .ok_or_else(|| ByokError::Auth("copilot credentials missing token_url".into()))?;
     let scope_str = copilot::SCOPES.join(" ");
     let init_params = [
         ("client_id", creds.client_id.as_str()),
@@ -142,7 +158,7 @@ async fn login_copilot(
     ];
 
     let resp = http
-        .post(copilot::DEVICE_CODE_URL)
+        .post(device_code_url)
         .header("Accept", "application/json")
         .form(&init_params)
         .send()
@@ -176,7 +192,7 @@ async fn login_copilot(
         ];
 
         let resp = http
-            .post(copilot::TOKEN_URL)
+            .post(token_url)
             .header("Accept", "application/json")
             .form(&token_params)
             .send()
@@ -212,6 +228,10 @@ async fn login_gemini(
     account: Option<&str>,
 ) -> Result<()> {
     let creds = credentials::fetch("gemini", http).await?;
+    let token_url = creds
+        .token_url
+        .as_deref()
+        .ok_or_else(|| ByokError::Auth("gemini credentials missing token_url".into()))?;
     let client_secret = creds
         .client_secret
         .as_deref()
@@ -238,11 +258,7 @@ async fn login_gemini(
         .ok_or_else(|| ByokError::Auth("missing code parameter in callback".into()))?;
 
     let token_params = gemini::token_form_params(&creds.client_id, client_secret, code, &verifier);
-    let resp = http
-        .post(gemini::TOKEN_URL)
-        .form(&token_params)
-        .send()
-        .await?;
+    let resp = http.post(token_url).form(&token_params).send().await?;
 
     let json: serde_json::Value = resp
         .json()
@@ -263,6 +279,10 @@ async fn login_antigravity(
     account: Option<&str>,
 ) -> Result<()> {
     let creds = credentials::fetch("antigravity", http).await?;
+    let token_url = creds
+        .token_url
+        .as_deref()
+        .ok_or_else(|| ByokError::Auth("antigravity credentials missing token_url".into()))?;
     let client_secret = creds
         .client_secret
         .as_deref()
@@ -290,11 +310,7 @@ async fn login_antigravity(
 
     let token_params =
         antigravity::token_form_params(&creds.client_id, client_secret, code, &verifier);
-    let resp = http
-        .post(antigravity::TOKEN_URL)
-        .form(&token_params)
-        .send()
-        .await?;
+    let resp = http.post(token_url).form(&token_params).send().await?;
 
     let json: serde_json::Value = resp
         .json()
@@ -315,12 +331,20 @@ async fn login_qwen(
     account: Option<&str>,
 ) -> Result<()> {
     let creds = credentials::fetch("qwen", http).await?;
+    let device_code_url = creds
+        .device_code_url
+        .as_deref()
+        .ok_or_else(|| ByokError::Auth("qwen credentials missing device_code_url".into()))?;
+    let token_url = creds
+        .token_url
+        .as_deref()
+        .ok_or_else(|| ByokError::Auth("qwen credentials missing token_url".into()))?;
     let (verifier, challenge) = pkce::generate_pkce();
     let scope_str = qwen::SCOPES.join(" ");
     let device_params = qwen::build_device_code_params(&creds.client_id, &challenge, &scope_str);
 
     let resp = http
-        .post(qwen::DEVICE_CODE_URL)
+        .post(device_code_url)
         .header("Accept", "application/json")
         .form(&device_params)
         .send()
@@ -350,7 +374,7 @@ async fn login_qwen(
 
         let token_params = qwen::build_token_poll_params(&creds.client_id, &device_code, &verifier);
         let resp = http
-            .post(qwen::TOKEN_URL)
+            .post(token_url)
             .header("Accept", "application/json")
             .form(&token_params)
             .send()
@@ -386,12 +410,20 @@ async fn login_kimi(
     account: Option<&str>,
 ) -> Result<()> {
     let creds = credentials::fetch("kimi", http).await?;
+    let device_code_url = creds
+        .device_code_url
+        .as_deref()
+        .ok_or_else(|| ByokError::Auth("kimi credentials missing device_code_url".into()))?;
+    let token_url = creds
+        .token_url
+        .as_deref()
+        .ok_or_else(|| ByokError::Auth("kimi credentials missing token_url".into()))?;
     let scope_str = kimi::SCOPES.join(" ");
     let device_params = kimi::build_device_code_params(&creds.client_id, &scope_str);
     let msh_headers = kimi::x_msh_headers();
 
     let mut req = http
-        .post(kimi::DEVICE_CODE_URL)
+        .post(device_code_url)
         .header("Accept", "application/json")
         .form(&device_params);
     for (name, value) in &msh_headers {
@@ -424,7 +456,7 @@ async fn login_kimi(
 
         let token_params = kimi::build_token_poll_params(&creds.client_id, &device_code);
         let mut req = http
-            .post(kimi::TOKEN_URL)
+            .post(token_url)
             .header("Accept", "application/json")
             .form(&token_params);
         for (name, value) in &poll_headers {
@@ -463,6 +495,10 @@ async fn login_iflow(
     account: Option<&str>,
 ) -> Result<()> {
     let creds = credentials::fetch("iflow", http).await?;
+    let token_url = creds
+        .token_url
+        .as_deref()
+        .ok_or_else(|| ByokError::Auth("iflow credentials missing token_url".into()))?;
     let client_secret = creds
         .client_secret
         .as_deref()
@@ -489,7 +525,7 @@ async fn login_iflow(
 
     let token_params = iflow::token_form_params(&creds.client_id, code);
     let resp = http
-        .post(iflow::TOKEN_URL)
+        .post(token_url)
         .header(
             "Authorization",
             iflow::basic_auth_header(&creds.client_id, client_secret),

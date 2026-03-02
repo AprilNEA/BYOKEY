@@ -218,11 +218,21 @@ impl AuthManager {
         })?;
 
         // Build the refresh request.
-        let new_token = if *provider == ProviderId::IFlow {
-            self.refresh_iflow(&creds, token_url, refresh_token).await?
+        let refresh_result = if *provider == ProviderId::IFlow {
+            self.refresh_iflow(&creds, token_url, refresh_token).await
         } else {
             self.refresh_standard(&creds, token_url, refresh_token)
-                .await?
+                .await
+        };
+
+        let new_token = match refresh_result {
+            Ok(t) => t,
+            Err(ByokError::Auth(ref msg)) if msg.starts_with("invalid_grant:") => {
+                tracing::warn!(%provider, "refresh token revoked or expired, removing stored token");
+                let _ = self.store.remove(provider).await;
+                return Err(ByokError::TokenExpired(provider.clone()));
+            }
+            Err(e) => return Err(e),
         };
 
         // Preserve the old refresh_token if the response didn't include a new one
@@ -275,11 +285,17 @@ impl AuthManager {
             .map_err(|e| ByokError::Auth(format!("failed to parse refresh response: {e}")))?;
 
         if !status.is_success() {
+            let error_code = json
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
             let error_desc = json
                 .get("error_description")
-                .or_else(|| json.get("error"))
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("unknown error");
+            if error_code == "invalid_grant" {
+                return Err(ByokError::Auth(format!("invalid_grant: {error_desc}")));
+            }
             return Err(ByokError::Auth(format!(
                 "refresh failed ({status}): {error_desc}"
             )));
@@ -324,11 +340,17 @@ impl AuthManager {
             .map_err(|e| ByokError::Auth(format!("failed to parse refresh response: {e}")))?;
 
         if !status.is_success() {
+            let error_code = json
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
             let error_desc = json
                 .get("error_description")
-                .or_else(|| json.get("error"))
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("unknown error");
+            if error_code == "invalid_grant" {
+                return Err(ByokError::Auth(format!("invalid_grant: {error_desc}")));
+            }
             return Err(ByokError::Auth(format!(
                 "iflow refresh failed ({status}): {error_desc}"
             )));
