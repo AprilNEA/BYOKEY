@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::{path::PathBuf, process::Stdio};
+use std::path::PathBuf;
 
 const AMP_PATCH_MARKER: &[u8] = b"/*ampatch*";
 
@@ -155,6 +155,7 @@ pub fn amp_restore(bundle_path: &std::path::Path) -> Result<()> {
 /// Silently skips on non-macOS or if `codesign` is unavailable.
 #[cfg(target_os = "macos")]
 pub fn resign_adhoc(path: &std::path::Path) {
+    use std::process::Stdio;
     let status = std::process::Command::new("codesign")
         .args(["--sign", "-", "--force", "--preserve-metadata=entitlements"])
         .arg(path)
