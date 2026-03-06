@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-auth-v0.5.3...byokey-auth-v0.6.0) - 2026-03-06
+
+### Other
+
+- *(auth)* unify all OAuth URLs via remote credentials and clean up stale refresh tokens
+- *(auth)* fetch all OAuth client IDs from assets.byokey.io at runtime
+
 ## [0.5.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-auth-v0.4.0...byokey-auth-v0.5.0) - 2026-02-25
 
 ### Added

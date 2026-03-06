@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/AprilNEA/BYOKEY/compare/v0.5.3...v0.6.0) - 2026-03-06
+
+### Added
+
+- *(amp)* add --all flag to `amp ads disable`
+- *(desktop)* isolate Debug and Release builds with separate Bundle IDs and ports
+- *(proxy,desktop)* add account management API, rate limits, and Accounts UI
+- *(desktop)* add management API, provider status UI, settings, and log viewer
+- *(desktop)* replace Tauri with native Swift app embedding Rust daemon
+- *(cli)* show server running status in byokey status
+
+### Fixed
+
+- *(ci)* move Stdio import into cfg(target_os = "macos") block
+- *(desktop)* show log and timeout error when daemon is registered but not reachable
+- *(desktop)* add argv[0] to LaunchAgent ProgramArguments ([#37](https://github.com/AprilNEA/BYOKEY/pull/37))
+- *(desktop)* use LaunchAgent, add app icon, fix SMAppService registration
+
+### Other
+
+- *(amp)* restructure ads command as `amp ads disable/enable`
+- split main.rs into serve, daemon, auth, amp modules
+- gitignore Xcode xcuserdata and untrack xcuserstate
+- update READMEs with current model names, CLI commands, and config format
+- extract daemon management into byokey-daemon crate
+- *(cli)* reduce duplication and improve ergonomics
+- release v0.5.3 ([#26](https://github.com/AprilNEA/BYOKEY/pull/26))
+
 ## [0.5.3](https://github.com/AprilNEA/BYOKEY/compare/v0.5.2...v0.5.3) - 2026-02-28
 
 ### Other
