@@ -158,8 +158,11 @@ enum AdsAction {
         #[arg(value_name = "PATH")]
         paths: Vec<PathBuf>,
         /// Also patch editor extensions (VS Code, Cursor, Windsurf).
-        #[arg(long)]
+        #[arg(long, conflicts_with = "all")]
         extension: bool,
+        /// Patch both CLI binary and editor extensions.
+        #[arg(long, conflicts_with = "extension")]
+        all: bool,
     },
     /// Restore original Amp files (re-enable ads).
     Enable {
@@ -216,7 +219,11 @@ async fn main() -> Result<()> {
         Commands::Amp { action } => match action {
             AmpAction::Inject { url } => amp::cmd_amp_inject(url),
             AmpAction::Ads { action } => match action {
-                AdsAction::Disable { paths, extension } => amp::cmd_ads_disable(paths, extension),
+                AdsAction::Disable {
+                    paths,
+                    extension,
+                    all,
+                } => amp::cmd_ads_disable(paths, extension || all),
                 AdsAction::Enable { paths } => amp::cmd_ads_enable(paths),
             },
         },
