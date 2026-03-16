@@ -22,5 +22,8 @@ pub use executor::{
 };
 pub use factory::{make_executor, make_executor_for_model};
 pub use http_util::ProviderHttp;
-pub use registry::{models_for_provider, resolve_provider};
+pub use registry::{
+    ModelEntry, all_models, is_copilot_free_model, models_for_provider, parse_qualified_model,
+    resolve_provider, resolve_provider_with,
+};
 pub use routing::CredentialRouter;

@@ -110,7 +110,7 @@ impl ProviderExecutor for KimiExecutor {
     }
 
     fn supported_models(&self) -> Vec<String> {
-        registry::kimi_models()
+        registry::models_for_provider(&ProviderId::Kimi)
     }
 }
 

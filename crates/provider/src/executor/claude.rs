@@ -111,7 +111,7 @@ impl ProviderExecutor for ClaudeExecutor {
     }
 
     fn supported_models(&self) -> Vec<String> {
-        registry::claude_models()
+        registry::models_for_provider(&ProviderId::Claude)
     }
 }
 

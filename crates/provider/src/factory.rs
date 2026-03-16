@@ -12,6 +12,8 @@ use byokey_types::{
     traits::{ProviderExecutor, ProviderResponse, Result as ProviderResult},
 };
 use rquest::Client;
+use std::collections::HashSet;
+use std::hash::BuildHasher;
 use std::sync::Arc;
 
 use crate::executor::{
@@ -84,15 +86,27 @@ pub fn make_executor(
 ///
 /// Returns [`ByokError::UnsupportedModel`] if the model string is not recognised
 /// or if the resolved provider does not have an executor implemented yet.
-pub fn make_executor_for_model(
+pub fn make_executor_for_model<S: BuildHasher>(
     model: &str,
     config_fn: impl Fn(&ProviderId) -> Option<ProviderConfig>,
+    oauth_providers: &HashSet<ProviderId, S>,
+    provider_hint: Option<&ProviderId>,
     auth: Arc<AuthManager>,
     http: Client,
     ratelimit: Option<Arc<RateLimitStore>>,
 ) -> Result<Box<dyn ProviderExecutor>, ByokError> {
-    let provider = registry::resolve_provider(model)
-        .ok_or_else(|| ByokError::UnsupportedModel(model.to_string()))?;
+    let provider = if let Some(p) = provider_hint {
+        p.clone()
+    } else {
+        registry::resolve_provider_with(model, |p| {
+            config_fn(p)
+                .as_ref()
+                .is_some_and(|c| c.api_key.is_some() || !c.api_keys.is_empty())
+                || oauth_providers.contains(p)
+        })
+        .or_else(|| registry::resolve_provider(model))
+        .ok_or_else(|| ByokError::UnsupportedModel(model.to_string()))?
+    };
 
     let config = config_fn(&provider).unwrap_or_default();
 
@@ -171,6 +185,10 @@ mod tests {
         Client::new()
     }
 
+    fn empty_oauth() -> HashSet<ProviderId> {
+        HashSet::new()
+    }
+
     #[test]
     fn test_make_executor_claude() {
         let auth = make_auth();
@@ -240,7 +258,7 @@ mod tests {
     #[test]
     fn test_make_executor_for_model_claude() {
         let auth = make_auth();
-        let ex = make_executor_for_model("claude-opus-4-6", |_| None, auth, make_http(), None);
+        let ex = make_executor_for_model("claude-opus-4-6", |_| None, &empty_oauth(), None, auth, make_http(), None);
         assert!(ex.is_ok());
     }
 
@@ -248,7 +266,7 @@ mod tests {
     fn test_make_executor_for_model_unknown() {
         let auth = make_auth();
         let result =
-            make_executor_for_model("nonexistent-model", |_| None, auth, make_http(), None);
+            make_executor_for_model("nonexistent-model", |_| None, &empty_oauth(), None, auth, make_http(), None);
         assert!(matches!(result, Err(ByokError::UnsupportedModel(_))));
     }
 
@@ -264,6 +282,8 @@ mod tests {
                 }),
                 _ => None,
             },
+            &empty_oauth(),
+            None,
             auth,
             make_http(),
             None,
@@ -284,6 +304,8 @@ mod tests {
                 }),
                 _ => None,
             },
+            &empty_oauth(),
+            None,
             auth,
             make_http(),
             None,
@@ -304,6 +326,8 @@ mod tests {
                 }),
                 _ => None,
             },
+            &empty_oauth(),
+            None,
             auth,
             make_http(),
             None,
@@ -337,6 +361,8 @@ mod tests {
                 }),
                 _ => None,
             },
+            &empty_oauth(),
+            None,
             auth,
             make_http(),
             None,
@@ -360,6 +386,8 @@ mod tests {
                 }),
                 _ => None,
             },
+            &empty_oauth(),
+            None,
             auth,
             make_http(),
             None,
