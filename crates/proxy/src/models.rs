@@ -59,26 +59,28 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> Json<Value> {
             }
         }
 
-        // Emit qualified alternatives for other providers, regardless of
-        // whether the primary is enabled.
-        for alt_provider in &entry.providers[1..] {
-            let alt_pc = config
-                .providers
-                .get(alt_provider)
-                .cloned()
-                .unwrap_or_default();
-            if !alt_pc.enabled {
-                continue;
+        // Emit qualified alternatives for all providers on multi-provider
+        // models (including the primary, for explicit discoverability).
+        if entry.providers.len() > 1 {
+            for alt_provider in entry.providers {
+                let alt_pc = config
+                    .providers
+                    .get(alt_provider)
+                    .cloned()
+                    .unwrap_or_default();
+                if !alt_pc.enabled {
+                    continue;
+                }
+                if config.is_model_excluded(alt_provider, entry.id) {
+                    continue;
+                }
+                data.push(json!({
+                    "id": format!("{}/{}", alt_provider, entry.id),
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": alt_provider.to_string(),
+                }));
             }
-            if config.is_model_excluded(alt_provider, entry.id) {
-                continue;
-            }
-            data.push(json!({
-                "id": format!("{}/{}", alt_provider, entry.id),
-                "object": "model",
-                "created": 0,
-                "owned_by": alt_provider.to_string(),
-            }));
         }
     }
 
