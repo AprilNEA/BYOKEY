@@ -310,6 +310,8 @@ pub fn is_copilot_free_model(model: &str) -> bool {
 }
 
 /// Returns the model list for a given provider.
+///
+/// Models served by multiple providers will appear in each provider's list.
 #[must_use]
 pub fn models_for_provider(provider: &ProviderId) -> Vec<String> {
     REGISTRY
@@ -452,9 +454,10 @@ mod tests {
     #[test]
     fn test_model_lists_non_empty() {
         for provider in ProviderId::all() {
+            let models = models_for_provider(provider);
             assert!(
-                !models_for_provider(provider).is_empty(),
-                "models_for_provider({provider:?}) should not be empty"
+                !models.is_empty(),
+                "models_for_provider({provider:?}) returned empty — add at least one model to REGISTRY for this provider"
             );
         }
     }
