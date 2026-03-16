@@ -215,6 +215,7 @@ mod tests {
         });
         let out = OpenAIToCodex.translate_request(req).unwrap();
         assert_eq!(out["model"], "o4-mini");
+        assert_eq!(out["store"], false);
         assert_eq!(out["input"][0]["type"], "message");
         assert_eq!(out["input"][0]["role"], "user");
         assert_eq!(out["input"][0]["content"][0]["type"], "input_text");

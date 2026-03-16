@@ -21,31 +21,35 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> Json<Value> {
             continue;
         };
 
-        let pc = config
+        let primary_pc = config
             .providers
             .get(primary_provider)
             .cloned()
             .unwrap_or_default();
-        if !pc.enabled {
-            continue;
-        }
+        let primary_enabled =
+            primary_pc.enabled && !config.is_model_excluded(primary_provider, entry.id);
 
-        if config.is_model_excluded(primary_provider, entry.id) {
-            continue;
-        }
+        // List the unqualified model under its primary provider if enabled.
+        if primary_enabled {
+            let aliases = config.model_alias.get(primary_provider);
+            let alias_entry = aliases.and_then(|a| a.iter().find(|ae| ae.name == entry.id));
 
-        // Check aliases for the primary provider.
-        let aliases = config.model_alias.get(primary_provider);
-        let alias_entry = aliases.and_then(|a| a.iter().find(|ae| ae.name == entry.id));
-
-        if let Some(ae) = alias_entry {
-            data.push(json!({
-                "id": ae.alias,
-                "object": "model",
-                "created": 0,
-                "owned_by": primary_provider.to_string(),
-            }));
-            if ae.fork {
+            if let Some(ae) = alias_entry {
+                data.push(json!({
+                    "id": ae.alias,
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": primary_provider.to_string(),
+                }));
+                if ae.fork {
+                    data.push(json!({
+                        "id": entry.id,
+                        "object": "model",
+                        "created": 0,
+                        "owned_by": primary_provider.to_string(),
+                    }));
+                }
+            } else {
                 data.push(json!({
                     "id": entry.id,
                     "object": "model",
@@ -53,16 +57,10 @@ pub async fn list_models(State(state): State<Arc<AppState>>) -> Json<Value> {
                     "owned_by": primary_provider.to_string(),
                 }));
             }
-        } else {
-            data.push(json!({
-                "id": entry.id,
-                "object": "model",
-                "created": 0,
-                "owned_by": primary_provider.to_string(),
-            }));
         }
 
-        // Emit qualified alternatives for other providers.
+        // Emit qualified alternatives for other providers, regardless of
+        // whether the primary is enabled.
         for alt_provider in &entry.providers[1..] {
             let alt_pc = config
                 .providers
