@@ -7,10 +7,11 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use byokey_provider::make_executor_for_model;
+use byokey_provider::{make_executor_for_model, parse_qualified_model};
 use byokey_translate::{apply_thinking, parse_model_suffix};
 use byokey_types::{ChatRequest, ProviderId, traits::ProviderResponse};
 use futures_util::TryStreamExt as _;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::{AppState, error::ApiError};
@@ -59,11 +60,22 @@ async fn chat_completions_inner(
 ) -> Result<Response, ApiError> {
     let config = state.config.load();
 
+    // Pre-compute which providers have OAuth tokens (async → sync bridge).
+    let mut oauth_providers = HashSet::new();
+    for p in ProviderId::all() {
+        if state.auth.is_authenticated(p).await {
+            oauth_providers.insert(p.clone());
+        }
+    }
+
     // Resolve model alias before anything else.
     let resolved_model = config.resolve_alias(&request.model);
 
+    // Strip provider qualifier (e.g. "codex/gpt-5.4" → "gpt-5.4").
+    let (provider_hint, bare_model) = parse_qualified_model(&resolved_model);
+
     // Parse thinking suffix from (possibly alias-resolved) model name.
-    let suffix = parse_model_suffix(&resolved_model);
+    let suffix = parse_model_suffix(bare_model);
 
     let config_fn = |p: &ProviderId| {
         let mut pc = config.providers.get(p).cloned().unwrap_or_default();
@@ -76,6 +88,8 @@ async fn chat_completions_inner(
     let executor = make_executor_for_model(
         &suffix.model,
         config_fn,
+        &oauth_providers,
+        provider_hint.as_ref(),
         state.auth.clone(),
         state.http.clone(),
         Some(state.ratelimits.clone()),

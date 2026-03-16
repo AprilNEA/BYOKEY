@@ -82,7 +82,7 @@ impl ProviderExecutor for KiroExecutor {
     }
 
     fn supported_models(&self) -> Vec<String> {
-        registry::kiro_models()
+        registry::models_for_provider(&ProviderId::Kiro)
     }
 }
 

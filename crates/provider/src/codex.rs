@@ -322,7 +322,7 @@ impl ProviderExecutor for CodexExecutor {
     }
 
     fn supported_models(&self) -> Vec<String> {
-        registry::codex_models()
+        registry::models_for_provider(&ProviderId::Codex)
     }
 }
 

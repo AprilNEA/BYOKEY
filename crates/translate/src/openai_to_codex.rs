@@ -188,6 +188,9 @@ impl RequestTranslator for OpenAIToCodex {
             }
         }
 
+        // Codex requires store=false for ChatGPT accounts.
+        out["store"] = json!(false);
+
         if let Some(tokens) = req.get("max_tokens").and_then(Value::as_u64) {
             out["max_output_tokens"] = json!(tokens);
         }

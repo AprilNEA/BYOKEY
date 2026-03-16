@@ -102,7 +102,7 @@ impl ProviderExecutor for IFlowExecutor {
     }
 
     fn supported_models(&self) -> Vec<String> {
-        registry::iflow_models()
+        registry::models_for_provider(&ProviderId::IFlow)
     }
 }
 
