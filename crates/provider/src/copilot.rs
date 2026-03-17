@@ -522,7 +522,7 @@ impl ProviderExecutor for CopilotExecutor {
     }
 
     fn supported_models(&self) -> Vec<String> {
-        registry::copilot_models()
+        registry::models_for_provider(&ProviderId::Copilot)
     }
 }
 

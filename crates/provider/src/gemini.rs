@@ -68,7 +68,7 @@ impl ProviderExecutor for GeminiExecutor {
     }
 
     fn supported_models(&self) -> Vec<String> {
-        registry::gemini_models()
+        registry::models_for_provider(&ProviderId::Gemini)
     }
 }
 

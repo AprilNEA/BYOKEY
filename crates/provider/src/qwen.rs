@@ -88,7 +88,7 @@ impl ProviderExecutor for QwenExecutor {
     }
 
     fn supported_models(&self) -> Vec<String> {
-        registry::qwen_models()
+        registry::models_for_provider(&ProviderId::Qwen)
     }
 }
 

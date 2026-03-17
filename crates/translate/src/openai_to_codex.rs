@@ -5,7 +5,7 @@
 //!
 //! - `messages` → `input` (typed message objects with content parts)
 //! - `system` role → top-level `instructions` field
-//! - `max_tokens` → `max_output_tokens`
+//! - `max_tokens` is intentionally dropped (unsupported on `ChatGPT` OAuth sessions)
 
 use byokey_types::{ByokError, RequestTranslator, traits::Result};
 use serde_json::{Value, json};
@@ -188,9 +188,14 @@ impl RequestTranslator for OpenAIToCodex {
             }
         }
 
-        if let Some(tokens) = req.get("max_tokens").and_then(Value::as_u64) {
-            out["max_output_tokens"] = json!(tokens);
-        }
+        // Codex requires store=false for ChatGPT accounts.
+        out["store"] = json!(false);
+
+        // NOTE: max_tokens is intentionally NOT forwarded. The Codex Responses
+        // API at chatgpt.com rejects `max_output_tokens` for ChatGPT-backed
+        // OAuth sessions. The API-key path bypasses this translator entirely
+        // (uses the standard Chat Completions endpoint), so no mapping needed.
+
         if let Some(t) = req.get("temperature") {
             out["temperature"] = t.clone();
         }
@@ -212,6 +217,7 @@ mod tests {
         });
         let out = OpenAIToCodex.translate_request(req).unwrap();
         assert_eq!(out["model"], "o4-mini");
+        assert_eq!(out["store"], false);
         assert_eq!(out["input"][0]["type"], "message");
         assert_eq!(out["input"][0]["role"], "user");
         assert_eq!(out["input"][0]["content"][0]["type"], "input_text");
@@ -233,14 +239,14 @@ mod tests {
     }
 
     #[test]
-    fn test_max_tokens_renamed() {
+    fn test_max_tokens_dropped() {
         let req = json!({
             "model": "o4-mini",
             "messages": [{"role": "user", "content": "hi"}],
             "max_tokens": 500
         });
         let out = OpenAIToCodex.translate_request(req).unwrap();
-        assert_eq!(out["max_output_tokens"], 500);
+        assert!(out.get("max_output_tokens").is_none());
         assert!(out.get("max_tokens").is_none());
     }
 

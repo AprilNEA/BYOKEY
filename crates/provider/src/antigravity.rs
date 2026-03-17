@@ -285,7 +285,7 @@ impl ProviderExecutor for AntigravityExecutor {
     }
 
     fn supported_models(&self) -> Vec<String> {
-        registry::antigravity_models()
+        registry::models_for_provider(&ProviderId::Antigravity)
     }
 }
 
@@ -309,7 +309,14 @@ mod tests {
     #[test]
     fn test_supported_models_start_with_ag() {
         let ex = make_executor();
-        assert!(ex.supported_models().iter().all(|m| m.starts_with("ag-")));
+        // Most Antigravity models are prefixed with "ag-", but shared models
+        // like "claude-sonnet-4-5" also appear via REGISTRY.
+        let ag_only: Vec<_> = ex
+            .supported_models()
+            .into_iter()
+            .filter(|m| m.starts_with("ag-"))
+            .collect();
+        assert!(!ag_only.is_empty());
     }
 
     #[test]

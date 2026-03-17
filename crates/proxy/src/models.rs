@@ -1,8 +1,7 @@
 //! Models listing handler — returns available models in `OpenAI` format.
 
 use axum::{Json, extract::State};
-use byokey_provider::make_executor;
-use byokey_types::ProviderId;
+use byokey_provider::all_models;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -10,65 +9,77 @@ use crate::AppState;
 
 /// Handles `GET /v1/models` requests.
 ///
-/// Returns an OpenAI-compatible model list containing all models from
-/// enabled providers. Providers absent from the config are enabled by default.
+/// Returns an OpenAI-compatible model list from the unified registry.
+/// For models available on multiple providers, both unqualified (primary)
+/// and qualified (`provider/model`) forms are listed.
 pub async fn list_models(State(state): State<Arc<AppState>>) -> Json<Value> {
     let mut data = Vec::new();
     let config = state.config.load();
 
-    for provider_id in ProviderId::all() {
-        let provider_config = config
+    for entry in all_models() {
+        let Some(primary_provider) = entry.providers.first() else {
+            continue;
+        };
+
+        let primary_pc = config
             .providers
-            .get(provider_id)
+            .get(primary_provider)
             .cloned()
             .unwrap_or_default();
-        if !provider_config.enabled {
-            continue;
-        }
-        let api_key = provider_config.api_key.clone();
-        if let Some(executor) = make_executor(
-            provider_id,
-            api_key,
-            state.auth.clone(),
-            state.http.clone(),
-            None,
-        ) {
-            let aliases = config.model_alias.get(provider_id);
+        let primary_enabled =
+            primary_pc.enabled && !config.is_model_excluded(primary_provider, entry.id);
 
-            for model_id in executor.supported_models() {
-                if config.is_model_excluded(provider_id, &model_id) {
+        // List the unqualified model under its primary provider if enabled.
+        if primary_enabled {
+            let aliases = config.model_alias.get(primary_provider);
+            let alias_entry = aliases.and_then(|a| a.iter().find(|ae| ae.name == entry.id));
+
+            if let Some(ae) = alias_entry {
+                data.push(json!({
+                    "id": ae.alias,
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": primary_provider.to_string(),
+                }));
+                if ae.fork {
+                    data.push(json!({
+                        "id": entry.id,
+                        "object": "model",
+                        "created": 0,
+                        "owned_by": primary_provider.to_string(),
+                    }));
+                }
+            } else {
+                data.push(json!({
+                    "id": entry.id,
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": primary_provider.to_string(),
+                }));
+            }
+        }
+
+        // Emit qualified alternatives for all providers on multi-provider
+        // models (including the primary, for explicit discoverability).
+        if entry.providers.len() > 1 {
+            for alt_provider in entry.providers {
+                let alt_pc = config
+                    .providers
+                    .get(alt_provider)
+                    .cloned()
+                    .unwrap_or_default();
+                if !alt_pc.enabled {
                     continue;
                 }
-
-                // Check if this model has an alias configured.
-                let alias_entry =
-                    aliases.and_then(|a| a.iter().find(|entry| entry.name == model_id));
-
-                if let Some(entry) = alias_entry {
-                    // Always expose the alias name.
-                    data.push(json!({
-                        "id": entry.alias,
-                        "object": "model",
-                        "created": 0,
-                        "owned_by": provider_id.to_string(),
-                    }));
-                    // If fork mode, also keep the original.
-                    if entry.fork {
-                        data.push(json!({
-                            "id": model_id,
-                            "object": "model",
-                            "created": 0,
-                            "owned_by": provider_id.to_string(),
-                        }));
-                    }
-                } else {
-                    data.push(json!({
-                        "id": model_id,
-                        "object": "model",
-                        "created": 0,
-                        "owned_by": provider_id.to_string(),
-                    }));
+                if config.is_model_excluded(alt_provider, entry.id) {
+                    continue;
                 }
+                data.push(json!({
+                    "id": format!("{}/{}", alt_provider, entry.id),
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": alt_provider.to_string(),
+                }));
             }
         }
     }
