@@ -271,6 +271,7 @@ pub fn all_models() -> &'static [ModelEntry] {
 #[must_use]
 pub fn parse_qualified_model(model: &str) -> (Option<ProviderId>, &str) {
     if let Some((prefix, rest)) = model.split_once('/')
+        && !rest.is_empty()
         && let Ok(provider) = prefix.parse::<ProviderId>()
     {
         return (Some(provider), rest);
@@ -556,6 +557,11 @@ mod tests {
         let (p, m) = parse_qualified_model("unknown/gpt-5.1");
         assert_eq!(p, None);
         assert_eq!(m, "unknown/gpt-5.1");
+
+        // Empty tail should not be treated as qualified.
+        let (p, m) = parse_qualified_model("copilot/");
+        assert_eq!(p, None);
+        assert_eq!(m, "copilot/");
     }
 
     #[test]
