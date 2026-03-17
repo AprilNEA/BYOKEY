@@ -36,6 +36,10 @@ const REGISTRY: &[ModelEntry] = &[
         providers: &[ProviderId::Codex, ProviderId::Copilot],
     },
     ModelEntry {
+        id: "gpt-5.4-mini",
+        providers: &[ProviderId::Codex, ProviderId::Copilot],
+    },
+    ModelEntry {
         id: "gpt-5.3-codex",
         providers: &[ProviderId::Codex, ProviderId::Copilot],
     },
