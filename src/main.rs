@@ -250,7 +250,7 @@ pub(crate) async fn open_store(db: Option<PathBuf>) -> Result<SqliteTokenStore> 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let url = format!("sqlite://{}", path.display());
+    let url = format!("sqlite://{}?mode=rwc", path.display());
     SqliteTokenStore::new(&url)
         .await
         .map_err(|e| anyhow::anyhow!("database error: {e}"))

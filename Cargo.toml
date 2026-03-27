@@ -56,11 +56,13 @@ arc-swap = "1"
 # Auth
 oauth2 = "5"
 rand = { version = "0.8", features = ["std"] }
+uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
 base64 = "0.22"
 open = "5"
 # Storage
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+sea-orm = { version = "1.1", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
 # Token counting
 tiktoken-rs = "0.6"
 # JSON path

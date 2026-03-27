@@ -2,8 +2,9 @@
 //!
 //! Provides an in-memory store for testing and a SQLite-backed store for production.
 
+pub mod entity;
 pub mod memory;
-pub mod sqlite;
+pub mod persistent;
 
 pub use memory::InMemoryTokenStore;
-pub use sqlite::SqliteTokenStore;
+pub use persistent::SqliteTokenStore;

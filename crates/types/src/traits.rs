@@ -95,6 +95,59 @@ pub trait TokenStore: Send + Sync {
     }
 }
 
+/// Summary of a stored conversation.
+#[derive(Debug, Clone)]
+pub struct ConversationSummary {
+    pub id: String,
+    pub title: Option<String>,
+    pub model: String,
+    pub provider: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// A single message record for persistence.
+#[derive(Debug, Clone)]
+pub struct MessageRecord {
+    pub id: String,
+    pub conversation_id: String,
+    pub role: String,
+    pub content: String,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub model: Option<String>,
+    pub finish_reason: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub extra: Option<Value>,
+    pub created_at: i64,
+}
+
+/// Persistent storage for chat conversation history.
+#[async_trait]
+pub trait ChatHistoryStore: Send + Sync {
+    /// Create a new conversation, returning its ID.
+    async fn create_conversation(
+        &self,
+        id: &str,
+        model: &str,
+        provider: &str,
+        title: Option<&str>,
+    ) -> Result<()>;
+
+    /// Append a message to an existing conversation.
+    async fn append_message(&self, msg: &MessageRecord) -> Result<()>;
+
+    /// List recent conversations, newest first.
+    async fn list_conversations(&self, limit: u64, offset: u64)
+    -> Result<Vec<ConversationSummary>>;
+
+    /// Load all messages for a conversation, ordered by `created_at`.
+    async fn get_messages(&self, conversation_id: &str) -> Result<Vec<MessageRecord>>;
+
+    /// Delete a conversation and its messages.
+    async fn delete_conversation(&self, conversation_id: &str) -> Result<()>;
+}
+
 /// Translates an `OpenAI`-format request into a provider's native format.
 ///
 /// Implementations must be pure (no I/O).

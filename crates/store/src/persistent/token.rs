@@ -1,92 +1,11 @@
-//! SQLite-backed token store using sqlx.
-//!
-//! Schema: `accounts(provider, account_id, label, is_active, token_json, created_at, updated_at)`
-//! with composite primary key `(provider, account_id)`.
-//!
-//! A partial unique index ensures at most one active account per provider.
+//! [`TokenStore`] implementation for [`SqliteTokenStore`].
 
 use async_trait::async_trait;
 use byokey_types::{AccountInfo, ByokError, OAuthToken, ProviderId, TokenStore, traits::Result};
-use sqlx::{
-    SqlitePool,
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
-};
-use std::str::FromStr;
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
 
-/// A persistent [`TokenStore`] backed by `SQLite`.
-pub struct SqliteTokenStore {
-    /// Connection pool to the `SQLite` database.
-    pool: SqlitePool,
-}
-
-impl SqliteTokenStore {
-    /// Connects to a `SQLite` database (e.g. `"sqlite:./tokens.db"` or `"sqlite::memory:"`).
-    ///
-    /// Automatically creates the database file if it does not exist.
-    /// Runs migrations to create / upgrade the schema.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`sqlx::Error`] if the connection or table creation fails.
-    pub async fn new(database_url: &str) -> std::result::Result<Self, sqlx::Error> {
-        let opts = SqliteConnectOptions::from_str(database_url)?.create_if_missing(true);
-        let pool = SqlitePoolOptions::new()
-            .max_connections(5)
-            .connect_with(opts)
-            .await?;
-        Self::migrate(&pool).await?;
-        Ok(Self { pool })
-    }
-
-    /// Run schema migrations.
-    ///
-    /// - Creates the `accounts` table if it does not exist.
-    /// - Migrates from the legacy `tokens` table if present.
-    async fn migrate(pool: &SqlitePool) -> std::result::Result<(), sqlx::Error> {
-        // Create the new accounts table (idempotent).
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS accounts (
-                provider    TEXT    NOT NULL,
-                account_id  TEXT    NOT NULL,
-                label       TEXT,
-                is_active   INTEGER NOT NULL DEFAULT 1,
-                token_json  TEXT    NOT NULL,
-                created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
-                updated_at  INTEGER NOT NULL DEFAULT (unixepoch()),
-                PRIMARY KEY (provider, account_id)
-            )",
-        )
-        .execute(pool)
-        .await?;
-
-        // Partial unique index: at most one active account per provider.
-        sqlx::query(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_active_account
-             ON accounts(provider) WHERE is_active = 1",
-        )
-        .execute(pool)
-        .await?;
-
-        // Migrate legacy `tokens` table if it exists.
-        let legacy_exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='tokens')",
-        )
-        .fetch_one(pool)
-        .await?;
-
-        if legacy_exists {
-            sqlx::query(
-                "INSERT OR IGNORE INTO accounts (provider, account_id, is_active, token_json)
-                 SELECT provider, 'default', 1, token_json FROM tokens",
-            )
-            .execute(pool)
-            .await?;
-            sqlx::query("DROP TABLE tokens").execute(pool).await?;
-        }
-
-        Ok(())
-    }
-}
+use super::{SqliteTokenStore, db_exec_raw, now_unix};
+use crate::entity::account;
 
 #[async_trait]
 impl TokenStore for SqliteTokenStore {
@@ -95,17 +14,17 @@ impl TokenStore for SqliteTokenStore {
     /// Loads the token for the active account of the given provider from `SQLite`.
     async fn load(&self, provider: &ProviderId) -> Result<Option<OAuthToken>> {
         let key = provider.to_string();
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT token_json FROM accounts WHERE provider = ? AND is_active = 1")
-                .bind(&key)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = account::Entity::find()
+            .filter(account::Column::Provider.eq(&key))
+            .filter(account::Column::IsActive.eq(true))
+            .one(&self.db)
+            .await?;
 
         match row {
             None => Ok(None),
-            Some((json,)) => {
-                let token: OAuthToken =
-                    serde_json::from_str(&json).map_err(|e| ByokError::Storage(e.to_string()))?;
+            Some(m) => {
+                let token: OAuthToken = serde_json::from_str(&m.token_json)
+                    .map_err(|e| ByokError::Storage(e.to_string()))?;
                 Ok(Some(token))
             }
         }
@@ -121,9 +40,10 @@ impl TokenStore for SqliteTokenStore {
     /// Removes the active account's token for the given provider.
     async fn remove(&self, provider: &ProviderId) -> Result<()> {
         let key = provider.to_string();
-        sqlx::query("DELETE FROM accounts WHERE provider = ? AND is_active = 1")
-            .bind(&key)
-            .execute(&self.pool)
+        account::Entity::delete_many()
+            .filter(account::Column::Provider.eq(&key))
+            .filter(account::Column::IsActive.eq(true))
+            .exec(&self.db)
             .await?;
         Ok(())
     }
@@ -136,18 +56,15 @@ impl TokenStore for SqliteTokenStore {
         account_id: &str,
     ) -> Result<Option<OAuthToken>> {
         let key = provider.to_string();
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT token_json FROM accounts WHERE provider = ? AND account_id = ?")
-                .bind(&key)
-                .bind(account_id)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = account::Entity::find_by_id((key, account_id.to_string()))
+            .one(&self.db)
+            .await?;
 
         match row {
             None => Ok(None),
-            Some((json,)) => {
-                let token: OAuthToken =
-                    serde_json::from_str(&json).map_err(|e| ByokError::Storage(e.to_string()))?;
+            Some(m) => {
+                let token: OAuthToken = serde_json::from_str(&m.token_json)
+                    .map_err(|e| ByokError::Storage(e.to_string()))?;
                 Ok(Some(token))
             }
         }
@@ -162,63 +79,71 @@ impl TokenStore for SqliteTokenStore {
     ) -> Result<()> {
         let key = provider.to_string();
         let json = serde_json::to_string(token).map_err(|e| ByokError::Storage(e.to_string()))?;
+        let now = now_unix();
 
         // Check if any account is already active for this provider.
-        let has_active: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM accounts WHERE provider = ? AND is_active = 1)",
-        )
-        .bind(&key)
-        .fetch_one(&self.pool)
-        .await?;
+        let has_active = account::Entity::find()
+            .filter(account::Column::Provider.eq(&key))
+            .filter(account::Column::IsActive.eq(true))
+            .one(&self.db)
+            .await?
+            .is_some();
 
-        // New accounts become active if no other active account exists.
-        let is_active = !has_active;
+        // Check if this specific account already exists.
+        let existing = account::Entity::find_by_id((key.clone(), account_id.to_string()))
+            .one(&self.db)
+            .await?;
 
-        sqlx::query(
-            "INSERT INTO accounts (provider, account_id, label, is_active, token_json)
-             VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(provider, account_id) DO UPDATE SET
-                 label = COALESCE(excluded.label, accounts.label),
-                 token_json = excluded.token_json,
-                 updated_at = unixepoch()",
-        )
-        .bind(&key)
-        .bind(account_id)
-        .bind(label)
-        .bind(is_active)
-        .bind(&json)
-        .execute(&self.pool)
-        .await?;
+        if let Some(existing_model) = existing {
+            // Update existing account.
+            let mut active: account::ActiveModel = existing_model.into();
+            active.token_json = Set(json);
+            active.updated_at = Set(now);
+            if let Some(l) = label {
+                active.label = Set(Some(l.to_string()));
+            }
+            active.update(&self.db).await?;
+        } else {
+            // New accounts become active if no other active account exists.
+            let is_active = !has_active;
+            let model = account::ActiveModel {
+                provider: Set(key),
+                account_id: Set(account_id.to_string()),
+                label: Set(label.map(String::from)),
+                is_active: Set(is_active),
+                token_json: Set(json),
+                created_at: Set(now),
+                updated_at: Set(now),
+            };
+            model.insert(&self.db).await?;
+        }
 
         Ok(())
     }
 
     async fn remove_account(&self, provider: &ProviderId, account_id: &str) -> Result<()> {
         let key = provider.to_string();
-        sqlx::query("DELETE FROM accounts WHERE provider = ? AND account_id = ?")
-            .bind(&key)
-            .bind(account_id)
-            .execute(&self.pool)
+        account::Entity::delete_by_id((key, account_id.to_string()))
+            .exec(&self.db)
             .await?;
         Ok(())
     }
 
     async fn list_accounts(&self, provider: &ProviderId) -> Result<Vec<AccountInfo>> {
         let key = provider.to_string();
-        let rows: Vec<(String, Option<String>, bool)> = sqlx::query_as(
-            "SELECT account_id, label, is_active FROM accounts
-             WHERE provider = ? ORDER BY is_active DESC, account_id",
-        )
-        .bind(&key)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = account::Entity::find()
+            .filter(account::Column::Provider.eq(&key))
+            .order_by_desc(account::Column::IsActive)
+            .order_by_asc(account::Column::AccountId)
+            .all(&self.db)
+            .await?;
 
         Ok(rows
             .into_iter()
-            .map(|(account_id, label, is_active)| AccountInfo {
-                account_id,
-                label,
-                is_active,
+            .map(|m| AccountInfo {
+                account_id: m.account_id,
+                label: m.label,
+                is_active: m.is_active,
             })
             .collect())
     }
@@ -227,49 +152,49 @@ impl TokenStore for SqliteTokenStore {
         let key = provider.to_string();
 
         // Verify the target account exists.
-        let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM accounts WHERE provider = ? AND account_id = ?)",
-        )
-        .bind(&key)
-        .bind(account_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let target = account::Entity::find_by_id((key.clone(), account_id.to_string()))
+            .one(&self.db)
+            .await?;
 
-        if !exists {
+        if target.is_none() {
             return Err(ByokError::Storage(format!(
                 "account '{account_id}' not found for provider {provider}"
             )));
         }
 
-        // Deactivate all accounts for this provider, then activate the target.
-        sqlx::query("UPDATE accounts SET is_active = 0 WHERE provider = ?")
-            .bind(&key)
-            .execute(&self.pool)
-            .await?;
-        sqlx::query("UPDATE accounts SET is_active = 1 WHERE provider = ? AND account_id = ?")
-            .bind(&key)
-            .bind(account_id)
-            .execute(&self.pool)
-            .await?;
+        // Deactivate all accounts for this provider.
+        db_exec_raw(
+            &self.db,
+            "UPDATE accounts SET is_active = 0 WHERE provider = ?",
+            vec![key.clone().into()],
+        )
+        .await?;
+
+        // Activate the target.
+        db_exec_raw(
+            &self.db,
+            "UPDATE accounts SET is_active = 1 WHERE provider = ? AND account_id = ?",
+            vec![key.into(), account_id.to_string().into()],
+        )
+        .await?;
 
         Ok(())
     }
 
     async fn load_all_tokens(&self, provider: &ProviderId) -> Result<Vec<(String, OAuthToken)>> {
         let key = provider.to_string();
-        let rows: Vec<(String, String)> = sqlx::query_as(
-            "SELECT account_id, token_json FROM accounts
-             WHERE provider = ? ORDER BY is_active DESC, account_id",
-        )
-        .bind(&key)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = account::Entity::find()
+            .filter(account::Column::Provider.eq(&key))
+            .order_by_desc(account::Column::IsActive)
+            .order_by_asc(account::Column::AccountId)
+            .all(&self.db)
+            .await?;
 
         let mut result = Vec::with_capacity(rows.len());
-        for (account_id, json) in rows {
-            let token: OAuthToken =
-                serde_json::from_str(&json).map_err(|e| ByokError::Storage(e.to_string()))?;
-            result.push((account_id, token));
+        for m in rows {
+            let token: OAuthToken = serde_json::from_str(&m.token_json)
+                .map_err(|e| ByokError::Storage(e.to_string()))?;
+            result.push((m.account_id, token));
         }
         Ok(result)
     }
@@ -278,6 +203,7 @@ impl TokenStore for SqliteTokenStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sea_orm::{ConnectionTrait, Database, Statement};
 
     async fn mem() -> SqliteTokenStore {
         SqliteTokenStore::new("sqlite::memory:").await.unwrap()
@@ -387,7 +313,6 @@ mod tests {
         s.save_account(&ProviderId::Claude, "first", None, &OAuthToken::new("tok1"))
             .await
             .unwrap();
-        // First account should be active and loadable via `load()`.
         let loaded = s.load(&ProviderId::Claude).await.unwrap().unwrap();
         assert_eq!(loaded.access_token, "tok1");
     }
@@ -406,7 +331,6 @@ mod tests {
         )
         .await
         .unwrap();
-        // `load()` returns the active one (first).
         let loaded = s.load(&ProviderId::Claude).await.unwrap().unwrap();
         assert_eq!(loaded.access_token, "tok1");
     }
@@ -454,7 +378,6 @@ mod tests {
 
         let accounts = s.list_accounts(&ProviderId::Claude).await.unwrap();
         assert_eq!(accounts.len(), 2);
-        // First is active.
         assert!(accounts[0].is_active);
         assert_eq!(accounts[0].account_id, "work");
         assert_eq!(accounts[0].label.as_deref(), Some("Work"));
@@ -472,7 +395,6 @@ mod tests {
 
         let all = s.load_all_tokens(&ProviderId::Claude).await.unwrap();
         assert_eq!(all.len(), 2);
-        // Active account comes first.
         assert_eq!(all[0].0, "a");
     }
 
@@ -494,52 +416,51 @@ mod tests {
     #[tokio::test]
     async fn test_legacy_migration() {
         // Simulate a legacy database with a `tokens` table.
-        let opts = SqliteConnectOptions::from_str("sqlite::memory:")
-            .unwrap()
-            .create_if_missing(true);
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(opts)
-            .await
-            .unwrap();
-        sqlx::query(
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        db.execute(Statement::from_string(
+            db.get_database_backend(),
             "CREATE TABLE tokens (
                 provider   TEXT PRIMARY KEY,
                 token_json TEXT NOT NULL
-            )",
-        )
-        .execute(&pool)
+            )"
+            .to_string(),
+        ))
         .await
         .unwrap();
         let tok = OAuthToken::new("legacy-token");
         let json = serde_json::to_string(&tok).unwrap();
-        sqlx::query("INSERT INTO tokens (provider, token_json) VALUES ('claude', ?)")
-            .bind(&json)
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        // Run migration.
-        SqliteTokenStore::migrate(&pool).await.unwrap();
-
-        // Legacy table should be gone.
-        let legacy_exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='tokens')",
-        )
-        .fetch_one(&pool)
+        db.execute(Statement::from_sql_and_values(
+            db.get_database_backend(),
+            "INSERT INTO tokens (provider, token_json) VALUES ('claude', ?)",
+            vec![json.into()],
+        ))
         .await
         .unwrap();
+
+        // Run migration.
+        SqliteTokenStore::migrate(&db).await.unwrap();
+
+        // Legacy table should be gone.
+        let result = db
+            .query_one(Statement::from_string(
+                db.get_database_backend(),
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='tokens')"
+                    .to_string(),
+            ))
+            .await
+            .unwrap();
+        let legacy_exists = result
+            .and_then(|r| r.try_get_by_index::<bool>(0).ok())
+            .unwrap_or(true);
         assert!(!legacy_exists);
 
         // Data should be in the new table as active "default" account.
-        let row: Option<(String, String, bool)> = sqlx::query_as(
-            "SELECT account_id, token_json, is_active FROM accounts WHERE provider = 'claude'",
-        )
-        .fetch_optional(&pool)
-        .await
-        .unwrap();
-        let (account_id, _json, is_active) = row.unwrap();
-        assert_eq!(account_id, "default");
-        assert!(is_active);
+        let row = account::Entity::find_by_id(("claude".to_string(), "default".to_string()))
+            .one(&db)
+            .await
+            .unwrap();
+        let row = row.unwrap();
+        assert_eq!(row.account_id, "default");
+        assert!(row.is_active);
     }
 }

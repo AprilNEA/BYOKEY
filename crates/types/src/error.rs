@@ -66,6 +66,13 @@ impl From<sqlx::Error> for ByokError {
     }
 }
 
+#[cfg(feature = "sea-orm")]
+impl From<sea_orm::DbErr> for ByokError {
+    fn from(e: sea_orm::DbErr) -> Self {
+        Self::Storage(e.to_string())
+    }
+}
+
 impl ByokError {
     /// Returns `true` if the error is likely transient and worth retrying.
     #[must_use]

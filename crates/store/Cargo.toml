@@ -12,14 +12,16 @@ homepage.workspace   = true
 workspace = true
 
 [dependencies]
-byokey-types = { workspace = true, features = ["sqlx"] }
-sqlx.workspace = true
+byokey-types = { workspace = true, features = ["sea-orm"] }
+sea-orm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 async-trait.workspace = true
+tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
