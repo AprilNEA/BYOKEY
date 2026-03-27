@@ -2,9 +2,11 @@
 //!
 //! Requires additional `X-Msh-*` request headers for platform information.
 
-use crate::token::DeviceCodeResponse;
-use byokey_types::{ByokError, traits::Result};
+use async_trait::async_trait;
+use byokey_types::{ByokError, ProviderId, traits::Result};
 use rand::RngCore as _;
+
+use crate::token::DeviceCodeResponse;
 
 pub const SCOPES: &[&str] = &["openid", "offline_access"];
 pub const PLATFORM: &str = "mac";
@@ -104,6 +106,79 @@ pub fn parse_device_code_response(json: &serde_json::Value) -> Result<DeviceCode
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(5),
     })
+}
+
+// ── DeviceCodeFlow implementation ─────────────────────────────────────────────
+
+use crate::credentials::OAuthCredentials;
+use crate::flow::device_code::{self, DeviceCodeFlow, PollResult};
+use crate::token::DeviceCodeResponse as DcResp;
+
+/// Kimi device-code provider (with `X-Msh-*` headers).
+pub struct Kimi;
+
+#[async_trait]
+impl DeviceCodeFlow for Kimi {
+    fn provider_id(&self) -> ProviderId {
+        ProviderId::Kimi
+    }
+    fn provider_name(&self) -> &'static str {
+        "kimi"
+    }
+
+    async fn request_device_code(
+        &self,
+        http: &rquest::Client,
+        creds: &OAuthCredentials,
+    ) -> Result<DcResp> {
+        let device_code_url = creds
+            .device_code_url
+            .as_deref()
+            .ok_or_else(|| ByokError::Auth("kimi credentials missing device_code_url".into()))?;
+        let scope_str = SCOPES.join(" ");
+        let params = build_device_code_params(&creds.client_id, &scope_str);
+        let headers = x_msh_headers();
+        let mut req = http
+            .post(device_code_url)
+            .header("Accept", "application/json")
+            .form(&params);
+        for (name, value) in &headers {
+            req = req.header(*name, value.as_str());
+        }
+        let resp = req.send().await?;
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ByokError::Auth(format!("failed to parse device code response: {e}")))?;
+        parse_device_code_response(&json)
+    }
+
+    async fn poll_token(
+        &self,
+        http: &rquest::Client,
+        creds: &OAuthCredentials,
+        device_code: &str,
+    ) -> Result<PollResult> {
+        let token_url = creds
+            .token_url
+            .as_deref()
+            .ok_or_else(|| ByokError::Auth("kimi credentials missing token_url".into()))?;
+        let params = build_token_poll_params(&creds.client_id, device_code);
+        let headers = x_msh_headers();
+        let mut req = http
+            .post(token_url)
+            .header("Accept", "application/json")
+            .form(&params);
+        for (name, value) in &headers {
+            req = req.header(*name, value.as_str());
+        }
+        let resp = req.send().await?;
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
+        device_code::parse_poll_response(&json)
+    }
 }
 
 #[cfg(test)]

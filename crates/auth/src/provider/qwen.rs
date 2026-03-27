@@ -3,8 +3,10 @@
 //! The device code request also includes a PKCE `code_challenge`.
 //! Slow-down multiplier: 1.5x.
 
+use async_trait::async_trait;
+use byokey_types::{ByokError, ProviderId, traits::Result};
+
 use crate::token::DeviceCodeResponse;
-use byokey_types::{ByokError, traits::Result};
 
 pub const SCOPES: &[&str] = &["openid", "profile", "email", "model.completion"];
 pub const SLOW_DOWN_MULTIPLIER: f64 = 1.5;
@@ -69,6 +71,95 @@ pub fn parse_device_code_response(json: &serde_json::Value) -> Result<DeviceCode
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(5),
     })
+}
+
+// ── DeviceCodeFlow implementation ─────────────────────────────────────────────
+
+use crate::credentials::OAuthCredentials;
+use crate::flow::device_code::{self, DeviceCodeFlow, PollResult};
+use crate::pkce;
+use crate::token::DeviceCodeResponse as DcResp;
+
+/// Qwen device-code provider (with PKCE).
+pub struct Qwen {
+    verifier: String,
+}
+
+impl Default for Qwen {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Qwen {
+    /// Creates a new Qwen provider with a fresh PKCE pair.
+    #[must_use]
+    pub fn new() -> Self {
+        let (verifier, _) = pkce::generate_pkce();
+        Self { verifier }
+    }
+}
+
+#[async_trait]
+impl DeviceCodeFlow for Qwen {
+    fn provider_id(&self) -> ProviderId {
+        ProviderId::Qwen
+    }
+    fn provider_name(&self) -> &'static str {
+        "qwen"
+    }
+    fn apply_slow_down(&self, current_interval: f64) -> f64 {
+        current_interval * SLOW_DOWN_MULTIPLIER
+    }
+
+    async fn request_device_code(
+        &self,
+        http: &rquest::Client,
+        creds: &OAuthCredentials,
+    ) -> Result<DcResp> {
+        let device_code_url = creds
+            .device_code_url
+            .as_deref()
+            .ok_or_else(|| ByokError::Auth("qwen credentials missing device_code_url".into()))?;
+        let challenge = pkce::challenge_for(&self.verifier);
+        let scope_str = SCOPES.join(" ");
+        let params = build_device_code_params(&creds.client_id, &challenge, &scope_str);
+        let resp = http
+            .post(device_code_url)
+            .header("Accept", "application/json")
+            .form(&params)
+            .send()
+            .await?;
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ByokError::Auth(format!("failed to parse device code response: {e}")))?;
+        parse_device_code_response(&json)
+    }
+
+    async fn poll_token(
+        &self,
+        http: &rquest::Client,
+        creds: &OAuthCredentials,
+        device_code: &str,
+    ) -> Result<PollResult> {
+        let token_url = creds
+            .token_url
+            .as_deref()
+            .ok_or_else(|| ByokError::Auth("qwen credentials missing token_url".into()))?;
+        let params = build_token_poll_params(&creds.client_id, device_code, &self.verifier);
+        let resp = http
+            .post(token_url)
+            .header("Accept", "application/json")
+            .form(&params)
+            .send()
+            .await?;
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
+        device_code::parse_poll_response(&json)
+    }
 }
 
 #[cfg(test)]

@@ -1,263 +1,116 @@
-//! Device Authorization Grant login flows.
+//! Device Authorization Grant login flow.
 //!
-//! Handles providers that use a device code + polling pattern:
-//! Copilot, Qwen, Kimi.
+//! Defines the [`DeviceCodeFlow`] trait that each device-code provider implements,
+//! and a generic [`run`] function that orchestrates the common polling loop.
 
-use byokey_types::{ByokError, ProviderId, traits::Result};
+use async_trait::async_trait;
+use byokey_types::{ByokError, OAuthToken, ProviderId, traits::Result};
 use std::time::Duration;
 
 use super::{open_browser, save_login_token};
-use crate::{
-    AuthManager, credentials, pkce,
-    provider::{copilot, kimi, qwen},
-    token,
-};
+use crate::{AuthManager, credentials::OAuthCredentials, token, token::DeviceCodeResponse};
 
-// ── Copilot device code flow ──────────────────────────────────────────────────
+/// Result of a single token poll attempt.
+pub enum PollResult {
+    /// Token exchange succeeded.
+    Success(OAuthToken),
+    /// Authorization is still pending — keep polling.
+    Pending,
+    /// Server asked to slow down — increase interval.
+    SlowDown,
+}
 
-pub async fn login_copilot(
-    auth: &AuthManager,
-    http: &rquest::Client,
-    account: Option<&str>,
-) -> Result<()> {
-    let creds = credentials::fetch("copilot", http).await?;
-    let device_code_url = creds
-        .device_code_url
-        .as_deref()
-        .ok_or_else(|| ByokError::Auth("copilot credentials missing device_code_url".into()))?;
-    let token_url = creds
-        .token_url
-        .as_deref()
-        .ok_or_else(|| ByokError::Auth("copilot credentials missing token_url".into()))?;
-    let scope_str = copilot::SCOPES.join(" ");
-    let init_params = [
-        ("client_id", creds.client_id.as_str()),
-        ("scope", scope_str.as_str()),
-    ];
+/// Provider-specific behavior for the Device Authorization Grant flow.
+#[async_trait]
+pub trait DeviceCodeFlow: Send + Sync {
+    /// The provider identifier for token storage.
+    fn provider_id(&self) -> ProviderId;
 
-    let resp = http
-        .post(device_code_url)
-        .header("Accept", "application/json")
-        .form(&init_params)
-        .send()
-        .await?;
+    /// Provider name used for credential lookup from CDN (e.g. `"copilot"`).
+    fn provider_name(&self) -> &'static str;
 
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| ByokError::Auth(format!("failed to parse device code response: {e}")))?;
+    /// Send the device code request and return the parsed response.
+    async fn request_device_code(
+        &self,
+        http: &rquest::Client,
+        creds: &OAuthCredentials,
+    ) -> Result<DeviceCodeResponse>;
 
-    let dc = copilot::parse_device_code_response(&json)?;
+    /// Send a single token poll request.
+    async fn poll_token(
+        &self,
+        http: &rquest::Client,
+        creds: &OAuthCredentials,
+        device_code: &str,
+    ) -> Result<PollResult>;
 
-    tracing::info!(uri = %dc.verification_uri, code = %dc.user_code, "visit URL and enter verification code");
-    let _ = open::that(&dc.verification_uri);
-
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(dc.expires_in);
-    let mut interval = dc.interval;
-    let device_code = dc.device_code.clone();
-
-    loop {
-        tokio::time::sleep(Duration::from_secs(interval)).await;
-
-        if tokio::time::Instant::now() >= deadline {
-            return Err(ByokError::Auth("device code expired".into()));
-        }
-
-        let token_params = [
-            ("client_id", creds.client_id.as_str()),
-            ("device_code", device_code.as_str()),
-            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-        ];
-
-        let resp = http
-            .post(token_url)
-            .header("Accept", "application/json")
-            .form(&token_params)
-            .send()
-            .await?;
-
-        let json: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
-
-        match json.get("error").and_then(|v| v.as_str()) {
-            Some("authorization_pending") => continue,
-            Some("slow_down") => {
-                interval += 5;
-                continue;
-            }
-            Some(e) => return Err(ByokError::Auth(format!("device flow error: {e}"))),
-            None => {}
-        }
-
-        let tok = token::parse_token_response(&json)?;
-        save_login_token(auth, &ProviderId::Copilot, tok, account).await?;
-        tracing::info!("Copilot login successful");
-        return Ok(());
+    /// Adjust the polling interval on `slow_down`. Default: add 5 seconds.
+    fn apply_slow_down(&self, current_interval: f64) -> f64 {
+        current_interval + 5.0
     }
 }
 
-// ── Qwen device code + PKCE flow ──────────────────────────────────────────────
-
-pub async fn login_qwen(
+/// Run the Device Code flow for any provider implementing [`DeviceCodeFlow`].
+///
+/// # Errors
+///
+/// Returns an error on network failure, device code expiration, or token parse failure.
+#[allow(clippy::cast_precision_loss)]
+pub async fn run<P: DeviceCodeFlow>(
+    provider: &P,
     auth: &AuthManager,
     http: &rquest::Client,
     account: Option<&str>,
 ) -> Result<()> {
-    let creds = credentials::fetch("qwen", http).await?;
-    let device_code_url = creds
-        .device_code_url
-        .as_deref()
-        .ok_or_else(|| ByokError::Auth("qwen credentials missing device_code_url".into()))?;
-    let token_url = creds
-        .token_url
-        .as_deref()
-        .ok_or_else(|| ByokError::Auth("qwen credentials missing token_url".into()))?;
-    let (verifier, challenge) = pkce::generate_pkce();
-    let scope_str = qwen::SCOPES.join(" ");
-    let device_params = qwen::build_device_code_params(&creds.client_id, &challenge, &scope_str);
+    let creds = crate::credentials::fetch(provider.provider_name(), http).await?;
+    let dc = provider.request_device_code(http, &creds).await?;
 
-    let resp = http
-        .post(device_code_url)
-        .header("Accept", "application/json")
-        .form(&device_params)
-        .send()
-        .await?;
-
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| ByokError::Auth(format!("failed to parse device code response: {e}")))?;
-
-    let dc = qwen::parse_device_code_response(&json)?;
-
-    tracing::info!(uri = %dc.verification_uri, code = %dc.user_code, "visit URL and enter verification code");
-    let _ = open::that(&dc.verification_uri);
-
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(dc.expires_in);
-    #[allow(clippy::cast_precision_loss)]
-    let mut interval_secs = dc.interval as f64;
-    let device_code = dc.device_code.clone();
-
-    loop {
-        tokio::time::sleep(Duration::from_secs_f64(interval_secs)).await;
-
-        if tokio::time::Instant::now() >= deadline {
-            return Err(ByokError::Auth("device code expired".into()));
-        }
-
-        let token_params = qwen::build_token_poll_params(&creds.client_id, &device_code, &verifier);
-        let resp = http
-            .post(token_url)
-            .header("Accept", "application/json")
-            .form(&token_params)
-            .send()
-            .await?;
-
-        let json: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
-
-        match json.get("error").and_then(|v| v.as_str()) {
-            Some("authorization_pending") => continue,
-            Some("slow_down") => {
-                interval_secs *= qwen::SLOW_DOWN_MULTIPLIER;
-                continue;
-            }
-            Some(e) => return Err(ByokError::Auth(format!("device flow error: {e}"))),
-            None => {}
-        }
-
-        let tok = token::parse_token_response(&json)?;
-        save_login_token(auth, &ProviderId::Qwen, tok, account).await?;
-        tracing::info!("Qwen login successful");
-        return Ok(());
-    }
-}
-
-// ── Kimi device code flow ─────────────────────────────────────────────────────
-
-pub async fn login_kimi(
-    auth: &AuthManager,
-    http: &rquest::Client,
-    account: Option<&str>,
-) -> Result<()> {
-    let creds = credentials::fetch("kimi", http).await?;
-    let device_code_url = creds
-        .device_code_url
-        .as_deref()
-        .ok_or_else(|| ByokError::Auth("kimi credentials missing device_code_url".into()))?;
-    let token_url = creds
-        .token_url
-        .as_deref()
-        .ok_or_else(|| ByokError::Auth("kimi credentials missing token_url".into()))?;
-    let scope_str = kimi::SCOPES.join(" ");
-    let device_params = kimi::build_device_code_params(&creds.client_id, &scope_str);
-    let msh_headers = kimi::x_msh_headers();
-
-    let mut req = http
-        .post(device_code_url)
-        .header("Accept", "application/json")
-        .form(&device_params);
-    for (name, value) in &msh_headers {
-        req = req.header(*name, value.as_str());
-    }
-
-    let resp = req.send().await?;
-
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| ByokError::Auth(format!("failed to parse device code response: {e}")))?;
-
-    let dc = kimi::parse_device_code_response(&json)?;
-
-    tracing::info!(uri = %dc.verification_uri, code = %dc.user_code, "visit URL and enter verification code");
+    tracing::info!(
+        uri = %dc.verification_uri,
+        code = %dc.user_code,
+        "visit URL and enter verification code"
+    );
     open_browser(&dc.verification_uri);
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(dc.expires_in);
-    let mut interval = dc.interval;
-    let device_code = dc.device_code.clone();
-    let poll_headers = kimi::x_msh_headers();
+    let mut interval = dc.interval as f64;
 
     loop {
-        tokio::time::sleep(Duration::from_secs(interval)).await;
+        tokio::time::sleep(Duration::from_secs_f64(interval)).await;
 
         if tokio::time::Instant::now() >= deadline {
             return Err(ByokError::Auth("device code expired".into()));
         }
 
-        let token_params = kimi::build_token_poll_params(&creds.client_id, &device_code);
-        let mut req = http
-            .post(token_url)
-            .header("Accept", "application/json")
-            .form(&token_params);
-        for (name, value) in &poll_headers {
-            req = req.header(*name, value.as_str());
-        }
-
-        let resp = req.send().await?;
-
-        let json: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
-
-        match json.get("error").and_then(|v| v.as_str()) {
-            Some("authorization_pending") => continue,
-            Some("slow_down") => {
-                interval += 5;
-                continue;
+        match provider.poll_token(http, &creds, &dc.device_code).await? {
+            PollResult::Success(tok) => {
+                save_login_token(auth, &provider.provider_id(), tok, account).await?;
+                tracing::info!(provider = %provider.provider_id(), "login successful");
+                return Ok(());
             }
-            Some(e) => return Err(ByokError::Auth(format!("device flow error: {e}"))),
-            None => {}
+            PollResult::Pending => {}
+            PollResult::SlowDown => {
+                interval = provider.apply_slow_down(interval);
+            }
         }
+    }
+}
 
-        let tok = token::parse_token_response(&json)?;
-        save_login_token(auth, &ProviderId::Kimi, tok, account).await?;
-        tracing::info!("Kimi login successful");
-        return Ok(());
+/// Parse a token poll response into a [`PollResult`].
+///
+/// Shared helper for [`DeviceCodeFlow::poll_token`] implementations.
+///
+/// # Errors
+///
+/// Returns an error if the server returns a terminal error or the token cannot be parsed.
+pub fn parse_poll_response(json: &serde_json::Value) -> Result<PollResult> {
+    match json.get("error").and_then(|v| v.as_str()) {
+        Some("authorization_pending") => Ok(PollResult::Pending),
+        Some("slow_down") => Ok(PollResult::SlowDown),
+        Some(e) => Err(ByokError::Auth(format!("device flow error: {e}"))),
+        None => {
+            let tok = token::parse_token_response(json)?;
+            Ok(PollResult::Success(tok))
+        }
     }
 }

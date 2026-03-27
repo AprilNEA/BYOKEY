@@ -45,6 +45,55 @@ pub fn token_form_params(
     ]
 }
 
+// ── AuthCodeFlow implementation ───────────────────────────────────────────────
+
+use async_trait::async_trait;
+use byokey_types::{ByokError, OAuthToken, ProviderId, traits::Result};
+
+use crate::credentials::OAuthCredentials;
+use crate::flow::auth_code::{self, AuthCodeFlow};
+
+/// Gemini auth-code provider.
+pub struct Gemini;
+
+#[async_trait]
+impl AuthCodeFlow for Gemini {
+    fn provider_id(&self) -> ProviderId {
+        ProviderId::Gemini
+    }
+    fn provider_name(&self) -> &'static str {
+        "gemini"
+    }
+    fn callback_port(&self) -> u16 {
+        CALLBACK_PORT
+    }
+
+    fn build_auth_url(&self, client_id: &str, challenge: &str, state: &str) -> String {
+        build_auth_url(client_id, challenge, state)
+    }
+
+    async fn exchange_code(
+        &self,
+        http: &rquest::Client,
+        creds: &OAuthCredentials,
+        code: &str,
+        verifier: &str,
+        _state: &str,
+    ) -> Result<OAuthToken> {
+        let token_url = creds
+            .token_url
+            .as_deref()
+            .ok_or_else(|| ByokError::Auth("gemini credentials missing token_url".into()))?;
+        let client_secret = creds
+            .client_secret
+            .as_deref()
+            .ok_or_else(|| ByokError::Auth("gemini credentials missing client_secret".into()))?;
+        let params = token_form_params(&creds.client_id, client_secret, code, verifier);
+        let resp = http.post(token_url).form(&params).send().await?;
+        auth_code::send_and_parse_token(resp).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

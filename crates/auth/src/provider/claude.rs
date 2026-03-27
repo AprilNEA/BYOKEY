@@ -43,6 +43,56 @@ pub fn build_token_request(
     })
 }
 
+// ── AuthCodeFlow implementation ───────────────────────────────────────────────
+
+use async_trait::async_trait;
+use byokey_types::{ByokError, OAuthToken, ProviderId, traits::Result};
+
+use crate::credentials::OAuthCredentials;
+use crate::flow::auth_code::{self, AuthCodeFlow};
+
+/// Claude auth-code provider.
+pub struct Claude;
+
+#[async_trait]
+impl AuthCodeFlow for Claude {
+    fn provider_id(&self) -> ProviderId {
+        ProviderId::Claude
+    }
+    fn provider_name(&self) -> &'static str {
+        "claude"
+    }
+    fn callback_port(&self) -> u16 {
+        CALLBACK_PORT
+    }
+
+    fn build_auth_url(&self, client_id: &str, challenge: &str, state: &str) -> String {
+        build_auth_url(client_id, challenge, state)
+    }
+
+    async fn exchange_code(
+        &self,
+        http: &rquest::Client,
+        creds: &OAuthCredentials,
+        code: &str,
+        verifier: &str,
+        state: &str,
+    ) -> Result<OAuthToken> {
+        let token_url = creds
+            .token_url
+            .as_deref()
+            .ok_or_else(|| ByokError::Auth("claude credentials missing token_url".into()))?;
+        let body = build_token_request(&creds.client_id, code, verifier, state);
+        let resp = http
+            .post(token_url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+        auth_code::send_and_parse_token(resp).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

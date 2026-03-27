@@ -4,8 +4,9 @@
 //! Callback port: 11451.
 //! Provides access to GLM and Kimi K2 models.
 
+use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use byokey_types::{ByokError, traits::Result};
+use byokey_types::{ByokError, OAuthToken, ProviderId, traits::Result};
 
 /// Local callback port for the OAuth redirect.
 pub const CALLBACK_PORT: u16 = 11451;
@@ -76,6 +77,71 @@ pub async fn fetch_api_key(oauth_token: &str, http: &rquest::Client) -> Result<S
         .filter(|s| !s.is_empty())
         .map(String::from)
         .ok_or_else(|| ByokError::Auth("iflow: missing apiKey in userinfo response".into()))
+}
+
+// ── AuthCodeFlow implementation ───────────────────────────────────────────────
+
+use crate::credentials::OAuthCredentials;
+use crate::flow::auth_code::{self, AuthCodeFlow};
+
+/// iFlow auth-code provider (no PKCE, Basic Auth, API key exchange).
+pub struct IFlow;
+
+#[async_trait]
+impl AuthCodeFlow for IFlow {
+    fn provider_id(&self) -> ProviderId {
+        ProviderId::IFlow
+    }
+    fn provider_name(&self) -> &'static str {
+        "iflow"
+    }
+    fn callback_port(&self) -> u16 {
+        CALLBACK_PORT
+    }
+    fn uses_pkce(&self) -> bool {
+        false
+    }
+
+    fn build_auth_url(&self, client_id: &str, _challenge: &str, state: &str) -> String {
+        build_auth_url(client_id, state)
+    }
+
+    async fn exchange_code(
+        &self,
+        http: &rquest::Client,
+        creds: &OAuthCredentials,
+        code: &str,
+        _verifier: &str,
+        _state: &str,
+    ) -> Result<OAuthToken> {
+        let token_url = creds
+            .token_url
+            .as_deref()
+            .ok_or_else(|| ByokError::Auth("iflow credentials missing token_url".into()))?;
+        let client_secret = creds
+            .client_secret
+            .as_deref()
+            .ok_or_else(|| ByokError::Auth("iflow credentials missing client_secret".into()))?;
+        let params = token_form_params(&creds.client_id, code);
+        let resp = http
+            .post(token_url)
+            .header(
+                "Authorization",
+                basic_auth_header(&creds.client_id, client_secret),
+            )
+            .form(&params)
+            .send()
+            .await?;
+        auth_code::send_and_parse_token(resp).await
+    }
+
+    async fn post_process(&self, token: OAuthToken, http: &rquest::Client) -> Result<OAuthToken> {
+        let api_key = fetch_api_key(&token.access_token, http).await?;
+        Ok(OAuthToken {
+            access_token: api_key,
+            ..token
+        })
+    }
 }
 
 #[cfg(test)]

@@ -15,6 +15,13 @@ pub fn generate_pkce() -> (String, String) {
     (verifier, challenge)
 }
 
+/// Compute the S256 challenge for an existing `code_verifier`.
+#[must_use]
+pub fn challenge_for(verifier: &str) -> String {
+    let digest = Sha256::digest(verifier.as_bytes());
+    URL_SAFE_NO_PAD.encode(digest.as_slice())
+}
+
 /// Generate a random `state` parameter (hex-encoded, 32 lowercase hex chars, matching the vibeproxy Go implementation).
 #[must_use]
 pub fn random_state() -> String {

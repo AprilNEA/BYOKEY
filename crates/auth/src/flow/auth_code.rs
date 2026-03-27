@@ -1,245 +1,109 @@
-//! Authorization Code + PKCE login flows.
+//! Authorization Code + PKCE login flow.
 //!
-//! Handles providers that use a browser-based redirect with a local callback
-//! server: Claude, Codex, Gemini, Antigravity, iFlow.
+//! Defines the [`AuthCodeFlow`] trait that each auth-code provider implements,
+//! and a generic [`run`] function that orchestrates the common flow:
+//! fetch credentials → PKCE → browser redirect → callback → code exchange → save.
 
+use async_trait::async_trait;
 use byokey_types::{ByokError, OAuthToken, ProviderId, traits::Result};
 
 use super::{open_browser, save_login_token};
-use crate::{
-    AuthManager, callback, credentials, pkce,
-    provider::{antigravity, claude, codex, gemini, iflow},
-    token,
-};
+use crate::{AuthManager, callback, credentials::OAuthCredentials, pkce, token};
 
-// ── Claude PKCE flow ──────────────────────────────────────────────────────────
+/// Provider-specific behavior for the Authorization Code + PKCE OAuth flow.
+#[async_trait]
+pub trait AuthCodeFlow: Send + Sync {
+    /// The provider identifier for token storage.
+    fn provider_id(&self) -> ProviderId;
 
-pub async fn login_claude(
-    auth: &AuthManager,
-    http: &rquest::Client,
-    account: Option<&str>,
-) -> Result<()> {
-    let creds = credentials::fetch("claude", http).await?;
-    let token_url = creds
-        .token_url
-        .as_deref()
-        .ok_or_else(|| ByokError::Auth("claude credentials missing token_url".into()))?;
-    let (verifier, challenge) = pkce::generate_pkce();
-    let state = pkce::random_state();
-    let auth_url = claude::build_auth_url(&creds.client_id, &challenge, &state);
+    /// Provider name used for credential lookup from CDN (e.g. `"claude"`).
+    fn provider_name(&self) -> &'static str;
 
-    let listener = callback::bind_callback(claude::CALLBACK_PORT).await?;
-    open_browser(&auth_url);
+    /// Local port for the OAuth callback redirect.
+    fn callback_port(&self) -> u16;
 
-    let params = callback::accept_callback(listener).await?;
-    verify_state(&params, &state)?;
+    /// Whether this flow uses PKCE. Default: `true`.
+    fn uses_pkce(&self) -> bool {
+        true
+    }
 
-    let code = extract_code(&params)?;
-    let body = claude::build_token_request(&creds.client_id, code, &verifier, &state);
-    let resp = http
-        .post(token_url)
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await?;
+    /// Build the authorization URL opened in the user's browser.
+    fn build_auth_url(&self, client_id: &str, pkce_challenge: &str, state: &str) -> String;
 
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
+    /// Exchange the authorization code for an access token.
+    ///
+    /// Each provider builds its own HTTP request (JSON vs form, headers, etc.)
+    /// and parses the response.
+    async fn exchange_code(
+        &self,
+        http: &rquest::Client,
+        creds: &OAuthCredentials,
+        code: &str,
+        pkce_verifier: &str,
+        state: &str,
+    ) -> Result<OAuthToken>;
 
-    let tok = token::parse_token_response(&json)?;
-    save_login_token(auth, &ProviderId::Claude, tok, account).await?;
-    tracing::info!("Claude login successful");
-    Ok(())
+    /// Post-process the token after exchange (e.g. iFlow exchanges for an API key).
+    /// Default: identity.
+    async fn post_process(&self, token: OAuthToken, _http: &rquest::Client) -> Result<OAuthToken> {
+        Ok(token)
+    }
 }
 
-// ── Codex auth code flow ──────────────────────────────────────────────────────
-
-pub async fn login_codex(
+/// Run the Authorization Code flow for any provider implementing [`AuthCodeFlow`].
+///
+/// # Errors
+///
+/// Returns an error on network failure, state mismatch, missing callback parameters,
+/// token parse failure, or if the underlying store fails to save.
+pub async fn run<P: AuthCodeFlow>(
+    provider: &P,
     auth: &AuthManager,
     http: &rquest::Client,
     account: Option<&str>,
 ) -> Result<()> {
-    let creds = credentials::fetch("codex", http).await?;
-    let token_url = creds
-        .token_url
-        .as_deref()
-        .ok_or_else(|| ByokError::Auth("codex credentials missing token_url".into()))?;
-    let (verifier, challenge) = pkce::generate_pkce();
-    let state = pkce::random_state();
-    let auth_url = codex::build_auth_url(&creds.client_id, &challenge, &state);
+    let creds = crate::credentials::fetch(provider.provider_name(), http).await?;
 
-    open_browser(&auth_url);
-
-    let params = callback::wait_for_callback(codex::CALLBACK_PORT).await?;
-    verify_state(&params, &state)?;
-
-    let code = extract_code(&params)?;
-    let token_params = codex::token_form_params(&creds.client_id, code, &verifier);
-    let resp = http
-        .post(token_url)
-        .header("Accept", "application/json")
-        .form(&token_params)
-        .send()
-        .await?;
-
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
-
-    let tok = token::parse_token_response(&json)?;
-    save_login_token(auth, &ProviderId::Codex, tok, account).await?;
-    tracing::info!("Codex login successful");
-    Ok(())
-}
-
-// ── Gemini PKCE flow ──────────────────────────────────────────────────────────
-
-pub async fn login_gemini(
-    auth: &AuthManager,
-    http: &rquest::Client,
-    account: Option<&str>,
-) -> Result<()> {
-    let creds = credentials::fetch("gemini", http).await?;
-    let token_url = creds
-        .token_url
-        .as_deref()
-        .ok_or_else(|| ByokError::Auth("gemini credentials missing token_url".into()))?;
-    let client_secret = creds
-        .client_secret
-        .as_deref()
-        .ok_or_else(|| ByokError::Auth("gemini credentials missing client_secret".into()))?;
-
-    let (verifier, challenge) = pkce::generate_pkce();
-    let state = pkce::random_state();
-    let auth_url = gemini::build_auth_url(&creds.client_id, &challenge, &state);
-
-    let listener = callback::bind_callback(gemini::CALLBACK_PORT).await?;
-    open_browser(&auth_url);
-
-    let params = callback::accept_callback(listener).await?;
-    verify_state(&params, &state)?;
-
-    let code = extract_code(&params)?;
-    let token_params = gemini::token_form_params(&creds.client_id, client_secret, code, &verifier);
-    let resp = http.post(token_url).form(&token_params).send().await?;
-
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
-
-    let tok = token::parse_token_response(&json)?;
-    save_login_token(auth, &ProviderId::Gemini, tok, account).await?;
-    tracing::info!("Gemini login successful");
-    Ok(())
-}
-
-// ── Antigravity (Google Cloud Code Assist) PKCE flow ─────────────────────────
-
-pub async fn login_antigravity(
-    auth: &AuthManager,
-    http: &rquest::Client,
-    account: Option<&str>,
-) -> Result<()> {
-    let creds = credentials::fetch("antigravity", http).await?;
-    let token_url = creds
-        .token_url
-        .as_deref()
-        .ok_or_else(|| ByokError::Auth("antigravity credentials missing token_url".into()))?;
-    let client_secret = creds
-        .client_secret
-        .as_deref()
-        .ok_or_else(|| ByokError::Auth("antigravity credentials missing client_secret".into()))?;
-
-    let (verifier, challenge) = pkce::generate_pkce();
-    let state = pkce::random_state();
-    let auth_url = antigravity::build_auth_url(&creds.client_id, &challenge, &state);
-
-    let listener = callback::bind_callback(antigravity::CALLBACK_PORT).await?;
-    open_browser(&auth_url);
-
-    let params = callback::accept_callback(listener).await?;
-    verify_state(&params, &state)?;
-
-    let code = extract_code(&params)?;
-    let token_params =
-        antigravity::token_form_params(&creds.client_id, client_secret, code, &verifier);
-    let resp = http.post(token_url).form(&token_params).send().await?;
-
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
-
-    let tok = token::parse_token_response(&json)?;
-    save_login_token(auth, &ProviderId::Antigravity, tok, account).await?;
-    tracing::info!("Antigravity login successful");
-    Ok(())
-}
-
-// ── iFlow (Z.ai / GLM) auth code flow ────────────────────────────────────────
-
-pub async fn login_iflow(
-    auth: &AuthManager,
-    http: &rquest::Client,
-    account: Option<&str>,
-) -> Result<()> {
-    let creds = credentials::fetch("iflow", http).await?;
-    let token_url = creds
-        .token_url
-        .as_deref()
-        .ok_or_else(|| ByokError::Auth("iflow credentials missing token_url".into()))?;
-    let client_secret = creds
-        .client_secret
-        .as_deref()
-        .ok_or_else(|| ByokError::Auth("iflow credentials missing client_secret".into()))?;
-
-    let state = pkce::random_state();
-    let auth_url = iflow::build_auth_url(&creds.client_id, &state);
-
-    let listener = callback::bind_callback(iflow::CALLBACK_PORT).await?;
-    open_browser(&auth_url);
-
-    let params = callback::accept_callback(listener).await?;
-    verify_state(&params, &state)?;
-
-    let code = extract_code(&params)?;
-    let token_params = iflow::token_form_params(&creds.client_id, code);
-    let resp = http
-        .post(token_url)
-        .header(
-            "Authorization",
-            iflow::basic_auth_header(&creds.client_id, client_secret),
-        )
-        .form(&token_params)
-        .send()
-        .await?;
-
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
-
-    let tok = token::parse_token_response(&json)?;
-
-    // Exchange the OAuth access_token for an iFlow API key and store it as
-    // the token's access_token so the executor can use it directly.
-    let oauth_access = tok.access_token.clone();
-    let api_key = iflow::fetch_api_key(&oauth_access, http).await?;
-    let tok = OAuthToken {
-        access_token: api_key,
-        ..tok
+    let (verifier, challenge) = if provider.uses_pkce() {
+        pkce::generate_pkce()
+    } else {
+        (String::new(), String::new())
     };
+    let state = pkce::random_state();
+    let auth_url = provider.build_auth_url(&creds.client_id, &challenge, &state);
 
-    save_login_token(auth, &ProviderId::IFlow, tok, account).await?;
-    tracing::info!("iFlow (Z.ai/GLM) login successful");
+    let listener = callback::bind_callback(provider.callback_port()).await?;
+    open_browser(&auth_url);
+    let params = callback::accept_callback(listener).await?;
+
+    verify_state(&params, &state)?;
+    let code = extract_code(&params)?;
+
+    let tok = provider
+        .exchange_code(http, &creds, code, &verifier, &state)
+        .await?;
+    let tok = provider.post_process(tok, http).await?;
+
+    save_login_token(auth, &provider.provider_id(), tok, account).await?;
+    tracing::info!(provider = %provider.provider_id(), "login successful");
     Ok(())
 }
 
-// ── Shared helpers ────────────────────────────────────────────────────────────
+/// Send an HTTP response and parse it as a standard OAuth token JSON.
+///
+/// Shared helper for [`AuthCodeFlow::exchange_code`] implementations.
+///
+/// # Errors
+///
+/// Returns an error if the response body cannot be parsed as JSON or is missing
+/// the `access_token` field.
+pub async fn send_and_parse_token(resp: rquest::Response) -> Result<OAuthToken> {
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
+    token::parse_token_response(&json)
+}
 
 fn verify_state(params: &std::collections::HashMap<String, String>, expected: &str) -> Result<()> {
     let received = params.get("state").map_or("", String::as_str);

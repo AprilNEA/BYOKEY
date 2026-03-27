@@ -1,14 +1,16 @@
 //! Interactive login flow dispatcher for all supported providers.
 //!
-//! Delegates to [`auth_code`] for Authorization Code + PKCE flows and
-//! [`device_code`] for Device Authorization Grant flows.
+//! Delegates to [`auth_code::run`] or [`device_code::run`] via the
+//! [`AuthCodeFlow`](auth_code::AuthCodeFlow) and
+//! [`DeviceCodeFlow`](device_code::DeviceCodeFlow) traits.
 
-mod auth_code;
-mod device_code;
+pub mod auth_code;
+pub mod device_code;
 
 use byokey_types::{ByokError, OAuthToken, ProviderId, traits::Result};
 
 use crate::AuthManager;
+use crate::provider::{antigravity, claude, codex, copilot, gemini, iflow, kimi, qwen};
 
 /// Run the full interactive login flow for the given provider.
 ///
@@ -22,14 +24,18 @@ use crate::AuthManager;
 pub async fn login(provider: &ProviderId, auth: &AuthManager, account: Option<&str>) -> Result<()> {
     let http = rquest::Client::new();
     match provider {
-        ProviderId::Claude => auth_code::login_claude(auth, &http, account).await,
-        ProviderId::Codex => auth_code::login_codex(auth, &http, account).await,
-        ProviderId::Gemini => auth_code::login_gemini(auth, &http, account).await,
-        ProviderId::Antigravity => auth_code::login_antigravity(auth, &http, account).await,
-        ProviderId::IFlow => auth_code::login_iflow(auth, &http, account).await,
-        ProviderId::Copilot => device_code::login_copilot(auth, &http, account).await,
-        ProviderId::Qwen => device_code::login_qwen(auth, &http, account).await,
-        ProviderId::Kimi => device_code::login_kimi(auth, &http, account).await,
+        // Authorization Code + PKCE flows
+        ProviderId::Claude => auth_code::run(&claude::Claude, auth, &http, account).await,
+        ProviderId::Codex => auth_code::run(&codex::Codex, auth, &http, account).await,
+        ProviderId::Gemini => auth_code::run(&gemini::Gemini, auth, &http, account).await,
+        ProviderId::Antigravity => {
+            auth_code::run(&antigravity::Antigravity, auth, &http, account).await
+        }
+        ProviderId::IFlow => auth_code::run(&iflow::IFlow, auth, &http, account).await,
+        // Device Code flows
+        ProviderId::Copilot => device_code::run(&copilot::Copilot, auth, &http, account).await,
+        ProviderId::Qwen => device_code::run(&qwen::Qwen::new(), auth, &http, account).await,
+        ProviderId::Kimi => device_code::run(&kimi::Kimi, auth, &http, account).await,
         ProviderId::Kiro => Err(ByokError::Auth(
             "Kiro OAuth login not yet implemented".into(),
         )),

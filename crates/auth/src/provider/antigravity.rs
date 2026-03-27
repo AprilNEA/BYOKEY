@@ -47,6 +47,54 @@ pub fn token_form_params(
     ]
 }
 
+// ── AuthCodeFlow implementation ───────────────────────────────────────────────
+
+use async_trait::async_trait;
+use byokey_types::{ByokError, OAuthToken, ProviderId, traits::Result};
+
+use crate::credentials::OAuthCredentials;
+use crate::flow::auth_code::{self, AuthCodeFlow};
+
+/// Antigravity auth-code provider.
+pub struct Antigravity;
+
+#[async_trait]
+impl AuthCodeFlow for Antigravity {
+    fn provider_id(&self) -> ProviderId {
+        ProviderId::Antigravity
+    }
+    fn provider_name(&self) -> &'static str {
+        "antigravity"
+    }
+    fn callback_port(&self) -> u16 {
+        CALLBACK_PORT
+    }
+
+    fn build_auth_url(&self, client_id: &str, challenge: &str, state: &str) -> String {
+        build_auth_url(client_id, challenge, state)
+    }
+
+    async fn exchange_code(
+        &self,
+        http: &rquest::Client,
+        creds: &OAuthCredentials,
+        code: &str,
+        verifier: &str,
+        _state: &str,
+    ) -> Result<OAuthToken> {
+        let token_url = creds
+            .token_url
+            .as_deref()
+            .ok_or_else(|| ByokError::Auth("antigravity credentials missing token_url".into()))?;
+        let client_secret = creds.client_secret.as_deref().ok_or_else(|| {
+            ByokError::Auth("antigravity credentials missing client_secret".into())
+        })?;
+        let params = token_form_params(&creds.client_id, client_secret, code, verifier);
+        let resp = http.post(token_url).form(&params).send().await?;
+        auth_code::send_and_parse_token(resp).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
