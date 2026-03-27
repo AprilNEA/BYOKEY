@@ -155,6 +155,7 @@ fn set_hide_free_tier(enabled: bool) -> Result<()> {
 fn amp_settings_path() -> PathBuf {
     byokey_daemon::paths::home_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
-        .join(".amp")
+        .join(".config")
+        .join("amp")
         .join("settings.json")
 }
