@@ -27,11 +27,11 @@ pub async fn bind_callback(port: u16) -> Result<TcpListener> {
     TcpListener::bind(&addr).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::AddrInUse {
             ByokError::Auth(format!(
-                "端口 {port} 已被占用（可能有其他 OAuth 服务正在运行，如 vibeproxy/cli-proxy）\n\
-                 请运行 `lsof -i :{port}` 找到占用进程并关闭后重试"
+                "port {port} is already in use (another OAuth service may be running, e.g. vibeproxy/cli-proxy)\n\
+                 run `lsof -i :{port}` to find the process and stop it before retrying"
             ))
         } else {
-            ByokError::Auth(format!("无法绑定 callback 端口 {port}: {e}"))
+            ByokError::Auth(format!("failed to bind callback port {port}: {e}"))
         }
     })
 }
