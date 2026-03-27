@@ -1,20 +1,13 @@
-//! Alibaba Cloud Tongyi Qwen Device Code + PKCE flow.
+//! Alibaba Cloud Tongyi Qwen Device Code + PKCE flow configuration.
 //!
 //! The device code request also includes a PKCE `code_challenge`.
 //! Slow-down multiplier: 1.5x.
-use byokey_types::{ByokError, OAuthToken, traits::Result};
+
+use crate::token::DeviceCodeResponse;
+use byokey_types::{ByokError, traits::Result};
 
 pub const SCOPES: &[&str] = &["openid", "profile", "email", "model.completion"];
 pub const SLOW_DOWN_MULTIPLIER: f64 = 1.5;
-
-#[derive(Debug)]
-pub struct DeviceCodeResponse {
-    pub device_code: String,
-    pub user_code: String,
-    pub verification_uri: String,
-    pub expires_in: u64,
-    pub interval: u64,
-}
 
 #[must_use]
 pub fn build_device_code_params(
@@ -76,32 +69,6 @@ pub fn parse_device_code_response(json: &serde_json::Value) -> Result<DeviceCode
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(5),
     })
-}
-
-/// # Errors
-///
-/// Returns an error if the response is missing the `access_token` field.
-pub fn parse_token_response(json: &serde_json::Value) -> Result<OAuthToken> {
-    let access_token = json
-        .get("access_token")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| ByokError::Auth("missing access_token".into()))?
-        .to_string();
-
-    let mut token = OAuthToken::new(access_token);
-
-    if let Some(refresh) = json
-        .get("refresh_token")
-        .and_then(serde_json::Value::as_str)
-    {
-        token = token.with_refresh(refresh);
-    }
-
-    if let Some(expires_in) = json.get("expires_in").and_then(serde_json::Value::as_u64) {
-        token = token.with_expiry(expires_in);
-    }
-
-    Ok(token)
 }
 
 #[cfg(test)]
@@ -216,32 +183,5 @@ mod tests {
                 .iter()
                 .any(|(k, v)| k == "code_verifier" && v == "verifier-xyz")
         );
-    }
-
-    #[test]
-    fn test_parse_token_response_full() {
-        let resp = json!({
-            "access_token": "qwen-at-123",
-            "refresh_token": "qwen-rt-456",
-            "expires_in": 7200
-        });
-        let token = parse_token_response(&resp).unwrap();
-        assert_eq!(token.access_token, "qwen-at-123");
-        assert_eq!(token.refresh_token.as_deref(), Some("qwen-rt-456"));
-        assert!(token.expires_at.is_some());
-    }
-
-    #[test]
-    fn test_parse_token_response_minimal() {
-        let resp = json!({"access_token": "qwen-at"});
-        let token = parse_token_response(&resp).unwrap();
-        assert_eq!(token.access_token, "qwen-at");
-        assert!(token.refresh_token.is_none());
-        assert!(token.expires_at.is_none());
-    }
-
-    #[test]
-    fn test_parse_token_response_missing() {
-        assert!(parse_token_response(&json!({})).is_err());
     }
 }

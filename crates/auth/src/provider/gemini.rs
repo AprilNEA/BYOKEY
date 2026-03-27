@@ -1,12 +1,7 @@
-//! Google Gemini OAuth 2.0 authorization flow.
+//! Google Gemini OAuth 2.0 authorization flow configuration.
 //!
 //! Uses Google's OAuth 2.0 endpoint with PKCE (S256) and offline access.
 //! Callback port: 8085.
-//!
-//! Credentials (`client_id` / `client_secret`) are fetched at login time from
-//! `https://assets.byokey.io/oauth/gemini.json`.
-
-use byokey_types::{ByokError, OAuthToken, traits::Result};
 
 /// Local callback port for the OAuth redirect.
 pub const CALLBACK_PORT: u16 = 8085;
@@ -50,35 +45,9 @@ pub fn token_form_params(
     ]
 }
 
-/// Parse the token endpoint JSON response into an [`OAuthToken`].
-///
-/// # Errors
-///
-/// Returns an error if the response is missing the `access_token` field.
-pub fn parse_token_response(json: &serde_json::Value) -> Result<OAuthToken> {
-    let access_token = json
-        .get("access_token")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| ByokError::Auth("missing access_token".into()))?
-        .to_string();
-
-    let mut token = OAuthToken::new(access_token);
-    if let Some(r) = json
-        .get("refresh_token")
-        .and_then(serde_json::Value::as_str)
-    {
-        token = token.with_refresh(r);
-    }
-    if let Some(exp) = json.get("expires_in").and_then(serde_json::Value::as_u64) {
-        token = token.with_expiry(exp);
-    }
-    Ok(token)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     const TEST_CLIENT_ID: &str = "test-id.apps.googleusercontent.com";
     const TEST_CLIENT_SECRET: &str = "test-secret";
@@ -116,13 +85,5 @@ mod tests {
         assert_eq!(map["code"], "mycode");
         assert_eq!(map["redirect_uri"], REDIRECT_URI);
         assert_eq!(map["code_verifier"], "myverifier");
-    }
-
-    #[test]
-    fn test_parse_ok() {
-        let resp = json!({"access_token": "ga", "refresh_token": "gr", "expires_in": 3600});
-        let t = parse_token_response(&resp).unwrap();
-        assert_eq!(t.access_token, "ga");
-        assert_eq!(t.refresh_token, Some("gr".into()));
     }
 }

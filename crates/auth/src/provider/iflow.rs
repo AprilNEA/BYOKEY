@@ -1,14 +1,11 @@
-//! iFlow platform (Z.ai / GLM) Authorization Code OAuth flow.
+//! iFlow platform (Z.ai / GLM) Authorization Code OAuth flow configuration.
 //!
 //! Token exchange uses an HTTP Basic Auth header.
 //! Callback port: 11451.
 //! Provides access to GLM and Kimi K2 models.
-//!
-//! Credentials (`client_id` / `client_secret`) are fetched at login time from
-//! `https://assets.byokey.io/oauth/iflow.json`.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use byokey_types::{ByokError, OAuthToken, traits::Result};
+use byokey_types::{ByokError, traits::Result};
 
 /// Local callback port for the OAuth redirect.
 pub const CALLBACK_PORT: u16 = 11451;
@@ -45,31 +42,6 @@ pub fn token_form_params(client_id: &str, code: &str) -> Vec<(String, String)> {
         ("code".into(), code.into()),
         ("redirect_uri".into(), REDIRECT_URI.into()),
     ]
-}
-
-/// Parse the token endpoint response into an [`OAuthToken`].
-///
-/// # Errors
-///
-/// Returns an error if the response is missing the `access_token` field.
-pub fn parse_token_response(json: &serde_json::Value) -> Result<OAuthToken> {
-    let access_token = json
-        .get("access_token")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| ByokError::Auth("missing access_token".into()))?
-        .to_string();
-
-    let mut token = OAuthToken::new(access_token);
-    if let Some(r) = json
-        .get("refresh_token")
-        .and_then(serde_json::Value::as_str)
-    {
-        token = token.with_refresh(r);
-    }
-    if let Some(exp) = json.get("expires_in").and_then(serde_json::Value::as_u64) {
-        token = token.with_expiry(exp);
-    }
-    Ok(token)
 }
 
 /// iFlow `userInfo` endpoint.
@@ -154,12 +126,12 @@ mod tests {
     #[test]
     fn test_parse_token_response_ok() {
         let resp = json!({"access_token": "tok", "expires_in": 7200});
-        let t = parse_token_response(&resp).unwrap();
+        let t = crate::token::parse_token_response(&resp).unwrap();
         assert_eq!(t.access_token, "tok");
     }
 
     #[test]
     fn test_parse_token_response_missing() {
-        assert!(parse_token_response(&json!({})).is_err());
+        assert!(crate::token::parse_token_response(&json!({})).is_err());
     }
 }

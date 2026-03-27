@@ -1,22 +1,21 @@
 //! OAuth authentication flows for all supported providers.
 //!
-//! Each sub-module implements provider-specific URL building, token exchange
-//! parameters, and response parsing. The [`AuthManager`] coordinates token
-//! lifecycle across providers.
+//! ## Module layout
+//!
+//! - [`token`]       — Shared token response parsing and `DeviceCodeResponse`.
+//! - [`provider`]    — Per-provider constants, URL builders, and parameter formatters.
+//! - [`flow`]        — Interactive login flow orchestration (auth-code & device-code).
+//! - [`manager`]     — [`AuthManager`]: token lifecycle, refresh, cooldown.
+//! - [`credentials`] — Remote OAuth app credential loader.
+//! - [`callback`]    — Local HTTP callback server for redirect flows.
+//! - [`pkce`]        — PKCE and random state generation utilities.
 
-pub mod antigravity;
 pub mod callback;
-pub mod claude;
-pub mod codex;
-pub mod copilot;
 pub mod credentials;
 pub mod flow;
-pub mod gemini;
-pub mod iflow;
-pub mod kimi;
-pub mod kiro;
 pub mod manager;
 pub mod pkce;
-pub mod qwen;
+pub mod provider;
+pub mod token;
 
 pub use manager::AuthManager;

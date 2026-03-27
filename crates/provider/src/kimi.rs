@@ -43,7 +43,7 @@ impl KimiExecutor {
             ph,
             api_key,
             auth,
-            device_id: byokey_auth::kimi::device_id(),
+            device_id: byokey_auth::provider::kimi::device_id(),
         }
     }
 
@@ -94,8 +94,14 @@ impl ProviderExecutor for KimiExecutor {
             .header("user-agent", "KimiCLI/1.10.6")
             .header("x-msh-platform", "kimi_cli")
             .header("x-msh-version", "1.10.6")
-            .header("x-msh-device-name", byokey_auth::kimi::device_name())
-            .header("x-msh-device-model", byokey_auth::kimi::DEVICE_MODEL)
+            .header(
+                "x-msh-device-name",
+                byokey_auth::provider::kimi::device_name(),
+            )
+            .header(
+                "x-msh-device-model",
+                byokey_auth::provider::kimi::DEVICE_MODEL,
+            )
             .header("x-msh-device-id", &self.device_id)
             .header("accept", accept)
             .json(&body);

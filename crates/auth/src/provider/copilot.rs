@@ -1,27 +1,13 @@
-//! GitHub Copilot device code authorization flow.
+//! GitHub Copilot device code authorization flow configuration.
 //!
 //! Implements the OAuth 2.0 Device Authorization Grant used by GitHub Copilot.
 //! No local callback port is needed for this flow.
 
-use byokey_types::{ByokError, OAuthToken, traits::Result};
+use crate::token::DeviceCodeResponse;
+use byokey_types::{ByokError, traits::Result};
 
 /// OAuth scopes requested during authorization.
 pub const SCOPES: &[&str] = &["read:user"];
-
-/// Parsed response from the device code request.
-#[derive(Debug)]
-pub struct DeviceCodeResponse {
-    /// Unique device verification code.
-    pub device_code: String,
-    /// Short code the user enters at the verification URI.
-    pub user_code: String,
-    /// URL where the user authorizes the device.
-    pub verification_uri: String,
-    /// Seconds until the device code expires.
-    pub expires_in: u64,
-    /// Minimum polling interval in seconds.
-    pub interval: u64,
-}
 
 /// Parse the device code endpoint JSON response.
 ///
@@ -56,24 +42,6 @@ pub fn parse_device_code_response(json: &serde_json::Value) -> Result<DeviceCode
     })
 }
 
-/// Parse the token endpoint JSON response into an [`OAuthToken`].
-///
-/// GitHub may return form-encoded or JSON responses; this handles the JSON
-/// format. Copilot tokens have no expiration time.
-///
-/// # Errors
-///
-/// Returns an error if the response is missing the `access_token` field.
-pub fn parse_token_response(json: &serde_json::Value) -> Result<OAuthToken> {
-    let access_token = json
-        .get("access_token")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| ByokError::Auth("missing access_token".into()))?
-        .to_string();
-
-    Ok(OAuthToken::new(access_token))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,15 +62,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_token_ok() {
-        let resp = json!({"access_token": "ghu_abc"});
-        let t = parse_token_response(&resp).unwrap();
-        assert_eq!(t.access_token, "ghu_abc");
-        assert!(t.expires_at.is_none()); // Copilot tokens do not expire.
-    }
-
-    #[test]
-    fn test_parse_token_missing() {
-        assert!(parse_token_response(&json!({})).is_err());
+    fn test_parse_device_code_missing() {
+        assert!(parse_device_code_response(&json!({})).is_err());
     }
 }

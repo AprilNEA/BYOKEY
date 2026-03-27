@@ -1,22 +1,15 @@
-//! Moonshot AI (Kimi) Device Code flow.
+//! Moonshot AI (Kimi) Device Code flow configuration.
 //!
 //! Requires additional `X-Msh-*` request headers for platform information.
-use byokey_types::{ByokError, OAuthToken, traits::Result};
+
+use crate::token::DeviceCodeResponse;
+use byokey_types::{ByokError, traits::Result};
 use rand::RngCore as _;
 
 pub const SCOPES: &[&str] = &["openid", "offline_access"];
 pub const PLATFORM: &str = "mac";
 pub const VERSION: &str = "0.13.0";
 pub const DEVICE_MODEL: &str = "MacBookPro";
-
-#[derive(Debug)]
-pub struct DeviceCodeResponse {
-    pub device_code: String,
-    pub user_code: String,
-    pub verification_uri: String,
-    pub expires_in: u64,
-    pub interval: u64,
-}
 
 #[must_use]
 pub fn device_id() -> String {
@@ -113,32 +106,6 @@ pub fn parse_device_code_response(json: &serde_json::Value) -> Result<DeviceCode
     })
 }
 
-/// # Errors
-///
-/// Returns an error if the response is missing the `access_token` field.
-pub fn parse_token_response(json: &serde_json::Value) -> Result<OAuthToken> {
-    let access_token = json
-        .get("access_token")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| ByokError::Auth("missing access_token".into()))?
-        .to_string();
-
-    let mut token = OAuthToken::new(access_token);
-
-    if let Some(refresh) = json
-        .get("refresh_token")
-        .and_then(serde_json::Value::as_str)
-    {
-        token = token.with_refresh(refresh);
-    }
-
-    if let Some(expires_in) = json.get("expires_in").and_then(serde_json::Value::as_u64) {
-        token = token.with_expiry(expires_in);
-    }
-
-    Ok(token)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,7 +114,6 @@ mod tests {
     #[test]
     fn test_device_id_format() {
         let id = device_id();
-        // UUID v4 format: 8-4-4-4-12 hex chars
         let parts: Vec<&str> = id.split('-').collect();
         assert_eq!(parts.len(), 5);
         assert_eq!(parts[0].len(), 8);
@@ -155,9 +121,7 @@ mod tests {
         assert_eq!(parts[2].len(), 4);
         assert_eq!(parts[3].len(), 4);
         assert_eq!(parts[4].len(), 12);
-        // version 4: third segment starts with '4'
         assert!(parts[2].starts_with('4'));
-        // variant: first char of fourth segment is 8/9/a/b
         let variant_char = parts[3].chars().next().unwrap();
         assert!(
             "89ab".contains(variant_char),
@@ -190,7 +154,6 @@ mod tests {
         assert_eq!(headers[3].0, "X-Msh-Device-Model");
         assert_eq!(headers[3].1, "MacBookPro");
         assert_eq!(headers[4].0, "X-Msh-Device-Id");
-        // device id is random, only check format
         assert_eq!(headers[4].1.len(), 36);
     }
 
@@ -286,32 +249,5 @@ mod tests {
             "user_code": "UC"
         });
         assert!(parse_device_code_response(&resp).is_err());
-    }
-
-    #[test]
-    fn test_parse_token_response_full() {
-        let resp = json!({
-            "access_token": "kimi-at-123",
-            "refresh_token": "kimi-rt-456",
-            "expires_in": 3600
-        });
-        let token = parse_token_response(&resp).unwrap();
-        assert_eq!(token.access_token, "kimi-at-123");
-        assert_eq!(token.refresh_token.as_deref(), Some("kimi-rt-456"));
-        assert!(token.expires_at.is_some());
-    }
-
-    #[test]
-    fn test_parse_token_response_minimal() {
-        let resp = json!({"access_token": "kimi-at"});
-        let token = parse_token_response(&resp).unwrap();
-        assert_eq!(token.access_token, "kimi-at");
-        assert!(token.refresh_token.is_none());
-        assert!(token.expires_at.is_none());
-    }
-
-    #[test]
-    fn test_parse_token_response_missing() {
-        assert!(parse_token_response(&json!({})).is_err());
     }
 }

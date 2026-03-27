@@ -1,9 +1,7 @@
-//! `OpenAI` Codex CLI JWT OAuth authorization flow.
+//! `OpenAI` Codex CLI JWT OAuth authorization flow configuration.
 //!
 //! Implements the Authorization Code + PKCE (S256) flow extracted from the
 //! Codex CLI binary. Callback port: 1455.
-
-use byokey_types::{ByokError, OAuthToken, traits::Result};
 
 /// Local callback port for the OAuth redirect.
 pub const CALLBACK_PORT: u16 = 1455;
@@ -42,35 +40,9 @@ pub fn token_form_params<'a>(
     ]
 }
 
-/// Parse the token endpoint JSON response into an [`OAuthToken`].
-///
-/// # Errors
-///
-/// Returns an error if the response is missing the `access_token` field.
-pub fn parse_token_response(json: &serde_json::Value) -> Result<OAuthToken> {
-    let access_token = json
-        .get("access_token")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| ByokError::Auth("missing access_token".into()))?
-        .to_string();
-
-    let mut token = OAuthToken::new(access_token);
-    if let Some(r) = json
-        .get("refresh_token")
-        .and_then(serde_json::Value::as_str)
-    {
-        token = token.with_refresh(r);
-    }
-    if let Some(exp) = json.get("expires_in").and_then(serde_json::Value::as_u64) {
-        token = token.with_expiry(exp);
-    }
-    Ok(token)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     const TEST_CLIENT_ID: &str = "test-codex-client-id";
 
@@ -83,18 +55,5 @@ mod tests {
         assert!(url.contains(&CALLBACK_PORT.to_string()));
         assert!(url.contains("codex_cli_simplified_flow=true"));
         assert!(url.contains("S256"));
-    }
-
-    #[test]
-    fn test_parse_ok() {
-        let resp = json!({"access_token": "tok", "expires_in": 7200});
-        let t = parse_token_response(&resp).unwrap();
-        assert_eq!(t.access_token, "tok");
-        assert!(t.expires_at.is_some());
-    }
-
-    #[test]
-    fn test_parse_missing() {
-        assert!(parse_token_response(&json!({})).is_err());
     }
 }

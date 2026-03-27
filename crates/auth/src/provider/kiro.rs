@@ -1,21 +1,13 @@
-//! Kiro Device Code + Authorization Code flow.
+//! Kiro Device Code + Authorization Code flow configuration.
 //!
 //! Auth endpoint: `prod.us-east-1.auth.desktop.kiro.dev`.
 //! Callback port: 9876.
-use byokey_types::{ByokError, OAuthToken, traits::Result};
+
+use crate::token::DeviceCodeResponse;
+use byokey_types::{ByokError, traits::Result};
 
 pub const CALLBACK_PORT: u16 = 9876;
 pub const AUTH_HOST: &str = "prod.us-east-1.auth.desktop.kiro.dev";
-
-/// Device code response.
-#[derive(Debug)]
-pub struct DeviceCodeResponse {
-    pub device_code: String,
-    pub user_code: String,
-    pub verification_uri: String,
-    pub expires_in: u64,
-    pub interval: u64,
-}
 
 /// # Errors
 ///
@@ -48,29 +40,6 @@ pub fn parse_device_code_response(json: &serde_json::Value) -> Result<DeviceCode
     })
 }
 
-/// # Errors
-///
-/// Returns an error if the response is missing the `access_token` field.
-pub fn parse_token_response(json: &serde_json::Value) -> Result<OAuthToken> {
-    let access_token = json
-        .get("access_token")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| ByokError::Auth("missing access_token".into()))?
-        .to_string();
-
-    let mut token = OAuthToken::new(access_token);
-    if let Some(r) = json
-        .get("refresh_token")
-        .and_then(serde_json::Value::as_str)
-    {
-        token = token.with_refresh(r);
-    }
-    if let Some(exp) = json.get("expires_in").and_then(serde_json::Value::as_u64) {
-        token = token.with_expiry(exp);
-    }
-    Ok(token)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,13 +64,5 @@ mod tests {
     #[test]
     fn test_parse_device_code_missing_field() {
         assert!(parse_device_code_response(&json!({"user_code": "x"})).is_err());
-    }
-
-    #[test]
-    fn test_parse_token() {
-        let resp = json!({"access_token": "kt", "refresh_token": "kr", "expires_in": 3600});
-        let t = parse_token_response(&resp).unwrap();
-        assert_eq!(t.access_token, "kt");
-        assert_eq!(t.refresh_token, Some("kr".into()));
     }
 }

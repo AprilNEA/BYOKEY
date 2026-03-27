@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{credentials, iflow};
+use crate::{credentials, provider::iflow, token};
 
 const REFRESH_COOLDOWN: Duration = Duration::from_secs(30);
 
@@ -301,7 +301,7 @@ impl AuthManager {
             )));
         }
 
-        parse_token_response(&json)
+        token::parse_token_response(&json)
     }
 
     /// iFlow-specific refresh: uses Basic Auth header and exchanges the new
@@ -356,36 +356,15 @@ impl AuthManager {
             )));
         }
 
-        let token = parse_token_response(&json)?;
+        let tok = token::parse_token_response(&json)?;
 
         // Exchange the new OAuth access_token for an iFlow API key.
-        let api_key = iflow::fetch_api_key(&token.access_token, &self.http).await?;
+        let api_key = iflow::fetch_api_key(&tok.access_token, &self.http).await?;
         Ok(OAuthToken {
             access_token: api_key,
-            ..token
+            ..tok
         })
     }
-}
-
-/// Parse a standard OAuth token response JSON into an [`OAuthToken`].
-fn parse_token_response(json: &serde_json::Value) -> Result<OAuthToken> {
-    let access_token = json
-        .get("access_token")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| ByokError::Auth("missing access_token in refresh response".into()))?
-        .to_string();
-
-    let mut token = OAuthToken::new(access_token);
-    if let Some(r) = json
-        .get("refresh_token")
-        .and_then(serde_json::Value::as_str)
-    {
-        token = token.with_refresh(r);
-    }
-    if let Some(exp) = json.get("expires_in").and_then(serde_json::Value::as_u64) {
-        token = token.with_expiry(exp);
-    }
-    Ok(token)
 }
 
 #[cfg(test)]
