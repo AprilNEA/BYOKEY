@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-auth-v0.6.0...byokey-auth-v0.7.0) - 2026-03-27
+
+### Fixed
+
+- *(auth)* replace Chinese error messages with English in callback.rs
+
+### Other
+
+- *(auth)* introduce AuthCodeFlow and DeviceCodeFlow traits
+- *(auth)* reorganize directory structure into layered modules
+
 ## [0.6.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-auth-v0.5.3...byokey-auth-v0.6.0) - 2026-03-06
 
 ### Other

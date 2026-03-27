@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-provider-v0.6.0...byokey-provider-v0.7.0) - 2026-03-27
+
+### Added
+
+- *(registry)* add gpt-5.4-nano model (Codex API-key only)
+- *(registry)* add gpt-5.4-mini model (Codex + Copilot)
+- *(provider)* unified model registry with auth-aware resolution
+
+### Fixed
+
+- *(registry)* reject empty tails in parse_qualified_model
+- address review feedback — store test, models listing, registry docs
+
+### Other
+
+- *(provider)* reorganize into executor/ and factory modules
+- *(auth)* reorganize directory structure into layered modules
+
 ## [0.6.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-provider-v0.5.3...byokey-provider-v0.6.0) - 2026-03-06
 
 ### Added

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-proxy-v0.6.0...byokey-proxy-v0.7.0) - 2026-03-27
+
+### Added
+
+- *(provider)* unified model registry with auth-aware resolution
+
+### Fixed
+
+- *(models)* emit qualified form for primary provider on multi-provider models
+- address review feedback — store test, models listing, registry docs
+
+### Other
+
+- *(proxy)* move handlers into handler/ and extract router.rs
+
 ## [0.6.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-proxy-v0.5.3...byokey-proxy-v0.6.0) - 2026-03-06
 
 ### Added

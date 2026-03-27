@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-types-v0.6.0...byokey-types-v0.7.0) - 2026-03-27
+
+### Other
+
+- *(store)* split sqlite.rs into persistent/ directory
+
 ## [0.6.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-types-v0.5.3...byokey-types-v0.6.0) - 2026-03-06
 
 ### Added

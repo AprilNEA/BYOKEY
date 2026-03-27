@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/AprilNEA/BYOKEY/compare/v0.6.0...v0.7.0) - 2026-03-27
+
+### Fixed
+
+- *(amp)* correct settings path to ~/.config/amp/settings.json
+
+### Other
+
+- *(store)* split sqlite.rs into persistent/ directory
+
 ## [0.6.0](https://github.com/AprilNEA/BYOKEY/compare/v0.5.3...v0.6.0) - 2026-03-06
 
 ### Added
