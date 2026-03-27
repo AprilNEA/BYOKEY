@@ -67,7 +67,7 @@ impl ProviderExecutor for RetryExecutor {
                 None => break, // all keys in cooldown
             };
 
-            let executor = crate::make_executor(
+            let executor = crate::factory::make_executor(
                 &self.provider,
                 Some(key.clone()),
                 Arc::clone(&self.auth),
