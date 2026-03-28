@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-proxy-v0.8.0...byokey-proxy-v0.9.0) - 2026-03-28
+
+### Added
+
+- complete upstream v6.9.4 sync — all 9 remaining items
+- align Claude/Codex fingerprint and thinking with upstream v6.9.4
+
+### Other
+
+- deduplicate shared patterns across executors and handlers
+
 ## [0.8.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-proxy-v0.7.1...byokey-proxy-v0.8.0) - 2026-03-28
 
 ### Added

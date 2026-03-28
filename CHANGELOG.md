@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/AprilNEA/BYOKEY/compare/v0.8.0...v0.9.0) - 2026-03-28
+
+### Added
+
+- complete upstream v6.9.4 sync — all 9 remaining items
+
 ## [0.8.0](https://github.com/AprilNEA/BYOKEY/compare/v0.7.1...v0.8.0) - 2026-03-28
 
 ### Added
