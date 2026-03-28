@@ -33,11 +33,8 @@ const OPENAI_API_URL: &str = "https://api.openai.com/v1/chat/completions";
 /// Codex CLI Responses endpoint (used with OAuth tokens).
 const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 
-/// Codex CLI client version sent in the `Version` header.
-const CODEX_VERSION: &str = "0.101.0";
-
 /// User-Agent matching the Codex CLI binary.
-const CODEX_USER_AGENT: &str = "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464";
+const CODEX_USER_AGENT: &str = "codex_cli_rs/0.116.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464";
 
 /// Executor for the `OpenAI` (Codex) API.
 pub struct CodexExecutor {
@@ -83,7 +80,6 @@ impl CodexExecutor {
             .post(&url)
             .header("content-type", "application/json")
             .header("authorization", format!("Bearer {token}"))
-            .header("Version", CODEX_VERSION)
             .header("Session_id", session_id)
             .header("User-Agent", CODEX_USER_AGENT)
             .header("Originator", "codex_cli_rs")

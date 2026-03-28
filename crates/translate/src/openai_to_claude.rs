@@ -3,6 +3,32 @@
 use byokey_types::{ByokError, RequestTranslator, traits::Result};
 use serde_json::{Value, json};
 
+/// Ensure a `tool_use` id conforms to Claude's `^[a-zA-Z0-9_-]+$` regex.
+/// Non-conforming characters are replaced with `_`; empty results get a fallback.
+fn sanitize_tool_id(id: &str) -> String {
+    let sanitized: String = id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if sanitized.is_empty() {
+        format!(
+            "toolu_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        )
+    } else {
+        sanitized
+    }
+}
+
 /// Translator from `OpenAI` chat completion request format to Claude Messages API format.
 pub struct OpenAIToClaude;
 
@@ -18,7 +44,8 @@ fn build_claude_messages(non_system: &[&Value]) -> Vec<Value> {
         let role = m.get("role").and_then(Value::as_str).unwrap_or("user");
 
         if role == "tool" {
-            let tool_call_id = m.get("tool_call_id").and_then(Value::as_str).unwrap_or("");
+            let raw_id = m.get("tool_call_id").and_then(Value::as_str).unwrap_or("");
+            let tool_call_id = sanitize_tool_id(raw_id);
             let content = m
                 .get("content")
                 .cloned()
@@ -47,7 +74,8 @@ fn build_claude_messages(non_system: &[&Value]) -> Vec<Value> {
                     content_blocks.push(json!({"type": "text", "text": text}));
                 }
                 for tc in tool_calls {
-                    let id = tc.get("id").and_then(Value::as_str).unwrap_or("");
+                    let raw_id = tc.get("id").and_then(Value::as_str).unwrap_or("");
+                    let id = sanitize_tool_id(raw_id);
                     let func = tc.get("function").unwrap_or(&Value::Null);
                     let name = func.get("name").and_then(Value::as_str).unwrap_or("");
                     let args_str = func

@@ -27,3 +27,10 @@ pub use registry::{
     resolve_provider, resolve_provider_with,
 };
 pub use routing::CredentialRouter;
+
+/// Claude fingerprint constants shared with the proxy crate's `/v1/messages` handler.
+pub mod claude_headers {
+    pub use crate::executor::claude::{
+        ANTHROPIC_BETA, ANTHROPIC_VERSION, RUNTIME_VERSION, SDK_PACKAGE_VERSION, USER_AGENT,
+    };
+}

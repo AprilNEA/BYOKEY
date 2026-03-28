@@ -11,9 +11,17 @@ use serde_json::{Value, json};
 /// Positions that already have `cache_control` are skipped.
 #[must_use]
 pub fn inject_cache_control(mut request: Value) -> Value {
-    inject_tools_cache(&mut request);
-    inject_system_cache(&mut request);
-    inject_messages_cache(&mut request);
+    let had_cache = count_cache_controls(&request) > 0;
+    if !had_cache {
+        inject_tools_cache(&mut request);
+        inject_system_cache(&mut request);
+        inject_messages_cache(&mut request);
+    }
+    // Enforce Anthropic's cache_control block limit (max 4 breakpoints per request).
+    enforce_cache_control_limit(&mut request, 4);
+    // Normalize TTL values for prompt-caching-scope-2026-01-05:
+    // a 1h-TTL block must not appear after a 5m-TTL block in evaluation order.
+    normalize_cache_control_ttl(&mut request);
     request
 }
 
@@ -79,6 +87,168 @@ fn inject_messages_cache(req: &mut Value) {
         && last.get("cache_control").is_none()
     {
         last["cache_control"] = json!({"type": "ephemeral"});
+    }
+}
+
+/// Count total `cache_control` blocks across tools, system, and message content.
+fn count_cache_controls(req: &Value) -> usize {
+    let mut count = 0;
+    if let Some(tools) = req.get("tools").and_then(Value::as_array) {
+        count += tools
+            .iter()
+            .filter(|t| t.get("cache_control").is_some())
+            .count();
+    }
+    if let Some(system) = req.get("system").and_then(Value::as_array) {
+        count += system
+            .iter()
+            .filter(|s| s.get("cache_control").is_some())
+            .count();
+    }
+    if let Some(msgs) = req.get("messages").and_then(Value::as_array) {
+        for msg in msgs {
+            if let Some(content) = msg.get("content").and_then(Value::as_array) {
+                count += content
+                    .iter()
+                    .filter(|c| c.get("cache_control").is_some())
+                    .count();
+            }
+            // String content with cache_control at message level
+            if msg.get("cache_control").is_some() {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Enforce Anthropic's max `cache_control` breakpoints (currently 4).
+///
+/// Removal priority (strip lowest-value first):
+/// 1. System blocks earliest-first (preserve last)
+/// 2. Tool blocks earliest-first (preserve last)
+/// 3. Message content blocks earliest-first
+fn enforce_cache_control_limit(req: &mut Value, max_blocks: usize) {
+    let total = count_cache_controls(req);
+    if total <= max_blocks {
+        return;
+    }
+    let mut excess = total - max_blocks;
+
+    // Phase 1: strip system blocks (earliest first, preserve last)
+    if let Some(system) = req.get_mut("system").and_then(Value::as_array_mut) {
+        let last_cc = system
+            .iter()
+            .rposition(|s| s.get("cache_control").is_some());
+        for (i, item) in system.iter_mut().enumerate() {
+            if excess == 0 {
+                break;
+            }
+            if Some(i) != last_cc && item.get("cache_control").is_some() {
+                item.as_object_mut().unwrap().remove("cache_control");
+                excess -= 1;
+            }
+        }
+    }
+    if excess == 0 {
+        return;
+    }
+
+    // Phase 2: strip tool blocks (earliest first, preserve last)
+    if let Some(tools) = req.get_mut("tools").and_then(Value::as_array_mut) {
+        let last_cc = tools.iter().rposition(|t| t.get("cache_control").is_some());
+        for (i, item) in tools.iter_mut().enumerate() {
+            if excess == 0 {
+                break;
+            }
+            if Some(i) != last_cc && item.get("cache_control").is_some() {
+                item.as_object_mut().unwrap().remove("cache_control");
+                excess -= 1;
+            }
+        }
+    }
+    if excess == 0 {
+        return;
+    }
+
+    // Phase 3: strip message content blocks (earliest first)
+    if let Some(msgs) = req.get_mut("messages").and_then(Value::as_array_mut) {
+        for msg in msgs.iter_mut() {
+            if excess == 0 {
+                break;
+            }
+            if let Some(content) = msg.get_mut("content").and_then(Value::as_array_mut) {
+                for item in content.iter_mut() {
+                    if excess == 0 {
+                        break;
+                    }
+                    if item.get("cache_control").is_some() {
+                        item.as_object_mut().unwrap().remove("cache_control");
+                        excess -= 1;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Normalize `cache_control` TTL values for prompt-caching-scope-2026-01-05.
+///
+/// Evaluation order: tools → system → messages.
+/// Once a 5m (300s / default) TTL is seen, all subsequent blocks with higher
+/// TTL (e.g. 3600s / 1h) must be downgraded by removing the `ttl` field
+/// (which defaults to 5m).
+fn normalize_cache_control_ttl(req: &mut Value) {
+    let mut seen_short = false;
+    let mut modified = false;
+
+    // Walk tools → system → message content in evaluation order
+    let sections: Vec<&str> = vec!["tools", "system"];
+    for section in &sections {
+        if let Some(arr) = req.get_mut(section).and_then(Value::as_array_mut) {
+            for item in arr.iter_mut() {
+                if normalize_ttl_block(item, &mut seen_short) {
+                    modified = true;
+                }
+            }
+        }
+    }
+
+    if let Some(msgs) = req.get_mut("messages").and_then(Value::as_array_mut) {
+        for msg in msgs.iter_mut() {
+            if let Some(content) = msg.get_mut("content").and_then(Value::as_array_mut) {
+                for item in content.iter_mut() {
+                    if normalize_ttl_block(item, &mut seen_short) {
+                        modified = true;
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = modified; // suppress unused warning
+}
+
+/// Check a single block's `cache_control.ttl`. Returns true if modified.
+fn normalize_ttl_block(item: &mut Value, seen_short: &mut bool) -> bool {
+    let Some(cc) = item.get("cache_control") else {
+        return false;
+    };
+    let ttl = cc.get("ttl").and_then(Value::as_u64);
+    match ttl {
+        // No TTL or TTL ≤ 300 → this is a "short" (5m/default) block
+        None | Some(0..=300) => {
+            *seen_short = true;
+            false
+        }
+        // TTL > 300 (e.g. 3600 = 1h) → downgrade if we've seen a short block
+        Some(_) if *seen_short => {
+            if let Some(cc_obj) = item.get_mut("cache_control").and_then(Value::as_object_mut) {
+                cc_obj.remove("ttl");
+            }
+            true
+        }
+        _ => false,
     }
 }
 
@@ -196,5 +366,71 @@ mod tests {
             result["messages"][0]["content"][0]["cache_control"],
             json!({"type": "ephemeral"})
         );
+    }
+
+    #[test]
+    fn test_enforce_limit_strips_excess() {
+        let req = json!({
+            "tools": [
+                {"name": "a", "cache_control": {"type": "ephemeral"}},
+                {"name": "b", "cache_control": {"type": "ephemeral"}},
+                {"name": "c", "cache_control": {"type": "ephemeral"}}
+            ],
+            "system": [
+                {"type": "text", "text": "s1", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": "s2", "cache_control": {"type": "ephemeral"}}
+            ],
+            "messages": []
+        });
+        // 5 cache_control blocks → should be reduced to 4
+        let result = inject_cache_control(req);
+        assert_eq!(count_cache_controls(&result), 4);
+    }
+
+    #[test]
+    fn test_enforce_limit_under_limit_no_change() {
+        let req = json!({
+            "tools": [
+                {"name": "a", "cache_control": {"type": "ephemeral"}}
+            ],
+            "system": [
+                {"type": "text", "text": "s1", "cache_control": {"type": "ephemeral"}}
+            ],
+            "messages": []
+        });
+        let result = inject_cache_control(req);
+        assert_eq!(count_cache_controls(&result), 2);
+    }
+
+    #[test]
+    fn test_normalize_ttl_downgrades_after_short() {
+        let mut req = json!({
+            "tools": [
+                {"name": "a", "cache_control": {"type": "ephemeral"}},
+                {"name": "b", "cache_control": {"type": "ephemeral", "ttl": 3600}}
+            ],
+            "system": [],
+            "messages": []
+        });
+        normalize_cache_control_ttl(&mut req);
+        // First tool has no TTL (5m default) → short seen
+        // Second tool had TTL 3600 → should be stripped
+        assert!(req["tools"][1]["cache_control"].get("ttl").is_none());
+    }
+
+    #[test]
+    fn test_normalize_ttl_no_downgrade_if_no_short() {
+        let mut req = json!({
+            "tools": [
+                {"name": "a", "cache_control": {"type": "ephemeral", "ttl": 3600}},
+                {"name": "b", "cache_control": {"type": "ephemeral", "ttl": 3600}}
+            ],
+            "system": [],
+            "messages": []
+        });
+        normalize_cache_control_ttl(&mut req);
+        // No short TTL seen → both keep their 3600
+        assert_eq!(req["tools"][0]["cache_control"]["ttl"], 3600);
+        assert_eq!(req["tools"][1]["cache_control"]["ttl"], 3600);
     }
 }

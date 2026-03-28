@@ -56,7 +56,7 @@ impl ThinkingExtractor {
     /// Applies a hard cap of 32,000 tokens and ensures `max_tokens` is large enough
     /// to accommodate the thinking budget plus headroom.
     pub fn inject_thinking(mut req: Value, budget_tokens: u32) -> Value {
-        const HARD_CAP: u32 = 32_000;
+        const HARD_CAP: u32 = 128_000;
         let effective = budget_tokens.min(HARD_CAP);
         let headroom = (effective / 10).max(1024);
         let min_max = effective + headroom;
@@ -86,6 +86,9 @@ pub enum ThinkingConfig {
     Budget(u32),
     /// Level mode (e.g. `model(high)`, `model(low)`, `model(medium)`).
     Level(ThinkingLevel),
+    /// Automatic / dynamic thinking (e.g. `model(auto)` or `model(-1)`).
+    /// Claude 4.6: adaptive thinking; legacy Claude: enabled without budget.
+    Auto,
     /// Disabled (e.g. `model(none)`).
     Disabled,
 }
@@ -93,9 +96,12 @@ pub enum ThinkingConfig {
 /// Thinking effort level for providers that support it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThinkingLevel {
+    Minimal,
     Low,
     Medium,
     High,
+    XHigh,
+    Max,
 }
 
 /// Parses a model name with optional thinking suffix.
@@ -140,11 +146,16 @@ pub fn parse_model_suffix(model: &str) -> ModelSuffix {
 }
 
 fn parse_thinking_value(value: &str) -> Option<ThinkingConfig> {
+    // Match upstream suffix.go exactly: only these exact values are accepted.
     match value {
-        "none" | "disabled" | "off" => Some(ThinkingConfig::Disabled),
+        "none" => Some(ThinkingConfig::Disabled),
+        "auto" | "-1" => Some(ThinkingConfig::Auto),
+        "minimal" => Some(ThinkingConfig::Level(ThinkingLevel::Minimal)),
         "low" => Some(ThinkingConfig::Level(ThinkingLevel::Low)),
-        "medium" | "med" => Some(ThinkingConfig::Level(ThinkingLevel::Medium)),
+        "medium" => Some(ThinkingConfig::Level(ThinkingLevel::Medium)),
         "high" => Some(ThinkingConfig::Level(ThinkingLevel::High)),
+        "xhigh" => Some(ThinkingConfig::Level(ThinkingLevel::XHigh)),
+        "max" => Some(ThinkingConfig::Level(ThinkingLevel::Max)),
         _ => value.parse::<u32>().ok().map(ThinkingConfig::Budget),
     }
 }
@@ -161,11 +172,13 @@ fn parse_thinking_value(value: &str) -> Option<ThinkingConfig> {
 #[must_use]
 pub fn apply_thinking(mut body: Value, provider: &ProviderId, config: &ThinkingConfig) -> Value {
     match (provider, config) {
-        // Disabled: remove thinking fields
+        // Disabled: remove all thinking-related fields across all providers
         (_, ThinkingConfig::Disabled) => {
             if let Some(obj) = body.as_object_mut() {
                 obj.remove("thinking");
+                obj.remove("reasoning");
                 obj.remove("reasoning_effort");
+                obj.remove("output_config");
                 if let Some(gc) = obj
                     .get_mut("generationConfig")
                     .and_then(Value::as_object_mut)
@@ -175,75 +188,103 @@ pub fn apply_thinking(mut body: Value, provider: &ProviderId, config: &ThinkingC
             }
             body
         }
-        // Claude: budget tokens
+
+        // ── Auto mode ───────────────────────────────────────────────────
+        // Claude: enable thinking without specifying budget (let API decide).
+        (ProviderId::Claude, ThinkingConfig::Auto) => {
+            body["thinking"] = json!({"type": "enabled"});
+            if let Some(obj) = body.as_object_mut() {
+                obj.remove("output_config");
+            }
+            body
+        }
+        // ── Claude ──────────────────────────────────────────────────────
         (ProviderId::Claude, ThinkingConfig::Budget(budget)) => {
             ThinkingExtractor::inject_thinking(body, *budget)
         }
         (ProviderId::Claude, ThinkingConfig::Level(level)) => {
-            let budget = match level {
-                ThinkingLevel::Low => 4096,
-                ThinkingLevel::Medium => 10_000,
-                ThinkingLevel::High => 32_000,
-            };
+            let budget = level_to_budget(*level);
             ThinkingExtractor::inject_thinking(body, budget)
         }
-        // Codex: reasoning effort
+
+        // ── Codex ───────────────────────────────────────────────────────
         (ProviderId::Codex, ThinkingConfig::Budget(budget)) => {
-            let effort = if *budget <= 4096 {
-                "low"
-            } else if *budget <= 16_384 {
-                "medium"
-            } else {
-                "high"
-            };
+            let effort = budget_to_effort(*budget);
             body["reasoning"] = json!({"effort": effort});
             body
         }
         (ProviderId::Codex, ThinkingConfig::Level(level)) => {
-            let effort = level_to_str(*level);
+            let effort = level_to_effort(*level);
             body["reasoning"] = json!({"effort": effort});
             body
         }
-        // Gemini / Antigravity: thinkingConfig.thinkingBudget
+
+        // ── Gemini / Antigravity ────────────────────────────────────────
         (ProviderId::Gemini | ProviderId::Antigravity, ThinkingConfig::Budget(budget)) => {
             body["generationConfig"]["thinkingConfig"]["thinkingBudget"] = json!(budget);
             body
         }
         (ProviderId::Gemini | ProviderId::Antigravity, ThinkingConfig::Level(level)) => {
-            let budget = match level {
-                ThinkingLevel::Low => 4096,
-                ThinkingLevel::Medium => 16_384,
-                ThinkingLevel::High => 32_768,
-            };
+            let budget = level_to_budget(*level);
             body["generationConfig"]["thinkingConfig"]["thinkingBudget"] = json!(budget);
             body
         }
-        // Copilot / OpenAI compat / Other providers: reasoning_effort
+
+        // ── Copilot / OpenAI compat ─────────────────────────────────────
         (ProviderId::Copilot, ThinkingConfig::Budget(budget)) => {
-            let effort = if *budget <= 4096 {
-                "low"
-            } else if *budget <= 16_384 {
-                "medium"
-            } else {
-                "high"
-            };
+            let effort = budget_to_effort(*budget);
             body["reasoning_effort"] = json!(effort);
             body
         }
         // Any provider with Level (including Copilot fallthrough): reasoning_effort
         (_, ThinkingConfig::Level(level)) => {
-            body["reasoning_effort"] = json!(level_to_str(*level));
+            body["reasoning_effort"] = json!(level_to_effort(*level));
             body
         }
-        (_, ThinkingConfig::Budget(_)) => body,
+        // Other providers + Auto or unsupported Budget: passthrough
+        (_, ThinkingConfig::Auto | ThinkingConfig::Budget(_)) => body,
     }
 }
 
-fn level_to_str(level: ThinkingLevel) -> &'static str {
+/// Unified level→budget mapping used across all providers.
+///
+/// Values aligned with upstream `CLIProxyAPI` `convert.go`.
+fn level_to_budget(level: ThinkingLevel) -> u32 {
     match level {
-        ThinkingLevel::Low => "low",
+        ThinkingLevel::Minimal => 512,
+        ThinkingLevel::Low => 1_024,
+        ThinkingLevel::Medium => 8_192,
+        ThinkingLevel::High => 24_576,
+        ThinkingLevel::XHigh => 32_768,
+        ThinkingLevel::Max => 128_000,
+    }
+}
+
+/// Maps a budget to an effort string using upstream threshold-based conversion.
+///
+/// Thresholds (from upstream `convert.go`):
+/// - ≤512   → minimal (maps to "low" effort)
+/// - ≤1024  → low
+/// - ≤8192  → medium
+/// - ≤24576 → high
+/// - >24576 → high (xhigh maps to high for effort providers)
+fn budget_to_effort(budget: u32) -> &'static str {
+    if budget <= 1_024 {
+        "low"
+    } else if budget <= 8_192 {
+        "medium"
+    } else {
+        "high"
+    }
+}
+
+/// Maps a thinking level to an effort string for providers that use
+/// discrete effort values (Codex, Copilot, OpenAI-compat).
+fn level_to_effort(level: ThinkingLevel) -> &'static str {
+    match level {
+        ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
         ThinkingLevel::Medium => "medium",
-        ThinkingLevel::High => "high",
+        ThinkingLevel::High | ThinkingLevel::XHigh | ThinkingLevel::Max => "high",
     }
 }
 
@@ -319,8 +360,8 @@ mod tests {
     #[test]
     fn test_inject_hard_cap() {
         let req = json!({"model": "m", "max_tokens": 999_999});
-        let out = ThinkingExtractor::inject_thinking(req, 100_000);
-        assert_eq!(out["thinking"]["budget_tokens"], 32_000);
+        let out = ThinkingExtractor::inject_thinking(req, 200_000);
+        assert_eq!(out["thinking"]["budget_tokens"], 128_000);
     }
 
     // --- parse_model_suffix tests ---
@@ -357,12 +398,10 @@ mod tests {
     }
 
     #[test]
-    fn test_suffix_level_med_alias() {
+    fn test_suffix_med_not_accepted() {
+        // upstream only accepts exact "medium", not "med"
         let s = parse_model_suffix("model(med)");
-        assert_eq!(
-            s.thinking,
-            Some(ThinkingConfig::Level(ThinkingLevel::Medium))
-        );
+        assert!(s.thinking.is_none());
     }
 
     #[test]
@@ -373,15 +412,10 @@ mod tests {
     }
 
     #[test]
-    fn test_suffix_disabled_aliases() {
-        assert_eq!(
-            parse_model_suffix("m(disabled)").thinking,
-            Some(ThinkingConfig::Disabled)
-        );
-        assert_eq!(
-            parse_model_suffix("m(off)").thinking,
-            Some(ThinkingConfig::Disabled)
-        );
+    fn test_suffix_disabled_off_not_accepted() {
+        // upstream only accepts "none", not "disabled" or "off"
+        assert!(parse_model_suffix("m(disabled)").thinking.is_none());
+        assert!(parse_model_suffix("m(off)").thinking.is_none());
     }
 
     #[test]
@@ -432,7 +466,7 @@ mod tests {
             &ThinkingConfig::Level(ThinkingLevel::High),
         );
         assert_eq!(out["thinking"]["type"], "enabled");
-        assert_eq!(out["thinking"]["budget_tokens"], 32_000);
+        assert_eq!(out["thinking"]["budget_tokens"], 24_576);
     }
 
     #[test]
@@ -447,10 +481,17 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_codex_budget() {
+    fn test_apply_codex_budget_low() {
+        let body = json!({"model": "o4-mini"});
+        let out = apply_thinking(body, &ProviderId::Codex, &ThinkingConfig::Budget(500));
+        assert_eq!(out["reasoning"]["effort"], "low");
+    }
+
+    #[test]
+    fn test_apply_codex_budget_medium() {
         let body = json!({"model": "o4-mini"});
         let out = apply_thinking(body, &ProviderId::Codex, &ThinkingConfig::Budget(2000));
-        assert_eq!(out["reasoning"]["effort"], "low");
+        assert_eq!(out["reasoning"]["effort"], "medium");
     }
 
     #[test]
@@ -464,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_gemini_level() {
+    fn test_apply_gemini_level_medium() {
         let body = json!({"model": "gemini-2.0-flash"});
         let out = apply_thinking(
             body,
@@ -473,8 +514,77 @@ mod tests {
         );
         assert_eq!(
             out["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            16_384
+            8_192
         );
+    }
+
+    #[test]
+    fn test_apply_claude_level_max() {
+        let body = json!({"model": "m", "max_tokens": 100});
+        let out = apply_thinking(
+            body,
+            &ProviderId::Claude,
+            &ThinkingConfig::Level(ThinkingLevel::Max),
+        );
+        assert_eq!(out["thinking"]["type"], "enabled");
+        assert_eq!(out["thinking"]["budget_tokens"], 128_000);
+    }
+
+    #[test]
+    fn test_suffix_level_minimal() {
+        let s = parse_model_suffix("model(minimal)");
+        assert_eq!(s.model, "model");
+        assert_eq!(
+            s.thinking,
+            Some(ThinkingConfig::Level(ThinkingLevel::Minimal))
+        );
+    }
+
+    #[test]
+    fn test_suffix_level_max() {
+        let s = parse_model_suffix("model(max)");
+        assert_eq!(s.model, "model");
+        assert_eq!(s.thinking, Some(ThinkingConfig::Level(ThinkingLevel::Max)));
+    }
+
+    #[test]
+    fn test_suffix_level_xhigh() {
+        let s = parse_model_suffix("model(xhigh)");
+        assert_eq!(s.model, "model");
+        assert_eq!(
+            s.thinking,
+            Some(ThinkingConfig::Level(ThinkingLevel::XHigh))
+        );
+    }
+
+    #[test]
+    fn test_suffix_auto() {
+        let s = parse_model_suffix("model(auto)");
+        assert_eq!(s.model, "model");
+        assert_eq!(s.thinking, Some(ThinkingConfig::Auto));
+    }
+
+    #[test]
+    fn test_suffix_minus_one_is_auto() {
+        let s = parse_model_suffix("model(-1)");
+        assert_eq!(s.model, "model");
+        assert_eq!(s.thinking, Some(ThinkingConfig::Auto));
+    }
+
+    #[test]
+    fn test_apply_claude_auto() {
+        let body = json!({"model": "claude-opus-4-5", "max_tokens": 8192});
+        let out = apply_thinking(body, &ProviderId::Claude, &ThinkingConfig::Auto);
+        assert_eq!(out["thinking"]["type"], "enabled");
+        // Auto mode: no budget_tokens specified
+        assert!(out["thinking"].get("budget_tokens").is_none());
+    }
+
+    #[test]
+    fn test_apply_codex_auto_passthrough() {
+        let body = json!({"model": "o4-mini"});
+        let out = apply_thinking(body.clone(), &ProviderId::Codex, &ThinkingConfig::Auto);
+        assert_eq!(out, body);
     }
 
     #[test]
@@ -493,12 +603,16 @@ mod tests {
         let body = json!({
             "model": "m",
             "thinking": {"type": "enabled", "budget_tokens": 1000},
+            "reasoning": {"effort": "high"},
             "reasoning_effort": "high",
+            "output_config": {"effort": "high"},
             "generationConfig": {"thinkingConfig": {"thinkingBudget": 1000}}
         });
         let out = apply_thinking(body, &ProviderId::Claude, &ThinkingConfig::Disabled);
         assert!(out.get("thinking").is_none());
+        assert!(out.get("reasoning").is_none());
         assert!(out.get("reasoning_effort").is_none());
+        assert!(out.get("output_config").is_none());
         assert!(
             out["generationConfig"]
                 .as_object()

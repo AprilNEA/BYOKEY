@@ -23,14 +23,24 @@ use std::sync::Arc;
 /// Anthropic Messages API endpoint (with beta flag required by the API).
 const API_URL: &str = "https://api.anthropic.com/v1/messages?beta=true";
 
+// ── Shared Claude fingerprint constants ─────────────────────────────
+// Re-exported via `byokey_provider::claude_headers` so the proxy crate's
+// `/v1/messages` passthrough handler stays in sync.
+
 /// Required Anthropic API version header value.
-const ANTHROPIC_VERSION: &str = "2023-06-01";
+pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// Beta features to enable; `oauth-2025-04-20` is required for OAuth Bearer tokens.
-const ANTHROPIC_BETA: &str = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,prompt-caching-2024-07-31";
+pub const ANTHROPIC_BETA: &str = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,prompt-caching-2024-07-31,context-management-2025-06-27,prompt-caching-scope-2026-01-05";
 
 /// User-Agent matching the Claude CLI SDK version.
-const USER_AGENT: &str = "claude-cli/2.1.44 (external, sdk-cli)";
+pub const USER_AGENT: &str = "claude-cli/2.1.63 (external, sdk-cli)";
+
+/// Anthropic SDK package version (matches @anthropic-ai/sdk).
+pub const SDK_PACKAGE_VERSION: &str = "0.74.0";
+
+/// Node.js runtime version for X-Stainless-Runtime-Version.
+pub const RUNTIME_VERSION: &str = "v22.13.1";
 
 /// Authentication mode for the Claude API.
 enum AuthMode {
@@ -91,7 +101,17 @@ impl ProviderExecutor for ClaudeExecutor {
             .header("anthropic-dangerous-direct-browser-access", "true")
             .header("x-app", "cli")
             .header("user-agent", USER_AGENT)
-            .header("content-type", "application/json");
+            .header("content-type", "application/json")
+            // Stainless SDK fingerprint headers — mimic real Claude Code client
+            .header("x-stainless-lang", "js")
+            .header("x-stainless-runtime", "node")
+            .header("x-stainless-runtime-version", RUNTIME_VERSION)
+            .header("x-stainless-package-version", SDK_PACKAGE_VERSION)
+            .header("x-stainless-os", "MacOS")
+            .header("x-stainless-arch", "arm64")
+            .header("x-stainless-retry-count", "0")
+            // Prevent compressed SSE streams from breaking line scanner
+            .header("accept-encoding", "identity");
 
         let builder = match &auth {
             AuthMode::ApiKey(key) => builder.header("x-api-key", key.as_str()),

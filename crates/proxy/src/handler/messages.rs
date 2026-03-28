@@ -17,6 +17,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use byokey_provider::CopilotExecutor;
+use byokey_provider::claude_headers::{
+    ANTHROPIC_BETA, ANTHROPIC_VERSION, RUNTIME_VERSION, SDK_PACKAGE_VERSION, USER_AGENT,
+};
 use byokey_types::{ByokError, ProviderId};
 use futures_util::TryStreamExt as _;
 use serde_json::Value;
@@ -25,9 +28,6 @@ use std::sync::Arc;
 use crate::{AppState, error::ApiError};
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages?beta=true";
-const ANTHROPIC_VERSION: &str = "2023-06-01";
-const ANTHROPIC_BETA_BASE: &str = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,prompt-caching-2024-07-31";
-const USER_AGENT: &str = "claude-cli/2.1.44 (external, sdk-cli)";
 
 // Copilot identification headers (matching VS Code Copilot Chat extension).
 const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.35.0";
@@ -69,7 +69,7 @@ fn sanitize_thinking(body: &mut Value) {
 
 /// Merge betas from the request body's `betas` array into the base beta string.
 fn build_beta_header(body: &Value) -> String {
-    let mut betas = ANTHROPIC_BETA_BASE.to_string();
+    let mut betas = ANTHROPIC_BETA.to_string();
     if let Some(arr) = body.get("betas").and_then(Value::as_array) {
         for b in arr {
             if let Some(s) = b.as_str()
@@ -141,10 +141,11 @@ pub async fn anthropic_messages(
         .header("content-type", "application/json")
         .header("accept", accept)
         .header("connection", "keep-alive")
+        .header("accept-encoding", "identity")
         .header("x-stainless-lang", "js")
         .header("x-stainless-runtime", "node")
-        .header("x-stainless-runtime-version", "v24.3.0")
-        .header("x-stainless-package-version", "0.74.0")
+        .header("x-stainless-runtime-version", RUNTIME_VERSION)
+        .header("x-stainless-package-version", SDK_PACKAGE_VERSION)
         .header("x-stainless-os", "MacOS")
         .header("x-stainless-arch", "arm64")
         .header("x-stainless-retry-count", "0")
