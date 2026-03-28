@@ -227,17 +227,6 @@ enum TimeRange: String, CaseIterable, Identifiable {
     }
 }
 
-private func formatTokens(_ count: UInt64) -> String {
-    switch count {
-    case 0..<1_000:
-        return "\(count)"
-    case 1_000..<1_000_000:
-        return String(format: "%.1fK", Double(count) / 1_000)
-    default:
-        return String(format: "%.2fM", Double(count) / 1_000_000)
-    }
-}
-
 #Preview {
     UsageView()
         .environment(ProcessManager())
