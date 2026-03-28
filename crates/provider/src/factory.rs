@@ -16,9 +16,10 @@ use std::collections::HashSet;
 use std::hash::BuildHasher;
 use std::sync::Arc;
 
+use crate::device_profile::DeviceProfileCache;
 use crate::executor::{
-    AntigravityExecutor, ClaudeExecutor, CodexExecutor, CopilotExecutor, GeminiExecutor,
-    IFlowExecutor, KimiExecutor, KiroExecutor, QwenExecutor,
+    AntigravityExecutor, ClaudeExecutor, CodexExecutor, CodexWsExecutor, CopilotExecutor,
+    GeminiExecutor, IFlowExecutor, KimiExecutor, KiroExecutor, QwenExecutor,
 };
 use crate::{registry, retry};
 
@@ -55,9 +56,28 @@ pub fn make_executor(
     http: Client,
     ratelimit: Option<Arc<RateLimitStore>>,
 ) -> Option<Box<dyn ProviderExecutor>> {
+    make_executor_with_cache(provider, api_key, auth, http, ratelimit, None)
+}
+
+/// Like [`make_executor`] but accepts an optional [`DeviceProfileCache`]
+/// that is forwarded to providers supporting fingerprint stabilisation
+/// (currently only Claude).
+pub fn make_executor_with_cache(
+    provider: &ProviderId,
+    api_key: Option<String>,
+    auth: Arc<AuthManager>,
+    http: Client,
+    ratelimit: Option<Arc<RateLimitStore>>,
+    profile_cache: Option<Arc<DeviceProfileCache>>,
+) -> Option<Box<dyn ProviderExecutor>> {
     match provider {
         ProviderId::Claude => Some(Box::new(ClaudeExecutor::new(
-            http, api_key, auth, ratelimit,
+            http,
+            api_key,
+            auth,
+            ratelimit,
+            profile_cache,
+            None,
         ))),
         ProviderId::Codex => Some(Box::new(CodexExecutor::new(http, api_key, auth, ratelimit))),
         ProviderId::Gemini => Some(Box::new(GeminiExecutor::new(
@@ -147,14 +167,20 @@ pub fn make_executor_for_model<S: BuildHasher>(
     }
 
     // Build the primary executor (single key or OAuth).
-    let primary = make_executor(
-        &provider,
-        config.api_key,
-        Arc::clone(&auth),
-        http.clone(),
-        ratelimit.clone(),
-    )
-    .ok_or_else(|| ByokError::UnsupportedModel(model.to_string()))?;
+    // For Codex with `websocket: true` and no API key, use WebSocket transport.
+    let primary: Box<dyn ProviderExecutor> =
+        if provider == ProviderId::Codex && config.websocket && config.api_key.is_none() {
+            Box::new(CodexWsExecutor::new(Arc::clone(&auth)))
+        } else {
+            make_executor(
+                &provider,
+                config.api_key,
+                Arc::clone(&auth),
+                http.clone(),
+                ratelimit.clone(),
+            )
+            .ok_or_else(|| ByokError::UnsupportedModel(model.to_string()))?
+        };
 
     // If a fallback is configured, wrap in FallbackExecutor.
     if let Some(fallback_id) = &config.fallback {

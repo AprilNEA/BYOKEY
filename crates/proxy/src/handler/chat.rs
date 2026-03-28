@@ -189,8 +189,9 @@ async fn chat_completions_inner(
     if let Some(ref thinking) = suffix.thinking {
         let provider =
             byokey_provider::resolve_provider(&suffix.model).unwrap_or(ProviderId::Claude);
+        let capability = byokey_provider::thinking_capability(&suffix.model);
         let mut body = request.into_body();
-        body = apply_thinking(body, &provider, thinking);
+        body = apply_thinking(body, &provider, thinking, capability);
         // Re-parse the modified body back into ChatRequest
         request = serde_json::from_value(body)
             .map_err(|e| ApiError::from(byokey_types::ByokError::Translation(e.to_string())))?;

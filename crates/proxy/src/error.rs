@@ -144,6 +144,7 @@ mod tests {
     #[tokio::test]
     async fn test_upstream_429_error() {
         let (status, body) = extract_error_body(ApiError(ByokError::Upstream {
+            retry_after: None,
             status: 429,
             body: "rate limited".into(),
         }))
@@ -156,6 +157,7 @@ mod tests {
     #[tokio::test]
     async fn test_upstream_401_error() {
         let (status, body) = extract_error_body(ApiError(ByokError::Upstream {
+            retry_after: None,
             status: 401,
             body: "unauthorized".into(),
         }))
@@ -168,6 +170,7 @@ mod tests {
     #[tokio::test]
     async fn test_upstream_403_error() {
         let (status, body) = extract_error_body(ApiError(ByokError::Upstream {
+            retry_after: None,
             status: 403,
             body: "forbidden".into(),
         }))
@@ -180,6 +183,7 @@ mod tests {
     #[tokio::test]
     async fn test_upstream_500_error() {
         let (status, body) = extract_error_body(ApiError(ByokError::Upstream {
+            retry_after: None,
             status: 500,
             body: "server error".into(),
         }))

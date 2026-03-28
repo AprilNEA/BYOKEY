@@ -93,6 +93,17 @@ impl ProviderId {
     }
 }
 
+/// Describes a model's thinking format capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThinkingCapability {
+    /// Numeric budgets only (e.g. Claude legacy, Gemini 2.5).
+    BudgetOnly,
+    /// Discrete effort levels only (e.g. `OpenAI`, iFlow).
+    LevelOnly,
+    /// Both budgets and levels (e.g. Claude 4.6 adaptive).
+    Hybrid,
+}
+
 /// The wire protocol format used by a provider's native API.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

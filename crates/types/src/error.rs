@@ -1,5 +1,6 @@
 //! Unified error type for the byokey workspace.
 
+use std::time::Duration;
 use thiserror::Error;
 
 /// Enumerates all error kinds that can occur across byokey crates.
@@ -47,7 +48,13 @@ pub enum ByokError {
 
     /// The upstream provider returned a non-success status.
     #[error("upstream error: status={status}, body={body}")]
-    Upstream { status: u16, body: String },
+    Upstream {
+        status: u16,
+        body: String,
+        /// Server-indicated retry delay parsed from `Retry-After` header
+        /// or response body fields (e.g. Codex `error.resets_in_seconds`).
+        retry_after: Option<Duration>,
+    },
 }
 
 // ── Feature-gated From impls ──────────────────────────────────────────────────
@@ -83,6 +90,15 @@ impl ByokError {
             _ => false,
         }
     }
+
+    /// Returns the server-indicated retry delay, if available.
+    #[must_use]
+    pub fn retry_after(&self) -> Option<Duration> {
+        match self {
+            Self::Upstream { retry_after, .. } => *retry_after,
+            _ => None,
+        }
+    }
 }
 
 /// Convenience alias used throughout the workspace.
@@ -109,6 +125,7 @@ mod tests {
         let err = ByokError::Upstream {
             status: 429,
             body: "rate limited".to_string(),
+            retry_after: None,
         };
         let s = err.to_string();
         assert!(s.contains("429"));
@@ -127,63 +144,72 @@ mod tests {
         assert!(
             ByokError::Upstream {
                 status: 429,
-                body: String::new()
+                body: String::new(),
+                retry_after: None,
             }
             .is_retryable()
         );
         assert!(
             ByokError::Upstream {
                 status: 500,
-                body: String::new()
+                body: String::new(),
+                retry_after: None,
             }
             .is_retryable()
         );
         assert!(
             ByokError::Upstream {
                 status: 502,
-                body: String::new()
+                body: String::new(),
+                retry_after: None,
             }
             .is_retryable()
         );
         assert!(
             ByokError::Upstream {
                 status: 503,
-                body: String::new()
+                body: String::new(),
+                retry_after: None,
             }
             .is_retryable()
         );
         assert!(
             ByokError::Upstream {
                 status: 504,
-                body: String::new()
+                body: String::new(),
+                retry_after: None,
             }
             .is_retryable()
         );
         assert!(
             ByokError::Upstream {
                 status: 408,
-                body: String::new()
+                body: String::new(),
+                retry_after: None,
             }
             .is_retryable()
         );
         assert!(
             !ByokError::Upstream {
                 status: 401,
-                body: String::new()
+                body: String::new(),
+                retry_after: None,
             }
             .is_retryable()
         );
         assert!(
             !ByokError::Upstream {
                 status: 403,
-                body: String::new()
+                body: String::new(),
+                retry_after: None,
             }
             .is_retryable()
         );
         assert!(
             !ByokError::Upstream {
                 status: 404,
-                body: String::new()
+                body: String::new(),
+                retry_after: None,
             }
             .is_retryable()
         );

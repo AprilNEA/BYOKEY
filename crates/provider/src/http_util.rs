@@ -109,10 +109,13 @@ impl ProviderHttp {
         if status.is_success() {
             Ok(resp)
         } else {
+            let retry_after = parse_retry_after_header(resp.headers());
             let text = resp.text().await.unwrap_or_default();
+            let retry_after = parse_retry_after_body(&text, status.as_u16()).or(retry_after);
             Err(ByokError::Upstream {
                 status: status.as_u16(),
                 body: text,
+                retry_after,
             })
         }
     }
@@ -144,6 +147,46 @@ impl ProviderHttp {
     pub fn byte_stream(resp: rquest::Response) -> ByteStream {
         Box::pin(resp.bytes_stream().map(|r| r.map_err(ByokError::from)))
     }
+}
+
+/// Parse `Retry-After` header value (seconds integer).
+fn parse_retry_after_header(headers: &rquest::header::HeaderMap) -> Option<std::time::Duration> {
+    let val = headers.get("retry-after")?.to_str().ok()?;
+    let secs: u64 = val.parse().ok()?;
+    Some(std::time::Duration::from_secs(secs))
+}
+
+/// Parse retry delay from a 429 response body (Codex `usage_limit_reached` format).
+///
+/// Checks `error.type == "usage_limit_reached"`, then extracts either
+/// `error.resets_in_seconds` or `error.resets_at` (unix timestamp).
+fn parse_retry_after_body(body: &str, status: u16) -> Option<std::time::Duration> {
+    if status != 429 {
+        return None;
+    }
+    let json: serde_json::Value = serde_json::from_str(body).ok()?;
+    let error = json.get("error")?;
+    if error.get("type").and_then(serde_json::Value::as_str) != Some("usage_limit_reached") {
+        return None;
+    }
+    // Try resets_in_seconds first (direct duration).
+    if let Some(secs) = error
+        .get("resets_in_seconds")
+        .and_then(serde_json::Value::as_u64)
+    {
+        return Some(std::time::Duration::from_secs(secs));
+    }
+    // Fallback: resets_at as unix timestamp.
+    if let Some(ts) = error.get("resets_at").and_then(serde_json::Value::as_u64) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if ts > now {
+            return Some(std::time::Duration::from_secs(ts - now));
+        }
+    }
+    None
 }
 
 #[cfg(test)]

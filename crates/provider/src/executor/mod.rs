@@ -7,6 +7,7 @@
 pub mod antigravity;
 pub mod claude;
 pub mod codex;
+pub mod codex_ws;
 pub mod copilot;
 pub mod gemini;
 pub mod iflow;
@@ -17,6 +18,7 @@ pub mod qwen;
 pub use antigravity::AntigravityExecutor;
 pub use claude::ClaudeExecutor;
 pub use codex::CodexExecutor;
+pub use codex_ws::CodexWsExecutor;
 pub use copilot::CopilotExecutor;
 pub use gemini::GeminiExecutor;
 pub use iflow::IFlowExecutor;

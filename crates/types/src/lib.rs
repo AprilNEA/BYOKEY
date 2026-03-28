@@ -13,6 +13,7 @@ pub mod traits;
 
 pub use chat::ChatRequest;
 pub use error::ByokError;
+pub use provider::ThinkingCapability;
 pub use provider::{ProtocolFormat, ProviderId};
 pub use ratelimit::{RateLimitSnapshot, RateLimitStore};
 pub use token::{AccountInfo, OAuthToken, TokenState};

@@ -22,6 +22,7 @@ pub use usage::{UsageRecorder, UsageStats};
 
 use arc_swap::ArcSwap;
 use byokey_auth::AuthManager;
+use byokey_provider::DeviceProfileCache;
 use byokey_types::{RateLimitStore, UsageStore};
 use std::sync::Arc;
 
@@ -38,6 +39,8 @@ pub struct AppState {
     pub usage: Arc<UsageRecorder>,
     /// Per-provider, per-account rate limit snapshots from upstream responses.
     pub ratelimits: Arc<RateLimitStore>,
+    /// Per-auth device fingerprint cache for Claude API headers.
+    pub device_profiles: Arc<DeviceProfileCache>,
 }
 
 impl AppState {
@@ -58,6 +61,7 @@ impl AppState {
             http,
             usage: Arc::new(UsageRecorder::new(usage_store)),
             ratelimits: Arc::new(RateLimitStore::new()),
+            device_profiles: Arc::new(DeviceProfileCache::new()),
         })
     }
 }

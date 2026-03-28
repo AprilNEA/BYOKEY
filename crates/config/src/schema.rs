@@ -16,6 +16,48 @@ pub struct ApiKeyEntry {
     pub label: Option<String>,
 }
 
+/// Default header values injected into Claude API requests.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClaudeHeaderDefaults {
+    /// User-Agent header value.
+    pub user_agent: Option<String>,
+    /// `anthropic-package-version` header value.
+    pub package_version: Option<String>,
+    /// `anthropic-runtime-version` header value.
+    pub runtime_version: Option<String>,
+    /// `anthropic-os` header value.
+    pub os: Option<String>,
+    /// `anthropic-arch` header value.
+    pub arch: Option<String>,
+    /// `anthropic-timeout` header value (seconds).
+    pub timeout: Option<u32>,
+    /// Whether to stabilize the device profile across requests.
+    pub stabilize_device_profile: Option<bool>,
+}
+
+/// Configuration for Claude request cloaking (system prompt injection + sensitive word obfuscation).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CloakConfig {
+    /// Enable cloaking for Claude requests.
+    pub enabled: bool,
+    /// Strict mode: discard user-supplied system blocks, keep only billing + agent blocks.
+    pub strict_mode: bool,
+    /// Words to obfuscate by inserting a zero-width space after the first character.
+    pub sensitive_words: Vec<String>,
+}
+
+/// Default header values injected into Codex API requests.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CodexHeaderDefaults {
+    /// User-Agent header value.
+    pub user_agent: Option<String>,
+    /// `openai-beta` header value for feature flags.
+    pub beta_features: Option<String>,
+}
+
 /// Configuration for a single provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
@@ -35,6 +77,21 @@ pub struct ProviderConfig {
     /// Fallback provider to use when the primary provider fails.
     #[serde(default)]
     pub fallback: Option<ProviderId>,
+    /// Maximum number of credentials to try before giving up.
+    #[serde(default)]
+    pub max_retry_credentials: Option<usize>,
+    /// Default headers for Claude API requests.
+    #[serde(default)]
+    pub claude_headers: ClaudeHeaderDefaults,
+    /// Default headers for Codex API requests.
+    #[serde(default)]
+    pub codex_headers: CodexHeaderDefaults,
+    /// Claude request cloaking configuration.
+    #[serde(default)]
+    pub cloak: CloakConfig,
+    /// Use WebSocket transport instead of HTTP (currently Codex only).
+    #[serde(default)]
+    pub websocket: bool,
 }
 
 impl Default for ProviderConfig {
@@ -45,6 +102,11 @@ impl Default for ProviderConfig {
             enabled: true,
             backend: None,
             fallback: None,
+            max_retry_credentials: None,
+            claude_headers: ClaudeHeaderDefaults::default(),
+            codex_headers: CodexHeaderDefaults::default(),
+            cloak: CloakConfig::default(),
+            websocket: false,
         }
     }
 }

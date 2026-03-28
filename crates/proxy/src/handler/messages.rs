@@ -17,9 +17,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use byokey_provider::CopilotExecutor;
-use byokey_provider::claude_headers::{
-    ANTHROPIC_BETA, ANTHROPIC_VERSION, RUNTIME_VERSION, SDK_PACKAGE_VERSION, USER_AGENT,
-};
+use byokey_provider::claude_headers::{ANTHROPIC_BETA, ANTHROPIC_VERSION};
 use byokey_types::{ByokError, ProviderId};
 use futures_util::TryStreamExt as _;
 use serde_json::Value;
@@ -130,6 +128,9 @@ pub async fn anthropic_messages(
         "application/json"
     };
 
+    // Resolve stable device fingerprint from the profile cache.
+    let profile = state.device_profiles.resolve("global");
+
     let builder = state
         .http
         .post(API_URL)
@@ -137,17 +138,17 @@ pub async fn anthropic_messages(
         .header("anthropic-beta", beta)
         .header("anthropic-dangerous-direct-browser-access", "true")
         .header("x-app", "cli")
-        .header("user-agent", USER_AGENT)
+        .header("user-agent", &profile.user_agent)
         .header("content-type", "application/json")
         .header("accept", accept)
         .header("connection", "keep-alive")
         .header("accept-encoding", "identity")
         .header("x-stainless-lang", "js")
         .header("x-stainless-runtime", "node")
-        .header("x-stainless-runtime-version", RUNTIME_VERSION)
-        .header("x-stainless-package-version", SDK_PACKAGE_VERSION)
-        .header("x-stainless-os", "MacOS")
-        .header("x-stainless-arch", "arm64")
+        .header("x-stainless-runtime-version", &profile.runtime_version)
+        .header("x-stainless-package-version", &profile.package_version)
+        .header("x-stainless-os", &profile.os)
+        .header("x-stainless-arch", &profile.arch)
         .header("x-stainless-retry-count", "0")
         .header("x-stainless-timeout", "600");
 
@@ -296,7 +297,11 @@ async fn copilot_messages(
             Ok(r) => {
                 let status = r.status().as_u16();
                 let text = r.text().await.unwrap_or_default();
-                let err = ByokError::Upstream { status, body: text };
+                let err = ByokError::Upstream {
+                    status,
+                    body: text,
+                    retry_after: None,
+                };
                 if !err.is_retryable() || attempt + 1 >= max_attempts {
                     return Err(ApiError(err));
                 }
@@ -332,6 +337,7 @@ async fn forward_response(resp: rquest::Response, stream: bool) -> Result<Respon
         return Err(ApiError::from(ByokError::Upstream {
             status: status.as_u16(),
             body: text,
+            retry_after: None,
         }));
     }
 

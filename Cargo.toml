@@ -80,6 +80,8 @@ regex = "1"
 futures-core = "0.3"
 futures-util = "0.3"
 bytes = "1"
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+http = "1"
 # Observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }

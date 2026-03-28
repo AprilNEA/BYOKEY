@@ -32,7 +32,9 @@ tracing.workspace = true
 hmac = "0.12"
 sha2.workspace = true
 hex = "0.4"
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "v5"] }
+tokio-tungstenite.workspace = true
+http.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

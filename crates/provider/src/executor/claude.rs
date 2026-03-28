@@ -2,10 +2,13 @@
 //!
 //! Auth: `x-api-key` for raw API keys, `Authorization: Bearer` for OAuth tokens.
 //! Format: `OpenAI` -> Anthropic (translate), Anthropic -> `OpenAI` (translate).
+use crate::cloak;
+use crate::device_profile::DeviceProfileCache;
 use crate::http_util::ProviderHttp;
 use crate::registry;
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
+use byokey_config::CloakConfig;
 use byokey_translate::{ClaudeToOpenAI, OpenAIToClaude, inject_cache_control};
 use byokey_types::{
     ChatRequest, ProviderId, RateLimitStore,
@@ -55,21 +58,35 @@ pub struct ClaudeExecutor {
     ph: ProviderHttp,
     api_key: Option<String>,
     auth: Arc<AuthManager>,
+    profile_cache: Option<Arc<DeviceProfileCache>>,
+    cloak_config: Option<CloakConfig>,
 }
 
 impl ClaudeExecutor {
     /// Creates a new Claude executor with an optional API key and auth manager.
+    ///
+    /// When `profile_cache` is `Some`, per-auth device fingerprints are
+    /// stabilised across requests instead of using static constants.
+    /// When `cloak_config` is `Some` and enabled, request cloaking is applied.
     pub fn new(
         http: Client,
         api_key: Option<String>,
         auth: Arc<AuthManager>,
         ratelimit: Option<Arc<RateLimitStore>>,
+        profile_cache: Option<Arc<DeviceProfileCache>>,
+        cloak_config: Option<CloakConfig>,
     ) -> Self {
         let mut ph = ProviderHttp::new(http);
         if let Some(store) = ratelimit {
             ph = ph.with_ratelimit(store, ProviderId::Claude);
         }
-        Self { ph, api_key, auth }
+        Self {
+            ph,
+            api_key,
+            auth,
+            profile_cache,
+            cloak_config,
+        }
     }
 
     /// Resolves the authentication mode: API key if present, otherwise OAuth token.
@@ -88,9 +105,43 @@ impl ProviderExecutor for ClaudeExecutor {
         let stream = request.stream;
         let mut body = OpenAIToClaude.translate_request(request.into_body())?;
         body = inject_cache_control(body);
+
+        // Apply cloaking before setting stream flag (payload hash covers the pre-stream body).
+        if let Some(ref cc) = self.cloak_config
+            && cc.enabled
+        {
+            let serialized = serde_json::to_vec(&body).unwrap_or_default();
+            cloak::apply_cloaking(&mut body, cc, &serialized);
+        }
+
         body["stream"] = Value::Bool(stream);
 
         let auth = self.get_auth().await?;
+
+        // Resolve fingerprint: use cached profile when available, else statics.
+        let scope_key = match &auth {
+            AuthMode::ApiKey(k) => format!("api_key:{k}"),
+            AuthMode::Bearer(_) => "global".to_string(),
+        };
+
+        let (ua, pkg_ver, rt_ver, os, arch) = if let Some(cache) = &self.profile_cache {
+            let p = cache.resolve(&scope_key);
+            (
+                p.user_agent,
+                p.package_version,
+                p.runtime_version,
+                p.os,
+                p.arch,
+            )
+        } else {
+            (
+                USER_AGENT.to_string(),
+                SDK_PACKAGE_VERSION.to_string(),
+                RUNTIME_VERSION.to_string(),
+                "MacOS".to_string(),
+                "arm64".to_string(),
+            )
+        };
 
         let builder = self
             .ph
@@ -100,15 +151,15 @@ impl ProviderExecutor for ClaudeExecutor {
             .header("anthropic-beta", ANTHROPIC_BETA)
             .header("anthropic-dangerous-direct-browser-access", "true")
             .header("x-app", "cli")
-            .header("user-agent", USER_AGENT)
+            .header("user-agent", &ua)
             .header("content-type", "application/json")
             // Stainless SDK fingerprint headers — mimic real Claude Code client
             .header("x-stainless-lang", "js")
             .header("x-stainless-runtime", "node")
-            .header("x-stainless-runtime-version", RUNTIME_VERSION)
-            .header("x-stainless-package-version", SDK_PACKAGE_VERSION)
-            .header("x-stainless-os", "MacOS")
-            .header("x-stainless-arch", "arm64")
+            .header("x-stainless-runtime-version", &rt_ver)
+            .header("x-stainless-package-version", &pkg_ver)
+            .header("x-stainless-os", &os)
+            .header("x-stainless-arch", &arch)
             .header("x-stainless-retry-count", "0")
             // Prevent compressed SSE streams from breaking line scanner
             .header("accept-encoding", "identity");
@@ -361,7 +412,7 @@ mod tests {
     fn make_executor() -> ClaudeExecutor {
         let store = Arc::new(InMemoryTokenStore::new());
         let auth = Arc::new(AuthManager::new(store, rquest::Client::new()));
-        ClaudeExecutor::new(Client::new(), None, auth, None)
+        ClaudeExecutor::new(Client::new(), None, auth, None, None, None)
     }
 
     #[test]
@@ -376,7 +427,14 @@ mod tests {
     fn test_supported_models_with_api_key() {
         let store = Arc::new(InMemoryTokenStore::new());
         let auth = Arc::new(AuthManager::new(store, rquest::Client::new()));
-        let ex = ClaudeExecutor::new(Client::new(), Some("sk-ant-test".into()), auth, None);
+        let ex = ClaudeExecutor::new(
+            Client::new(),
+            Some("sk-ant-test".into()),
+            auth,
+            None,
+            None,
+            None,
+        );
         assert!(!ex.supported_models().is_empty());
     }
 }

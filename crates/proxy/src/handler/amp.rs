@@ -33,6 +33,17 @@ const HOP_BY_HOP: &[&str] = &[
 /// 共享代理模式下需要从客户端请求中剥离的认证头。
 const CLIENT_AUTH_HEADERS: &[&str] = &["authorization", "x-api-key", "x-goog-api-key"];
 
+/// Headers that can fingerprint or reveal the client's network identity.
+const FINGERPRINT_HEADERS: &[&str] = &[
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-real-ip",
+    "forwarded",
+    "via",
+    "priority",
+];
+
 /// Redirects Amp CLI to the web login page.
 pub async fn login_redirect() -> impl IntoResponse {
     (
@@ -83,6 +94,12 @@ pub async fn management_proxy(
             continue;
         }
         if strip_client_auth && CLIENT_AUTH_HEADERS.contains(&name_str) {
+            continue;
+        }
+        if FINGERPRINT_HEADERS.contains(&name_str)
+            || name_str.starts_with("sec-ch-ua-")
+            || name_str.starts_with("sec-fetch-")
+        {
             continue;
         }
         if let (Ok(n), Ok(v)) = (

@@ -136,6 +136,12 @@ impl CodexExecutor {
     }
 }
 
+/// Generates a deterministic prompt cache key from an API key using UUID v5.
+fn prompt_cache_key(api_key: &str) -> String {
+    let seed = format!("cli-proxy-api:codex:prompt-cache:{api_key}");
+    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, seed.as_bytes()).to_string()
+}
+
 /// Generates a random UUID v4 string.
 fn random_uuid() -> String {
     use rand::Rng as _;
@@ -156,7 +162,7 @@ fn random_uuid() -> String {
 /// Wraps a raw Codex SSE `ByteStream` and translates its events to
 /// `OpenAI` chat completion chunk SSE format line-by-line.
 #[allow(clippy::too_many_lines)]
-fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStream {
+pub(crate) fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStream {
     struct State {
         inner: ByteStream,
         buf: Vec<u8>,
@@ -327,13 +333,17 @@ impl ProviderExecutor for CodexExecutor {
         }
 
         // API key → standard OpenAI Chat Completions
-        let body = request.into_body();
+        let mut body = request.into_body();
+        let cache_key = prompt_cache_key(&token);
+        body["prompt_cache_key"] = Value::String(cache_key.clone());
         let builder = self
             .ph
             .client()
             .post(OPENAI_API_URL)
             .header("authorization", format!("Bearer {token}"))
             .header("content-type", "application/json")
+            .header("Conversation_id", &cache_key)
+            .header("Session_id", &cache_key)
             .json(&body);
 
         self.ph.send_passthrough(builder, stream).await

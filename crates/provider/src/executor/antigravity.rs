@@ -273,6 +273,7 @@ impl ProviderExecutor for AntigravityExecutor {
             return Err(ByokError::Upstream {
                 status: status.as_u16(),
                 body: text,
+                retry_after: None,
             });
         }
 

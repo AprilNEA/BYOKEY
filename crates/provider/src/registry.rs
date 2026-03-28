@@ -1,6 +1,18 @@
 //! Model registry: static model lists and provider resolution.
 
-use byokey_types::ProviderId;
+use byokey_types::{ProviderId, ThinkingCapability};
+
+/// Per-model thinking configuration support metadata.
+pub struct ThinkingSupport {
+    /// Minimum allowed thinking budget (tokens).
+    pub min: u32,
+    /// Maximum allowed thinking budget (tokens).
+    pub max: u32,
+    /// Supported discrete effort levels (e.g. `["low", "medium", "high", "max"]`).
+    pub levels: &'static [&'static str],
+    /// Whether a budget of 0 (disabled) is valid for this model.
+    pub zero_allowed: bool,
+}
 
 /// A single model entry in the registry, mapping a model ID to its providers.
 pub struct ModelEntry {
@@ -8,6 +20,8 @@ pub struct ModelEntry {
     pub id: &'static str,
     /// Providers that can serve this model, in priority order.
     pub providers: &'static [ProviderId],
+    /// Thinking support metadata, if the model supports extended thinking.
+    pub thinking: Option<&'static ThinkingSupport>,
 }
 
 /// Unified model registry. Provider order within each entry determines
@@ -17,249 +31,313 @@ const REGISTRY: &[ModelEntry] = &[
     ModelEntry {
         id: "o3",
         providers: &[ProviderId::Codex],
+        thinking: None,
     },
     ModelEntry {
         id: "o4-mini",
         providers: &[ProviderId::Codex],
+        thinking: None,
     },
     ModelEntry {
         id: "gpt-4-turbo",
         providers: &[ProviderId::Codex],
+        thinking: None,
     },
     ModelEntry {
         id: "gpt-4",
         providers: &[ProviderId::Codex],
+        thinking: None,
     },
     // Codex-primary, also on Copilot
     ModelEntry {
         id: "gpt-5.4",
         providers: &[ProviderId::Codex, ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "gpt-5.4-mini",
         providers: &[ProviderId::Codex, ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "gpt-5.4-nano",
         providers: &[ProviderId::Codex],
+        thinking: None,
     },
     ModelEntry {
         id: "gpt-5.3-codex",
         providers: &[ProviderId::Codex, ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "gpt-5.3-codex-spark",
         providers: &[ProviderId::Codex],
+        thinking: None,
     },
     ModelEntry {
         id: "gpt-5.2-codex",
         providers: &[ProviderId::Codex, ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "gpt-5.2",
         providers: &[ProviderId::Codex, ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "gpt-5.1-codex-max",
         providers: &[ProviderId::Codex, ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "gpt-5.1-codex",
         providers: &[ProviderId::Codex, ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "gpt-5.1-codex-mini",
         providers: &[ProviderId::Codex, ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "gpt-5.1",
         providers: &[ProviderId::Codex, ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "gpt-5-codex",
         providers: &[ProviderId::Codex],
+        thinking: None,
     },
     ModelEntry {
         id: "gpt-5-codex-mini",
         providers: &[ProviderId::Codex],
+        thinking: None,
     },
     ModelEntry {
         id: "gpt-5",
         providers: &[ProviderId::Codex, ProviderId::Copilot],
+        thinking: None,
     },
     // Copilot-only
     ModelEntry {
         id: "gpt-4o",
         providers: &[ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "gpt-4.1",
         providers: &[ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "gpt-5-mini",
         providers: &[ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "raptor-mini",
         providers: &[ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "goldeneye",
         providers: &[ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "grok-code-fast-1",
         providers: &[ProviderId::Copilot],
+        thinking: None,
     },
     // Claude (Anthropic — dashes)
     ModelEntry {
         id: "claude-opus-4-6",
         providers: &[ProviderId::Claude],
+        thinking: Some(&ThinkingSupport {
+            min: 1024,
+            max: 128_000,
+            levels: &["low", "medium", "high", "max"],
+            zero_allowed: false,
+        }),
     },
     ModelEntry {
         id: "claude-opus-4-5",
         providers: &[ProviderId::Claude],
+        thinking: None,
     },
     ModelEntry {
         id: "claude-sonnet-4-5",
         providers: &[ProviderId::Claude, ProviderId::Antigravity],
+        thinking: None,
     },
     ModelEntry {
         id: "claude-haiku-4-5-20251001",
         providers: &[ProviderId::Claude],
+        thinking: None,
     },
     // Copilot Claude (GitHub — dots)
     ModelEntry {
         id: "claude-opus-4.6",
         providers: &[ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "claude-opus-4.5",
         providers: &[ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "claude-sonnet-4.6",
         providers: &[ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "claude-sonnet-4.5",
         providers: &[ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "claude-sonnet-4",
         providers: &[ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "claude-haiku-4.5",
         providers: &[ProviderId::Copilot],
+        thinking: None,
     },
     // Gemini (Google AI)
     ModelEntry {
         id: "gemini-2.0-flash",
         providers: &[ProviderId::Gemini],
+        thinking: None,
     },
     ModelEntry {
         id: "gemini-2.0-flash-lite",
         providers: &[ProviderId::Gemini],
+        thinking: None,
     },
     ModelEntry {
         id: "gemini-1.5-pro",
         providers: &[ProviderId::Gemini],
+        thinking: None,
     },
     ModelEntry {
         id: "gemini-1.5-flash",
         providers: &[ProviderId::Gemini],
+        thinking: None,
     },
     // Copilot Gemini (GitHub)
     ModelEntry {
         id: "gemini-2.5-pro",
         providers: &[ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "gemini-3-flash",
         providers: &[ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "gemini-3-pro",
         providers: &[ProviderId::Copilot],
+        thinking: None,
     },
     ModelEntry {
         id: "gemini-3.1-pro",
         providers: &[ProviderId::Copilot],
+        thinking: None,
     },
     // Kiro
     ModelEntry {
         id: "kiro-default",
         providers: &[ProviderId::Kiro],
+        thinking: None,
     },
     // Antigravity
     ModelEntry {
         id: "ag-gemini-2.5-flash",
         providers: &[ProviderId::Antigravity],
+        thinking: None,
     },
     ModelEntry {
         id: "ag-gemini-2.5-pro",
         providers: &[ProviderId::Antigravity],
+        thinking: None,
     },
     ModelEntry {
         id: "ag-claude-sonnet-4-5",
         providers: &[ProviderId::Antigravity],
+        thinking: None,
     },
     // Qwen
     ModelEntry {
         id: "qwen3-coder-plus",
         providers: &[ProviderId::Qwen],
+        thinking: None,
     },
     ModelEntry {
         id: "qwen3-235b-a22b",
         providers: &[ProviderId::Qwen],
+        thinking: None,
     },
     ModelEntry {
         id: "qwen3-32b",
         providers: &[ProviderId::Qwen],
+        thinking: None,
     },
     ModelEntry {
         id: "qwen3-14b",
         providers: &[ProviderId::Qwen],
+        thinking: None,
     },
     ModelEntry {
         id: "qwen3-8b",
         providers: &[ProviderId::Qwen],
+        thinking: None,
     },
     ModelEntry {
         id: "qwen3-max",
         providers: &[ProviderId::Qwen],
+        thinking: None,
     },
     ModelEntry {
         id: "qwen-plus",
         providers: &[ProviderId::Qwen],
+        thinking: None,
     },
     ModelEntry {
         id: "qwen-turbo",
         providers: &[ProviderId::Qwen],
+        thinking: None,
     },
     // Kimi
     ModelEntry {
         id: "kimi-k2-0711",
         providers: &[ProviderId::Kimi],
+        thinking: None,
     },
     // iFlow
     ModelEntry {
         id: "glm-4.5",
         providers: &[ProviderId::IFlow],
+        thinking: None,
     },
     ModelEntry {
         id: "glm-4.5-air",
         providers: &[ProviderId::IFlow],
+        thinking: None,
     },
     ModelEntry {
         id: "glm-z1-flash",
         providers: &[ProviderId::IFlow],
+        thinking: None,
     },
     ModelEntry {
         id: "kimi-k2",
         providers: &[ProviderId::IFlow],
+        thinking: None,
     },
 ];
 
@@ -307,6 +385,28 @@ where
 #[must_use]
 pub fn resolve_provider(model: &str) -> Option<ProviderId> {
     resolve_provider_with(model, |_| true)
+}
+
+/// Returns the thinking support metadata for a model, if it supports extended thinking.
+#[must_use]
+pub fn thinking_support(model: &str) -> Option<&'static ThinkingSupport> {
+    REGISTRY
+        .iter()
+        .find(|e| e.id == model)
+        .and_then(|e| e.thinking)
+}
+
+/// Returns the thinking capability classification for a model.
+#[must_use]
+pub fn thinking_capability(model: &str) -> Option<ThinkingCapability> {
+    let support = thinking_support(model)?;
+    let has_budget = support.min > 0 || support.max > 0;
+    let has_levels = !support.levels.is_empty();
+    Some(match (has_budget, has_levels) {
+        (true, true) => ThinkingCapability::Hybrid,
+        (false, true) => ThinkingCapability::LevelOnly,
+        (true | false, false) => ThinkingCapability::BudgetOnly,
+    })
 }
 
 /// Returns `true` if the model is available on the Copilot **Free** tier.

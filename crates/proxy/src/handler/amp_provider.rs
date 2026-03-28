@@ -114,6 +114,7 @@ pub async fn codex_responses_passthrough(
         return Err(ApiError::from(ByokError::Upstream {
             status: status.as_u16(),
             body: text,
+            retry_after: None,
         }));
     }
 
@@ -230,6 +231,7 @@ pub async fn gemini_native_passthrough(
         return Err(ApiError::from(ByokError::Upstream {
             status: status.as_u16(),
             body: text,
+            retry_after: None,
         }));
     }
 
@@ -385,8 +387,20 @@ fn byte_stream_to_gemini_sse(
 /// 共享代理模式下需要从客户端请求中剥离的认证头。
 const CLIENT_AUTH_HEADERS: &[&str] = &["authorization", "x-api-key", "x-goog-api-key"];
 
+/// Headers that can fingerprint or reveal the client's network identity.
+const FINGERPRINT_HEADERS: &[&str] = &[
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-real-ip",
+    "forwarded",
+    "via",
+    "priority",
+];
+
 /// Handles `ANY /api/{*path}` — forwards non-provider `ampcode.com` management
 /// routes (auth, threads, telemetry, etc.) transparently to the upstream.
+#[allow(clippy::too_many_lines)]
 pub async fn amp_management_proxy(
     State(state): State<Arc<AppState>>,
     method: Method,
@@ -423,6 +437,12 @@ pub async fn amp_management_proxy(
             continue;
         }
         if strip_client_auth && CLIENT_AUTH_HEADERS.contains(&name_str) {
+            continue;
+        }
+        if FINGERPRINT_HEADERS.contains(&name_str)
+            || name_str.starts_with("sec-ch-ua-")
+            || name_str.starts_with("sec-fetch-")
+        {
             continue;
         }
         if let (Ok(n), Ok(v)) = (

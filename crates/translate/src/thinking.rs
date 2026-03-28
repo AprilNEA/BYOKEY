@@ -4,7 +4,7 @@
 //! of thinking budget parameters, and per-provider thinking configuration
 //! parsed from model name suffixes.
 
-use byokey_types::ProviderId;
+use byokey_types::{ProviderId, ThinkingCapability};
 use serde_json::{Value, json};
 
 /// Handles extraction and injection of Claude extended thinking blocks.
@@ -163,14 +163,24 @@ fn parse_thinking_value(value: &str) -> Option<ThinkingConfig> {
 /// Apply thinking configuration to a request body based on the resolved provider.
 ///
 /// Different providers use different mechanisms:
-/// - **Claude**: `thinking.type` + `thinking.budget_tokens`, adjust `max_tokens`
+/// - **Claude (legacy)**: `thinking.type: "enabled"` + `thinking.budget_tokens`
+/// - **Claude 4.6 (adaptive)**: `thinking.type: "adaptive"` + `output_config.effort`
 /// - **Codex**: `reasoning.effort` (low/medium/high)
 /// - **Gemini/Antigravity**: `generationConfig.thinkingConfig.thinkingBudget`
 /// - **`OpenAI` compat (Copilot)**: `reasoning_effort` field
 ///
+/// The `capability` parameter determines whether Claude uses adaptive thinking
+/// (`Hybrid` = has both budget and levels) or legacy budget mode (`BudgetOnly`).
+///
 /// Returns the (possibly modified) request body with the thinking config applied.
 #[must_use]
-pub fn apply_thinking(mut body: Value, provider: &ProviderId, config: &ThinkingConfig) -> Value {
+pub fn apply_thinking(
+    mut body: Value,
+    provider: &ProviderId,
+    config: &ThinkingConfig,
+    capability: Option<ThinkingCapability>,
+) -> Value {
+    let is_adaptive = capability == Some(ThinkingCapability::Hybrid);
     match (provider, config) {
         // Disabled: remove all thinking-related fields across all providers
         (_, ThinkingConfig::Disabled) => {
@@ -190,9 +200,14 @@ pub fn apply_thinking(mut body: Value, provider: &ProviderId, config: &ThinkingC
         }
 
         // ── Auto mode ───────────────────────────────────────────────────
-        // Claude: enable thinking without specifying budget (let API decide).
+        // Claude adaptive: thinking.type="adaptive" (let API pick effort).
+        // Claude legacy: thinking.type="enabled" without budget.
         (ProviderId::Claude, ThinkingConfig::Auto) => {
-            body["thinking"] = json!({"type": "enabled"});
+            if is_adaptive {
+                body["thinking"] = json!({"type": "adaptive"});
+            } else {
+                body["thinking"] = json!({"type": "enabled"});
+            }
             if let Some(obj) = body.as_object_mut() {
                 obj.remove("output_config");
             }
@@ -203,8 +218,16 @@ pub fn apply_thinking(mut body: Value, provider: &ProviderId, config: &ThinkingC
             ThinkingExtractor::inject_thinking(body, *budget)
         }
         (ProviderId::Claude, ThinkingConfig::Level(level)) => {
-            let budget = level_to_budget(*level);
-            ThinkingExtractor::inject_thinking(body, budget)
+            if is_adaptive {
+                // Claude 4.6: use adaptive thinking with effort
+                body["thinking"] = json!({"type": "adaptive"});
+                body["output_config"] = json!({"effort": level_to_claude_effort(*level)});
+                body
+            } else {
+                // Legacy: convert level to budget
+                let budget = level_to_budget(*level);
+                ThinkingExtractor::inject_thinking(body, budget)
+            }
         }
 
         // ── Codex ───────────────────────────────────────────────────────
@@ -275,6 +298,18 @@ fn budget_to_effort(budget: u32) -> &'static str {
         "medium"
     } else {
         "high"
+    }
+}
+
+/// Maps a thinking level to a Claude adaptive effort string.
+///
+/// Claude 4.6 supports: low, medium, high, max.
+fn level_to_claude_effort(level: ThinkingLevel) -> &'static str {
+    match level {
+        ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
+        ThinkingLevel::Medium => "medium",
+        ThinkingLevel::High | ThinkingLevel::XHigh => "high",
+        ThinkingLevel::Max => "max",
     }
 }
 
@@ -451,7 +486,12 @@ mod tests {
     #[test]
     fn test_apply_claude_budget() {
         let body = json!({"model": "claude-opus-4-5", "max_tokens": 100});
-        let out = apply_thinking(body, &ProviderId::Claude, &ThinkingConfig::Budget(10000));
+        let out = apply_thinking(
+            body,
+            &ProviderId::Claude,
+            &ThinkingConfig::Budget(10000),
+            None,
+        );
         assert_eq!(out["thinking"]["type"], "enabled");
         assert_eq!(out["thinking"]["budget_tokens"], 10000);
         assert!(out["max_tokens"].as_u64().unwrap() > 10000);
@@ -464,6 +504,7 @@ mod tests {
             body,
             &ProviderId::Claude,
             &ThinkingConfig::Level(ThinkingLevel::High),
+            None,
         );
         assert_eq!(out["thinking"]["type"], "enabled");
         assert_eq!(out["thinking"]["budget_tokens"], 24_576);
@@ -476,6 +517,7 @@ mod tests {
             body,
             &ProviderId::Codex,
             &ThinkingConfig::Level(ThinkingLevel::High),
+            None,
         );
         assert_eq!(out["reasoning"]["effort"], "high");
     }
@@ -483,21 +525,31 @@ mod tests {
     #[test]
     fn test_apply_codex_budget_low() {
         let body = json!({"model": "o4-mini"});
-        let out = apply_thinking(body, &ProviderId::Codex, &ThinkingConfig::Budget(500));
+        let out = apply_thinking(body, &ProviderId::Codex, &ThinkingConfig::Budget(500), None);
         assert_eq!(out["reasoning"]["effort"], "low");
     }
 
     #[test]
     fn test_apply_codex_budget_medium() {
         let body = json!({"model": "o4-mini"});
-        let out = apply_thinking(body, &ProviderId::Codex, &ThinkingConfig::Budget(2000));
+        let out = apply_thinking(
+            body,
+            &ProviderId::Codex,
+            &ThinkingConfig::Budget(2000),
+            None,
+        );
         assert_eq!(out["reasoning"]["effort"], "medium");
     }
 
     #[test]
     fn test_apply_gemini_budget() {
         let body = json!({"model": "gemini-2.0-flash"});
-        let out = apply_thinking(body, &ProviderId::Gemini, &ThinkingConfig::Budget(16384));
+        let out = apply_thinking(
+            body,
+            &ProviderId::Gemini,
+            &ThinkingConfig::Budget(16384),
+            None,
+        );
         assert_eq!(
             out["generationConfig"]["thinkingConfig"]["thinkingBudget"],
             16384
@@ -511,6 +563,7 @@ mod tests {
             body,
             &ProviderId::Gemini,
             &ThinkingConfig::Level(ThinkingLevel::Medium),
+            None,
         );
         assert_eq!(
             out["generationConfig"]["thinkingConfig"]["thinkingBudget"],
@@ -525,6 +578,7 @@ mod tests {
             body,
             &ProviderId::Claude,
             &ThinkingConfig::Level(ThinkingLevel::Max),
+            None,
         );
         assert_eq!(out["thinking"]["type"], "enabled");
         assert_eq!(out["thinking"]["budget_tokens"], 128_000);
@@ -574,7 +628,7 @@ mod tests {
     #[test]
     fn test_apply_claude_auto() {
         let body = json!({"model": "claude-opus-4-5", "max_tokens": 8192});
-        let out = apply_thinking(body, &ProviderId::Claude, &ThinkingConfig::Auto);
+        let out = apply_thinking(body, &ProviderId::Claude, &ThinkingConfig::Auto, None);
         assert_eq!(out["thinking"]["type"], "enabled");
         // Auto mode: no budget_tokens specified
         assert!(out["thinking"].get("budget_tokens").is_none());
@@ -583,7 +637,12 @@ mod tests {
     #[test]
     fn test_apply_codex_auto_passthrough() {
         let body = json!({"model": "o4-mini"});
-        let out = apply_thinking(body.clone(), &ProviderId::Codex, &ThinkingConfig::Auto);
+        let out = apply_thinking(
+            body.clone(),
+            &ProviderId::Codex,
+            &ThinkingConfig::Auto,
+            None,
+        );
         assert_eq!(out, body);
     }
 
@@ -594,6 +653,7 @@ mod tests {
             body,
             &ProviderId::Copilot,
             &ThinkingConfig::Level(ThinkingLevel::Low),
+            None,
         );
         assert_eq!(out["reasoning_effort"], "low");
     }
@@ -608,7 +668,7 @@ mod tests {
             "output_config": {"effort": "high"},
             "generationConfig": {"thinkingConfig": {"thinkingBudget": 1000}}
         });
-        let out = apply_thinking(body, &ProviderId::Claude, &ThinkingConfig::Disabled);
+        let out = apply_thinking(body, &ProviderId::Claude, &ThinkingConfig::Disabled, None);
         assert!(out.get("thinking").is_none());
         assert!(out.get("reasoning").is_none());
         assert!(out.get("reasoning_effort").is_none());
@@ -629,8 +689,47 @@ mod tests {
             body,
             &ProviderId::Qwen,
             &ThinkingConfig::Level(ThinkingLevel::Medium),
+            None,
         );
         assert_eq!(out["reasoning_effort"], "medium");
+    }
+
+    #[test]
+    fn test_apply_claude_adaptive_level() {
+        let body = json!({"model": "claude-opus-4-6"});
+        let out = apply_thinking(
+            body,
+            &ProviderId::Claude,
+            &ThinkingConfig::Level(ThinkingLevel::High),
+            Some(ThinkingCapability::Hybrid),
+        );
+        assert_eq!(out["thinking"]["type"], "adaptive");
+        assert_eq!(out["output_config"]["effort"], "high");
+    }
+
+    #[test]
+    fn test_apply_claude_adaptive_auto() {
+        let body = json!({"model": "claude-opus-4-6"});
+        let out = apply_thinking(
+            body,
+            &ProviderId::Claude,
+            &ThinkingConfig::Auto,
+            Some(ThinkingCapability::Hybrid),
+        );
+        assert_eq!(out["thinking"]["type"], "adaptive");
+        assert!(out.get("output_config").is_none());
+    }
+
+    #[test]
+    fn test_apply_claude_adaptive_max_effort() {
+        let body = json!({"model": "claude-opus-4-6"});
+        let out = apply_thinking(
+            body,
+            &ProviderId::Claude,
+            &ThinkingConfig::Level(ThinkingLevel::Max),
+            Some(ThinkingCapability::Hybrid),
+        );
+        assert_eq!(out["output_config"]["effort"], "max");
     }
 
     #[test]
@@ -640,6 +739,7 @@ mod tests {
             body.clone(),
             &ProviderId::Qwen,
             &ThinkingConfig::Budget(8000),
+            None,
         );
         assert_eq!(out, body);
     }

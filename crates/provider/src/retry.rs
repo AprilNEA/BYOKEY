@@ -58,7 +58,10 @@ impl RetryExecutor {
 #[async_trait]
 impl ProviderExecutor for RetryExecutor {
     async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
-        let max_attempts = self.router.len().min(3);
+        let max_attempts = self
+            .router
+            .max_retry()
+            .unwrap_or_else(|| self.router.len().min(3));
         let mut last_err = None;
 
         for _ in 0..max_attempts {
@@ -87,7 +90,11 @@ impl ProviderExecutor for RetryExecutor {
                         error = %e,
                         "retryable error, rotating key"
                     );
-                    self.router.mark_error(&key);
+                    if let Some(delay) = e.retry_after() {
+                        self.router.mark_error_with_delay(&key, delay);
+                    } else {
+                        self.router.mark_error(&key);
+                    }
                     last_err = Some(e);
                 }
                 Err(e) => return Err(e),
