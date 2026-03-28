@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1](https://github.com/AprilNEA/BYOKEY/compare/v0.7.0...v0.7.1) - 2026-03-28
+
+### Other
+
+- *(desktop)* switch from menu-bar-only to windowed app with menu bar extra
+- use BYOKEY branding in user-visible text
+- add Makefile for dev workflow
+- *(desktop)* extract build phase scripts to desktop/scripts/
+- *(desktop)* replace launchd daemon with menu bar app
+
 ## [0.7.0](https://github.com/AprilNEA/BYOKEY/compare/v0.6.0...v0.7.0) - 2026-03-27
 
 ### Fixed
