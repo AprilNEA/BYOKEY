@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-store-v0.7.1...byokey-store-v0.8.0) - 2026-03-28
+
+### Added
+
+- *(usage)* add streaming token tracking, persistence, and time-series API
+
 ## [0.7.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-store-v0.6.0...byokey-store-v0.7.0) - 2026-03-27
 
 ### Other
