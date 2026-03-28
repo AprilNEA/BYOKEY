@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 @Observable
 final class ProcessManager {
@@ -11,7 +12,7 @@ final class ProcessManager {
     private var process: Process?
     private var healthTask: Task<Void, Never>?
     private var shouldAutoRestart = true
-    private var currentPort = AppEnvironment.defaultPort
+    private(set) var currentPort = AppEnvironment.defaultPort
 
     /// Bundled binary in release; cargo target directory in development.
     static var binaryURL: URL {
@@ -83,7 +84,7 @@ final class ProcessManager {
                 self.process = nil
 
                 if p.terminationStatus != 0 {
-                    let tail = self.logs.suffix(5).joined(separator: "\n")
+                    let tail = self.logs.suffix(5).map { AnsiParser.strip($0) }.joined(separator: "\n")
                     self.errorMessage = tail.isEmpty ? "Process exited with code \(p.terminationStatus)" : tail
                     self.showError = true
                 }
@@ -148,7 +149,7 @@ final class ProcessManager {
 
     @discardableResult
     func checkReachability() async -> Bool {
-        let url = AppEnvironment.baseURL.appendingPathComponent("v0/management/status")
+        let url = URL(string: "http://127.0.0.1:\(currentPort)/v0/management/status")!
         var request = URLRequest(url: url, timeoutInterval: 2)
         request.httpMethod = "GET"
         do {

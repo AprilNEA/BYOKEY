@@ -3,11 +3,29 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(ProcessManager.self) private var pm
+    @Environment(AppEnvironment.self) private var appEnv
     @State private var config = ConfigManager()
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
         Form {
+            if config.needsRestart, pm.isRunning {
+                Section {
+                    HStack {
+                        Label("Settings changed. Restart to apply.", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.callout)
+                        Spacer()
+                        Button("Restart Now") {
+                            config.clearRestartFlag()
+                            pm.restart(port: config.port)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                }
+            }
+
             Section("General") {
                 Toggle("Launch at Login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, newValue in
@@ -80,12 +98,11 @@ struct SettingsView: View {
                 }
             } header: {
                 Text("Config File")
-            } footer: {
-                Text("Changes are saved automatically. Restart the server to apply.")
             }
 
             Section {
                 Button("Restart Server") {
+                    config.clearRestartFlag()
                     pm.restart(port: config.port)
                 }
                 .disabled(!pm.isRunning)
@@ -93,11 +110,18 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Settings")
-        .onAppear { config.load() }
+        .onAppear {
+            config.load()
+            appEnv.port = config.port
+        }
+        .onChange(of: config.port) { _, newPort in
+            appEnv.port = newPort
+        }
     }
 }
 
 #Preview {
     SettingsView()
+        .environment(AppEnvironment.shared)
         .environment(ProcessManager())
 }

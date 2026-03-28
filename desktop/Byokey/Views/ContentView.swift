@@ -1,40 +1,58 @@
 import SwiftUI
 
-enum SidebarItem: String, CaseIterable, Identifiable {
-    case general = "General"
+enum SidebarItem: String, Identifiable {
+    case dashboard = "Dashboard"
     case accounts = "Accounts"
+    case models = "Models"
+    case amp = "Amp"
+    case usage = "Usage"
     case settings = "Settings"
 
     var id: Self { self }
-
-    var icon: String {
-        switch self {
-        case .general: "house"
-        case .accounts: "person.2"
-        case .settings: "gearshape"
-        }
-    }
 }
 
 struct ContentView: View {
     @Environment(ProcessManager.self) private var pm
-    @State private var selection: SidebarItem? = .general
+    @State private var selection: SidebarItem? = .dashboard
 
     var body: some View {
         @Bindable var pm = pm
 
         NavigationSplitView {
-            List(SidebarItem.allCases, selection: $selection) { item in
-                Label(item.rawValue, systemImage: item.icon)
+            List(selection: $selection) {
+                Label("Dashboard", systemImage: "square.grid.2x2")
+                    .tag(SidebarItem.dashboard)
+
+                Section("Provider") {
+                    Label("Accounts", systemImage: "person.2")
+                        .tag(SidebarItem.accounts)
+                    Label("Models", systemImage: "cpu")
+                        .tag(SidebarItem.models)
+                }
+
+                Section("Agent") {
+                    Label("Amp", systemImage: "bolt.fill")
+                        .tag(SidebarItem.amp)
+                }
+
+                Section("Proxy") {
+                    Label("Usage", systemImage: "chart.bar")
+                        .tag(SidebarItem.usage)
+                    Label("Settings", systemImage: "gearshape")
+                        .tag(SidebarItem.settings)
+                }
             }
             .navigationSplitViewColumnWidth(min: 160, ideal: 180, max: 220)
             .listStyle(.sidebar)
         } detail: {
             switch selection {
-            case .general:  GeneralView()
-            case .accounts: AccountsView()
-            case .settings: SettingsView()
-            case nil:       Text("Select a page")
+            case .dashboard: GeneralView()
+            case .accounts:  AccountsView()
+            case .models:    ModelsView()
+            case .amp:       AmpView()
+            case .usage:     UsageView()
+            case .settings:  SettingsView()
+            case nil:        Text("Select a page")
             }
         }
         .frame(minWidth: 480, minHeight: 320)
@@ -49,5 +67,7 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
+        .environment(AppEnvironment.shared)
         .environment(ProcessManager())
+        .environment(DataService())
 }

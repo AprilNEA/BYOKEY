@@ -2,18 +2,31 @@ import SwiftUI
 
 @main
 struct ByokeyApp: App {
+    @State private var appEnv = AppEnvironment.shared
     @State private var processManager = ProcessManager()
+    @State private var dataService = DataService()
 
     var body: some Scene {
         Window("BYOKEY", id: "main") {
             ContentView()
+                .environment(appEnv)
                 .environment(processManager)
-                .onAppear { processManager.start() }
+                .environment(dataService)
+                .onAppear {
+                    let config = ConfigManager()
+                    config.load()
+                    appEnv.port = config.port
+                    processManager.start(port: appEnv.port)
+                }
+                .onChange(of: processManager.isReachable) { _, newValue in
+                    dataService.isServerReachable = newValue
+                }
         }
         .defaultSize(width: 720, height: 480)
 
         MenuBarExtra {
             MenuBarMenu()
+                .environment(appEnv)
                 .environment(processManager)
         } label: {
             Image(systemName: "server.rack")

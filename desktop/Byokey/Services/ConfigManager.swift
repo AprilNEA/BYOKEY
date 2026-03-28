@@ -28,6 +28,7 @@ final class ConfigManager {
     // MARK: - State
 
     private(set) var configFileExists = false
+    private(set) var needsRestart = false
     private var rawConfig: [String: Any] = [:]
     private var isLoading = false
     private var saveTask: Task<Void, Never>?
@@ -70,6 +71,7 @@ final class ConfigManager {
 
     private func scheduleSave() {
         guard !isLoading else { return }
+        needsRestart = true
         saveTask?.cancel()
         saveTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(500))
@@ -115,5 +117,9 @@ final class ConfigManager {
 
     func openInEditor() {
         NSWorkspace.shared.open(configURL)
+    }
+
+    func clearRestartFlag() {
+        needsRestart = false
     }
 }

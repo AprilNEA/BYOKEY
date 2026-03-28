@@ -1,23 +1,16 @@
 import SwiftUI
-import OpenAPIURLSession
 
 struct AccountsView: View {
     @Environment(ProcessManager.self) private var pm
-    @State private var providerAccounts: [Components.Schemas.ProviderAccounts] = []
-    @State private var isLoading = false
+    @Environment(DataService.self) private var dataService
     @State private var loginInProgress: String?
     @State private var errorMessage: String?
-
-    private let client = Client(
-        serverURL: AppEnvironment.baseURL,
-        transport: URLSessionTransport()
-    )
 
     var body: some View {
         Group {
             if pm.isReachable {
                 Form {
-                    if isLoading && providerAccounts.isEmpty {
+                    if dataService.providerAccounts.isEmpty, dataService.isLoading {
                         Section {
                             HStack(spacing: 8) {
                                 ProgressView().controlSize(.small)
@@ -28,7 +21,7 @@ struct AccountsView: View {
                             .padding(.vertical, 8)
                         }
                     } else {
-                        ForEach(providerAccounts, id: \.id) { provider in
+                        ForEach(dataService.providerAccounts, id: \.id) { provider in
                             Section {
                                 if provider.accounts.isEmpty {
                                     Text("No accounts configured")
@@ -37,6 +30,7 @@ struct AccountsView: View {
                                     ForEach(provider.accounts, id: \.account_id) { account in
                                         AccountRow(
                                             account: account,
+                                            providerName: provider.display_name,
                                             onActivate: {
                                                 Task { await activateAccount(provider: provider.id, accountId: account.account_id) }
                                             },
@@ -95,35 +89,12 @@ struct AccountsView: View {
             }
         }
         .navigationTitle("Accounts")
-        .task { await loadAccounts() }
-        .onChange(of: pm.isReachable) {
-            Task { await loadAccounts() }
-        }
-    }
-
-    private func loadAccounts() async {
-        guard pm.isReachable else {
-            providerAccounts = []
-            return
-        }
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            let response = try await client.accounts_handler()
-            let data = try response.ok.body.json
-            providerAccounts = data.providers
-            errorMessage = nil
-        } catch {
-            providerAccounts = []
-        }
     }
 
     private func activateAccount(provider: String, accountId: String) async {
         do {
-            _ = try await client.activate_account_handler(
-                path: .init(provider: provider, account_id: accountId)
-            )
-            await loadAccounts()
+            try await dataService.activateAccount(provider: provider, accountId: accountId)
+            errorMessage = nil
         } catch {
             errorMessage = "Failed to activate account: \(error.localizedDescription)"
         }
@@ -131,10 +102,8 @@ struct AccountsView: View {
 
     private func removeAccount(provider: String, accountId: String) async {
         do {
-            _ = try await client.remove_account_handler(
-                path: .init(provider: provider, account_id: accountId)
-            )
-            await loadAccounts()
+            try await dataService.removeAccount(provider: provider, accountId: accountId)
+            errorMessage = nil
         } catch {
             errorMessage = "Failed to remove account: \(error.localizedDescription)"
         }
@@ -146,7 +115,7 @@ struct AccountsView: View {
         do {
             try await CLIRunner.login(provider: provider)
             try? await Task.sleep(for: .seconds(1))
-            await loadAccounts()
+            await dataService.reloadAccounts()
         } catch {
             errorMessage = "Login failed: \(error.localizedDescription)"
         }
@@ -156,8 +125,16 @@ struct AccountsView: View {
 
 private struct AccountRow: View {
     let account: Components.Schemas.AccountDetail
+    let providerName: String
     let onActivate: () -> Void
     let onRemove: () -> Void
+
+    private var displayName: String {
+        if let label = account.label, label != providerName {
+            return label
+        }
+        return account.account_id
+    }
 
     var body: some View {
         HStack {
@@ -168,7 +145,7 @@ private struct AccountRow: View {
             .buttonStyle(.plain)
             .disabled(account.is_active)
 
-            Text(account.label ?? account.account_id)
+            Text(displayName)
                 .lineLimit(1)
 
             Spacer()
@@ -231,4 +208,5 @@ private struct AccountRow: View {
 #Preview {
     AccountsView()
         .environment(ProcessManager())
+        .environment(DataService())
 }
