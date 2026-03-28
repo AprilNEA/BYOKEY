@@ -35,8 +35,6 @@ struct GeneralView: View {
                         .font(.caption)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-
-                DashboardLogCard()
             }
             .padding(20)
         }

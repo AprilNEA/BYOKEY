@@ -7,21 +7,25 @@ struct DashboardStatsRow: View {
     private var usage: UsageSnapshot? { dataService.usage }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             requestsCard
+                .frame(maxHeight: .infinity, alignment: .top)
             tokenCard(
                 title: "INPUT TOKENS",
                 value: usage?.input_tokens ?? 0,
                 color: .indigo,
                 points: tokenTimeSeries(\.input_tokens)
             )
+            .frame(maxHeight: .infinity, alignment: .top)
             tokenCard(
                 title: "OUTPUT TOKENS",
                 value: usage?.output_tokens ?? 0,
                 color: .cyan,
                 points: tokenTimeSeries(\.output_tokens)
             )
+            .frame(maxHeight: .infinity, alignment: .top)
         }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var requestsCard: some View {
