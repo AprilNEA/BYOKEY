@@ -221,7 +221,7 @@ pub fn ensure_stream_options(body: &mut serde_json::Value, stream: bool) {
 /// Returns an error if the OAuth token fetch fails.
 pub async fn resolve_bearer_token(
     api_key: Option<&str>,
-    auth: &byokey_auth::AuthManager,
+    auth: &Arc<byokey_auth::AuthManager>,
     provider: &ProviderId,
 ) -> byokey_types::traits::Result<String> {
     if let Some(key) = api_key {

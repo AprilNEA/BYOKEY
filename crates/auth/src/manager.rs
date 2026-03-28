@@ -13,6 +13,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+use tokio::sync::Mutex as TokioMutex;
 
 use crate::{credentials, provider::iflow, token};
 
@@ -26,6 +27,8 @@ pub struct AuthManager {
     store: Arc<dyn TokenStore>,
     http: rquest::Client,
     state: Mutex<HashMap<ProviderId, ProviderState>>,
+    /// Per-provider async locks to deduplicate concurrent refresh attempts.
+    refresh_locks: Mutex<HashMap<ProviderId, Arc<TokioMutex<()>>>>,
 }
 
 impl AuthManager {
@@ -34,17 +37,31 @@ impl AuthManager {
             store,
             http,
             state: Mutex::new(HashMap::new()),
+            refresh_locks: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Return (or create) the per-provider async mutex used for refresh dedup.
+    fn get_refresh_lock(&self, provider: &ProviderId) -> Arc<TokioMutex<()>> {
+        let mut locks = self.refresh_locks.lock().unwrap();
+        locks
+            .entry(provider.clone())
+            .or_insert_with(|| Arc::new(TokioMutex::new(())))
+            .clone()
     }
 
     // ── Active-account methods (backward-compatible) ─────────────────────
 
     /// Retrieve a valid token for the active account, attempting a refresh if expired.
     ///
+    /// When the token is still valid but approaching expiry (within 5 minutes),
+    /// a background refresh is spawned so that subsequent requests get a fresh
+    /// token without blocking.
+    ///
     /// # Errors
     ///
     /// Returns an error if the token is not found, expired and cannot be refreshed, or invalid.
-    pub async fn get_token(&self, provider: &ProviderId) -> Result<OAuthToken> {
+    pub async fn get_token(self: &Arc<Self>, provider: &ProviderId) -> Result<OAuthToken> {
         let token = self
             .store
             .load(provider)
@@ -52,7 +69,23 @@ impl AuthManager {
             .ok_or_else(|| ByokError::TokenNotFound(provider.clone()))?;
 
         match token.state() {
-            TokenState::Valid => Ok(token),
+            TokenState::Valid => {
+                // Proactive refresh: spawn a background task if the token is
+                // nearing expiry but still usable, so the next caller gets a
+                // fresh token without waiting.
+                if token.should_proactive_refresh() && self.should_spawn_proactive_refresh(provider)
+                {
+                    let this = Arc::clone(self);
+                    let provider = provider.clone();
+                    let token = token.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = this.refresh_token(&provider, &token).await {
+                            tracing::debug!(%provider, %e, "proactive refresh failed (non-critical)");
+                        }
+                    });
+                }
+                Ok(token)
+            }
             TokenState::Expired => self.refresh_token(provider, &token).await,
             TokenState::Invalid => Err(ByokError::TokenExpired(provider.clone())),
         }
@@ -119,7 +152,7 @@ impl AuthManager {
     ///
     /// Returns an error if the token is not found, expired, or invalid.
     pub async fn get_token_for(
-        &self,
+        self: &Arc<Self>,
         provider: &ProviderId,
         account_id: &str,
     ) -> Result<OAuthToken> {
@@ -130,7 +163,20 @@ impl AuthManager {
             .ok_or_else(|| ByokError::TokenNotFound(provider.clone()))?;
 
         match token.state() {
-            TokenState::Valid => Ok(token),
+            TokenState::Valid => {
+                if token.should_proactive_refresh() && self.should_spawn_proactive_refresh(provider)
+                {
+                    let this = Arc::clone(self);
+                    let provider = provider.clone();
+                    let token = token.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = this.refresh_token(&provider, &token).await {
+                            tracing::debug!(%provider, %e, "proactive refresh failed (non-critical)");
+                        }
+                    });
+                }
+                Ok(token)
+            }
             TokenState::Expired => self.refresh_token(provider, &token).await,
             TokenState::Invalid => Err(ByokError::TokenExpired(provider.clone())),
         }
@@ -174,7 +220,32 @@ impl AuthManager {
 
     // ── Private helpers ──────────────────────────────────────────────────
 
+    /// Check whether a proactive (background) refresh should be spawned.
+    /// Returns `false` if a refresh was attempted within the cooldown period,
+    /// avoiding redundant background tasks.
+    fn should_spawn_proactive_refresh(&self, provider: &ProviderId) -> bool {
+        let state = self.state.lock().unwrap();
+        state.get(provider).is_none_or(|ps| {
+            ps.last_refresh_attempt
+                .is_none_or(|last| last.elapsed() >= REFRESH_COOLDOWN)
+        })
+    }
+
     async fn refresh_token(&self, provider: &ProviderId, token: &OAuthToken) -> Result<OAuthToken> {
+        // Acquire the per-provider async lock so that concurrent callers
+        // coalesce into a single refresh round-trip.
+        let lock = self.get_refresh_lock(provider);
+        let _guard = lock.lock().await;
+
+        // Re-check: another task may have completed the refresh while we
+        // were waiting for the lock.
+        if let Ok(Some(current)) = self.store.load(provider).await
+            && current.expires_at != token.expires_at
+            && !current.is_expired()
+        {
+            return Ok(current);
+        }
+
         // Check cooldown period
         {
             let state = self.state.lock().unwrap();
@@ -373,8 +444,11 @@ mod tests {
     use byokey_store::InMemoryTokenStore;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn make_manager() -> AuthManager {
-        AuthManager::new(Arc::new(InMemoryTokenStore::new()), rquest::Client::new())
+    fn make_manager() -> Arc<AuthManager> {
+        Arc::new(AuthManager::new(
+            Arc::new(InMemoryTokenStore::new()),
+            rquest::Client::new(),
+        ))
     }
 
     fn past_ts(secs: u64) -> u64 {

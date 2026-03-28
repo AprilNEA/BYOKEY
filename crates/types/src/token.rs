@@ -57,6 +57,23 @@ impl OAuthToken {
         now + 60 >= expires_at
     }
 
+    /// Return `true` if the token expires within 5 minutes but is not yet
+    /// within the hard 60-second expiry window. Used to trigger proactive
+    /// background refresh so that the token is already fresh when it would
+    /// otherwise expire.
+    #[must_use]
+    pub fn should_proactive_refresh(&self) -> bool {
+        let Some(expires_at) = self.expires_at else {
+            return false;
+        };
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_secs();
+        // Within 5-min window but not yet in the 60s hard-expiry window
+        now + 300 >= expires_at && now + 60 < expires_at
+    }
+
     /// Determine the current token state based on expiry and refresh availability.
     #[must_use]
     pub fn state(&self) -> TokenState {
@@ -157,6 +174,44 @@ mod tests {
             token_type: None,
         };
         assert!(t.is_expired());
+    }
+
+    #[test]
+    fn test_proactive_refresh_within_window() {
+        // 3 minutes from now: inside the 5-min window, outside the 60s window
+        let expires = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 180;
+        let t = OAuthToken {
+            access_token: "tok".into(),
+            refresh_token: Some("ref".into()),
+            expires_at: Some(expires),
+            token_type: None,
+        };
+        assert!(!t.is_expired());
+        assert!(t.should_proactive_refresh());
+    }
+
+    #[test]
+    fn test_proactive_refresh_too_early() {
+        // 10 minutes from now: outside the 5-min window
+        let t = OAuthToken::new("tok").with_expiry(600);
+        assert!(!t.should_proactive_refresh());
+    }
+
+    #[test]
+    fn test_proactive_refresh_already_expired() {
+        // Already past the 60s hard-expiry window
+        let t = OAuthToken {
+            access_token: "tok".into(),
+            refresh_token: Some("ref".into()),
+            expires_at: Some(past_secs(10)),
+            token_type: None,
+        };
+        assert!(t.is_expired());
+        assert!(!t.should_proactive_refresh());
     }
 
     #[test]
