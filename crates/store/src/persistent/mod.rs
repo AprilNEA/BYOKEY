@@ -12,6 +12,7 @@
 
 mod history;
 mod token;
+mod usage;
 
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, Statement};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -57,6 +58,7 @@ impl SqliteTokenStore {
     /// - Creates the `accounts` table if it does not exist.
     /// - Creates the partial unique index on `(provider)` where `is_active = 1`.
     /// - Migrates from the legacy `tokens` table if present.
+    #[allow(clippy::too_many_lines)]
     async fn migrate(db: &DatabaseConnection) -> std::result::Result<(), sea_orm::DbErr> {
         // Create the accounts table (idempotent).
         db.execute(Statement::from_string(
@@ -151,6 +153,39 @@ impl SqliteTokenStore {
             db.get_database_backend(),
             "CREATE INDEX IF NOT EXISTS idx_messages_conversation
              ON messages(conversation_id, created_at)"
+                .to_string(),
+        ))
+        .await?;
+
+        // ── Usage tracking table ────────────────────────────────────────────
+
+        db.execute(Statement::from_string(
+            db.get_database_backend(),
+            "CREATE TABLE IF NOT EXISTS usage_records (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                model         TEXT    NOT NULL,
+                provider      TEXT    NOT NULL,
+                input_tokens  INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                success       INTEGER NOT NULL DEFAULT 1,
+                created_at    INTEGER NOT NULL DEFAULT (unixepoch())
+            )"
+            .to_string(),
+        ))
+        .await?;
+
+        db.execute(Statement::from_string(
+            db.get_database_backend(),
+            "CREATE INDEX IF NOT EXISTS idx_usage_created
+             ON usage_records(created_at)"
+                .to_string(),
+        ))
+        .await?;
+
+        db.execute(Statement::from_string(
+            db.get_database_backend(),
+            "CREATE INDEX IF NOT EXISTS idx_usage_model_created
+             ON usage_records(model, created_at)"
                 .to_string(),
         ))
         .await?;

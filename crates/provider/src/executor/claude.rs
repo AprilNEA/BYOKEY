@@ -125,7 +125,7 @@ impl ProviderExecutor for ClaudeExecutor {
 /// - `message_delta`         → emit finish chunk (`stop_reason` mapped to `finish_reason`)
 /// - `message_stop`          → emit `data: [DONE]`
 #[allow(clippy::too_many_lines)]
-fn translate_claude_sse(inner: ByteStream) -> ByteStream {
+pub(crate) fn translate_claude_sse(inner: ByteStream) -> ByteStream {
     struct State {
         inner: ByteStream,
         buf: Vec<u8>,
@@ -136,6 +136,10 @@ fn translate_claude_sse(inner: ByteStream) -> ByteStream {
         tool_call_index: i64,
         /// Whether the current content block is a `tool_use` block.
         in_tool_use: bool,
+        /// Accumulated input token count from `message_start`.
+        input_tokens: u64,
+        /// Accumulated output token count from `message_delta`.
+        output_tokens: u64,
     }
 
     Box::pin(try_unfold(
@@ -147,6 +151,8 @@ fn translate_claude_sse(inner: ByteStream) -> ByteStream {
             done: false,
             tool_call_index: -1,
             in_tool_use: false,
+            input_tokens: 0,
+            output_tokens: 0,
         },
         |mut s| async move {
             loop {
@@ -168,6 +174,12 @@ fn translate_claude_sse(inner: ByteStream) -> ByteStream {
                                     ev.pointer("/message/model").and_then(Value::as_str)
                                 {
                                     s.model = model.to_string();
+                                }
+                                if let Some(tokens) = ev
+                                    .pointer("/message/usage/input_tokens")
+                                    .and_then(Value::as_u64)
+                                {
+                                    s.input_tokens = tokens;
                                 }
                                 let chunk = serde_json::json!({
                                     "id": &s.id,
@@ -260,6 +272,11 @@ fn translate_claude_sse(inner: ByteStream) -> ByteStream {
                                 }
                             }
                             "message_delta" => {
+                                if let Some(tokens) =
+                                    ev.pointer("/usage/output_tokens").and_then(Value::as_u64)
+                                {
+                                    s.output_tokens = tokens;
+                                }
                                 let finish_reason = match ev
                                     .pointer("/delta/stop_reason")
                                     .and_then(Value::as_str)
@@ -282,7 +299,19 @@ fn translate_claude_sse(inner: ByteStream) -> ByteStream {
                             }
                             "message_stop" => {
                                 s.done = true;
-                                return Ok(Some((Bytes::from("data: [DONE]\n\n"), s)));
+                                let usage_chunk = serde_json::json!({
+                                    "id": &s.id,
+                                    "object": "chat.completion.chunk",
+                                    "model": &s.model,
+                                    "choices": [],
+                                    "usage": {
+                                        "prompt_tokens": s.input_tokens,
+                                        "completion_tokens": s.output_tokens,
+                                        "total_tokens": s.input_tokens + s.output_tokens
+                                    }
+                                });
+                                let out = format!("data: {usage_chunk}\n\ndata: [DONE]\n\n");
+                                return Ok(Some((Bytes::from(out), s)));
                             }
                             _ => {} // ping, content_block_stop
                         }

@@ -269,6 +269,28 @@ fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStream {
                                         format!("data: {finish}\n\n").as_bytes(),
                                     );
                                 }
+                                // Emit usage chunk from the completed response
+                                let input_tokens = ev
+                                    .pointer("/response/usage/input_tokens")
+                                    .and_then(Value::as_u64)
+                                    .unwrap_or(0);
+                                let output_tokens = ev
+                                    .pointer("/response/usage/output_tokens")
+                                    .and_then(Value::as_u64)
+                                    .unwrap_or(0);
+                                let usage_chunk = serde_json::json!({
+                                    "object": "chat.completion.chunk",
+                                    "model": &s.model,
+                                    "choices": [],
+                                    "usage": {
+                                        "prompt_tokens": input_tokens,
+                                        "completion_tokens": output_tokens,
+                                        "total_tokens": input_tokens + output_tokens
+                                    }
+                                });
+                                chunks.extend_from_slice(
+                                    format!("data: {usage_chunk}\n\n").as_bytes(),
+                                );
                                 chunks.extend_from_slice(b"data: [DONE]\n\n");
                                 s.done = true;
                                 return Ok(Some((Bytes::from(chunks), s)));

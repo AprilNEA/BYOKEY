@@ -148,6 +148,46 @@ pub trait ChatHistoryStore: Send + Sync {
     async fn delete_conversation(&self, conversation_id: &str) -> Result<()>;
 }
 
+/// A single request's usage record for persistence.
+#[derive(Debug, Clone)]
+pub struct UsageRecord {
+    pub model: String,
+    pub provider: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub success: bool,
+}
+
+/// Time-bucketed usage aggregation result.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UsageBucket {
+    pub period_start: i64,
+    pub model: String,
+    pub request_count: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+/// Persistent storage for usage statistics.
+#[async_trait]
+pub trait UsageStore: Send + Sync {
+    /// Record a single request's usage.
+    async fn record(&self, record: &UsageRecord) -> Result<()>;
+
+    /// Query aggregated usage within a time range, optionally filtered by model.
+    /// Results are grouped into time buckets whose size is determined by the range.
+    async fn query(
+        &self,
+        from: i64,
+        to: i64,
+        model: Option<&str>,
+        bucket_secs: i64,
+    ) -> Result<Vec<UsageBucket>>;
+
+    /// Get cumulative totals, optionally within a time range.
+    async fn totals(&self, from: Option<i64>, to: Option<i64>) -> Result<Vec<UsageBucket>>;
+}
+
 /// Translates an `OpenAI`-format request into a provider's native format.
 ///
 /// Implementations must be pure (no I/O).

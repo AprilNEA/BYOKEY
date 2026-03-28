@@ -110,7 +110,7 @@ mod tests {
         let store = Arc::new(InMemoryTokenStore::new());
         let auth = Arc::new(AuthManager::new(store, rquest::Client::new()));
         let config = Arc::new(ArcSwap::from_pointee(Config::default()));
-        AppState::new(config, auth)
+        AppState::new(config, auth, None)
     }
 
     #[tokio::test]

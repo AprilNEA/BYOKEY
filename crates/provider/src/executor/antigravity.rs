@@ -5,6 +5,8 @@
 //! JSON lines (not SSE), each containing a `response` field with a Gemini
 //! stream chunk.
 
+use std::fmt::Write as _;
+
 use crate::http_util::ProviderHttp;
 use crate::registry;
 use async_trait::async_trait;
@@ -138,73 +140,103 @@ fn strip_ag_prefix(model: &str) -> &str {
 /// Converts a single Gemini streaming chunk (from within the Antigravity envelope)
 /// into an `OpenAI` SSE `chat.completion.chunk` line.
 fn gemini_chunk_to_openai_sse(chunk: &Value, model: &str) -> Option<String> {
-    let candidates = chunk.get("candidates")?.as_array()?;
-    let candidate = candidates.first()?;
+    let mut output = String::new();
 
-    let finish_reason = candidate
-        .get("finishReason")
-        .and_then(Value::as_str)
-        .and_then(|r| match r {
-            "STOP" => Some("stop"),
-            "MAX_TOKENS" => Some("length"),
-            _ => None,
-        });
+    // Build main content chunk from candidates
+    if let Some(candidates) = chunk.get("candidates").and_then(Value::as_array)
+        && let Some(candidate) = candidates.first()
+    {
+        let finish_reason = candidate
+            .get("finishReason")
+            .and_then(Value::as_str)
+            .and_then(|r| match r {
+                "STOP" => Some("stop"),
+                "MAX_TOKENS" => Some("length"),
+                _ => None,
+            });
 
-    // Extract tool calls from functionCall parts
-    let parts = candidate
-        .pointer("/content/parts")
-        .and_then(Value::as_array);
+        let parts = candidate
+            .pointer("/content/parts")
+            .and_then(Value::as_array);
 
-    let mut delta = json!({});
-    let mut has_content = false;
+        let mut delta = json!({});
+        let mut has_content = false;
 
-    if let Some(parts) = parts {
-        for part in parts {
-            if let Some(text) = part.get("text").and_then(Value::as_str) {
-                delta["content"] = json!(text);
-                has_content = true;
+        if let Some(parts) = parts {
+            for part in parts {
+                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    delta["content"] = json!(text);
+                    has_content = true;
+                }
+                if let Some(fc) = part.get("functionCall") {
+                    let name = fc.get("name").and_then(Value::as_str).unwrap_or("");
+                    let args = fc.get("args").cloned().unwrap_or_else(|| json!({}));
+                    let tool_call = json!({
+                        "index": 0,
+                        "id": format!("{name}-{}", &random_uuid()[..8]),
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": args.to_string(),
+                        }
+                    });
+                    delta["tool_calls"] = json!([tool_call]);
+                    has_content = true;
+                }
             }
-            if let Some(fc) = part.get("functionCall") {
-                let name = fc.get("name").and_then(Value::as_str).unwrap_or("");
-                let args = fc.get("args").cloned().unwrap_or_else(|| json!({}));
-                let tool_call = json!({
+        }
+
+        if has_content || finish_reason.is_some() {
+            if finish_reason.is_some() && !has_content {
+                delta = json!({});
+            }
+            let sse_chunk = json!({
+                "id": "chatcmpl-antigravity",
+                "object": "chat.completion.chunk",
+                "model": model,
+                "choices": [{
                     "index": 0,
-                    "id": format!("{name}-{}", &random_uuid()[..8]),
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "arguments": args.to_string(),
-                    }
-                });
-                delta["tool_calls"] = json!([tool_call]);
-                has_content = true;
+                    "delta": delta,
+                    "finish_reason": finish_reason,
+                }]
+            });
+            if let Ok(s) = serde_json::to_string(&sse_chunk) {
+                let _ = write!(output, "data: {s}\n\n");
             }
         }
     }
 
-    if !has_content && finish_reason.is_none() {
-        return None;
+    // Emit usage chunk if usageMetadata is present (typically on the last chunk)
+    if let Some(usage_meta) = chunk.get("usageMetadata") {
+        let prompt = usage_meta
+            .get("promptTokenCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let completion = usage_meta
+            .get("candidatesTokenCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let usage_chunk = json!({
+            "id": "chatcmpl-antigravity",
+            "object": "chat.completion.chunk",
+            "model": model,
+            "choices": [],
+            "usage": {
+                "prompt_tokens": prompt,
+                "completion_tokens": completion,
+                "total_tokens": prompt + completion
+            }
+        });
+        if let Ok(s) = serde_json::to_string(&usage_chunk) {
+            let _ = write!(output, "data: {s}\n\n");
+        }
     }
 
-    if finish_reason.is_some() && !has_content {
-        delta = json!({});
+    if output.is_empty() {
+        None
+    } else {
+        Some(output)
     }
-
-    let sse_chunk = json!({
-        "id": "chatcmpl-antigravity",
-        "object": "chat.completion.chunk",
-        "model": model,
-        "choices": [{
-            "index": 0,
-            "delta": delta,
-            "finish_reason": finish_reason,
-        }]
-    });
-
-    Some(format!(
-        "data: {}\n\n",
-        serde_json::to_string(&sse_chunk).ok()?
-    ))
 }
 
 #[async_trait]

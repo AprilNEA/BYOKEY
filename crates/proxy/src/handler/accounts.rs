@@ -179,7 +179,7 @@ mod tests {
         let store = Arc::new(InMemoryTokenStore::new());
         let auth = Arc::new(AuthManager::new(store.clone(), rquest::Client::new()));
         let config = Arc::new(ArcSwap::from_pointee(Config::default()));
-        (AppState::new(config, auth), store)
+        (AppState::new(config, auth, None), store)
     }
 
     async fn body_json(resp: axum::response::Response) -> Value {

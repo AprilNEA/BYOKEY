@@ -461,7 +461,10 @@ impl ProviderExecutor for CopilotExecutor {
     async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
         let stream = request.stream;
         let initiator = Self::initiator(&request);
-        let body = request.into_body();
+        let mut body = request.into_body();
+        if stream {
+            body["stream_options"] = serde_json::json!({ "include_usage": true });
+        }
 
         let accounts = self
             .auth

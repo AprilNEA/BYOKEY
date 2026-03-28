@@ -73,7 +73,9 @@ impl ProviderExecutor for KiroExecutor {
         let resp = self.ph.send(builder).await?;
 
         if stream {
-            Ok(ProviderResponse::Stream(ProviderHttp::byte_stream(resp)))
+            Ok(ProviderResponse::Stream(
+                super::claude::translate_claude_sse(ProviderHttp::byte_stream(resp)),
+            ))
         } else {
             let json: Value = resp.json().await?;
             let translated = ClaudeToOpenAI.translate_response(json)?;

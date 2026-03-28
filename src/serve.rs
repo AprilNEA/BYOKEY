@@ -78,6 +78,7 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
                 .init();
         } else {
             tracing_subscriber::fmt()
+                .with_ansi(true)
                 .with_env_filter(env_filter)
                 .with_target(true)
                 .init();
@@ -91,11 +92,23 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
         port.unwrap_or(snapshot.port),
     );
 
-    let auth = Arc::new(AuthManager::new(
-        Arc::new(crate::open_store(db).await?),
-        rquest::Client::new(),
-    ));
-    let state = AppState::new(config_arc, auth);
+    let store = Arc::new(crate::open_store(db).await?);
+    let auth = Arc::new(AuthManager::new(store.clone(), rquest::Client::new()));
+    let usage_store: Arc<dyn byokey_types::UsageStore> = store;
+    let state = AppState::new(config_arc, auth, Some(usage_store.clone()));
+
+    // Pre-load cumulative usage from persisted records so the in-memory snapshot
+    // reflects historical totals even after a restart.
+    if let Ok(totals) = usage_store.totals(None, None).await {
+        for bucket in &totals {
+            state.usage.preload(
+                &bucket.model,
+                bucket.request_count,
+                bucket.input_tokens,
+                bucket.output_tokens,
+            );
+        }
+    }
     let app = byokey_proxy::make_router(state);
 
     // Check for TLS configuration.

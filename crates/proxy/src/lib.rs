@@ -18,11 +18,11 @@ pub mod usage;
 pub use error::ApiError;
 pub use openapi::ApiDoc;
 pub use router::make_router;
-pub use usage::UsageStats;
+pub use usage::{UsageRecorder, UsageStats};
 
 use arc_swap::ArcSwap;
 use byokey_auth::AuthManager;
-use byokey_types::RateLimitStore;
+use byokey_types::{RateLimitStore, UsageStore};
 use std::sync::Arc;
 
 /// Shared application state passed to all route handlers.
@@ -34,8 +34,8 @@ pub struct AppState {
     pub auth: Arc<AuthManager>,
     /// HTTP client for upstream requests.
     pub http: rquest::Client,
-    /// In-memory usage statistics.
-    pub usage: Arc<UsageStats>,
+    /// In-memory usage statistics with optional persistent backing.
+    pub usage: Arc<UsageRecorder>,
     /// Per-provider, per-account rate limit snapshots from upstream responses.
     pub ratelimits: Arc<RateLimitStore>,
 }
@@ -44,14 +44,19 @@ impl AppState {
     /// Creates a new shared application state wrapped in an `Arc`.
     ///
     /// If the config specifies a `proxy_url`, the HTTP client is built with that proxy.
-    pub fn new(config: Arc<ArcSwap<byokey_config::Config>>, auth: Arc<AuthManager>) -> Arc<Self> {
+    /// An optional [`UsageStore`] enables persistent usage tracking.
+    pub fn new(
+        config: Arc<ArcSwap<byokey_config::Config>>,
+        auth: Arc<AuthManager>,
+        usage_store: Option<Arc<dyn UsageStore>>,
+    ) -> Arc<Self> {
         let snapshot = config.load();
         let http = build_http_client(snapshot.proxy_url.as_deref());
         Arc::new(Self {
             config,
             auth,
             http,
-            usage: Arc::new(UsageStats::new()),
+            usage: Arc::new(UsageRecorder::new(usage_store)),
             ratelimits: Arc::new(RateLimitStore::new()),
         })
     }

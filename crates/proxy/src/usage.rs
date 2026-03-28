@@ -1,9 +1,11 @@
-//! In-memory usage statistics for request/token tracking.
+//! In-memory usage statistics for request/token tracking, with optional
+//! persistent backing via [`UsageStore`].
 
+use byokey_types::{UsageRecord, UsageStore};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 /// Global request/token counters.
 #[derive(Default)]
@@ -94,6 +96,105 @@ impl UsageStats {
             input_tokens: self.input_tokens.load(Ordering::Relaxed),
             output_tokens: self.output_tokens.load(Ordering::Relaxed),
             models,
+        }
+    }
+}
+
+/// Combines in-memory [`UsageStats`] with an optional persistent [`UsageStore`].
+///
+/// Every `record_*` call updates the in-memory counters immediately and, if a
+/// store is configured, spawns a background task to persist the record.
+pub struct UsageRecorder {
+    stats: UsageStats,
+    store: Option<Arc<dyn UsageStore>>,
+}
+
+impl UsageRecorder {
+    /// Creates a new recorder, optionally backed by a persistent store.
+    #[must_use]
+    pub fn new(store: Option<Arc<dyn UsageStore>>) -> Self {
+        Self {
+            stats: UsageStats::new(),
+            store,
+        }
+    }
+
+    /// Record a successful request with token counts.
+    pub fn record_success(
+        &self,
+        model: &str,
+        provider: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) {
+        self.stats
+            .record_success(model, input_tokens, output_tokens);
+        self.persist(model, provider, input_tokens, output_tokens, true);
+    }
+
+    /// Record a failed request.
+    pub fn record_failure(&self, model: &str, provider: &str) {
+        self.stats.record_failure(model);
+        self.persist(model, provider, 0, 0, false);
+    }
+
+    /// Take a snapshot of in-memory stats.
+    #[must_use]
+    pub fn snapshot(&self) -> UsageSnapshot {
+        self.stats.snapshot()
+    }
+
+    /// Pre-load cumulative counters from historical totals (e.g. on startup).
+    pub fn preload(&self, model: &str, requests: u64, input_tokens: u64, output_tokens: u64) {
+        self.stats
+            .total_requests
+            .fetch_add(requests, Ordering::Relaxed);
+        self.stats
+            .success_requests
+            .fetch_add(requests, Ordering::Relaxed);
+        self.stats
+            .input_tokens
+            .fetch_add(input_tokens, Ordering::Relaxed);
+        self.stats
+            .output_tokens
+            .fetch_add(output_tokens, Ordering::Relaxed);
+
+        if let Ok(mut map) = self.stats.model_counts.lock() {
+            let entry = map.entry(model.to_string()).or_default();
+            entry.requests += requests;
+            entry.success += requests;
+            entry.input_tokens += input_tokens;
+            entry.output_tokens += output_tokens;
+        }
+    }
+
+    /// Returns a reference to the backing store (if configured).
+    pub fn store(&self) -> Option<&Arc<dyn UsageStore>> {
+        self.store.as_ref()
+    }
+
+    fn persist(
+        &self,
+        model: &str,
+        provider: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+        success: bool,
+    ) {
+        if let Some(store) = &self.store {
+            let store = store.clone();
+            let record = UsageRecord {
+                model: model.to_string(),
+                provider: provider.to_string(),
+                input_tokens,
+                output_tokens,
+                success,
+            };
+            tokio::spawn(async move {
+                if let Err(e) = store.record(&record).await {
+                    tracing::warn!(error = %e, "failed to persist usage record");
+                }
+            });
         }
     }
 }

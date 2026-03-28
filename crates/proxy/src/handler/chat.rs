@@ -9,12 +9,89 @@ use axum::{
 };
 use byokey_provider::{make_executor_for_model, parse_qualified_model};
 use byokey_translate::{apply_thinking, parse_model_suffix};
+use byokey_types::traits::ByteStream;
 use byokey_types::{ChatRequest, ProviderId, traits::ProviderResponse};
-use futures_util::TryStreamExt as _;
+use futures_util::{StreamExt as _, TryStreamExt as _, stream::try_unfold};
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::{AppState, error::ApiError};
+use crate::{AppState, UsageRecorder, error::ApiError};
+
+/// Wraps a [`ByteStream`] to transparently extract token usage from SSE chunks.
+///
+/// Each chunk is forwarded unchanged. When the stream ends, the accumulated
+/// `prompt_tokens` / `completion_tokens` are recorded via [`UsageRecorder`].
+fn tap_stream_usage(
+    inner: ByteStream,
+    usage: Arc<UsageRecorder>,
+    model: String,
+    provider: String,
+) -> ByteStream {
+    struct State {
+        inner: ByteStream,
+        scan_buf: Vec<u8>,
+        usage: Arc<UsageRecorder>,
+        model: String,
+        provider: String,
+        input_tokens: u64,
+        output_tokens: u64,
+    }
+
+    Box::pin(try_unfold(
+        State {
+            inner,
+            scan_buf: Vec::new(),
+            usage,
+            model,
+            provider,
+            input_tokens: 0,
+            output_tokens: 0,
+        },
+        |mut s| async move {
+            match s.inner.next().await {
+                Some(Ok(bytes)) => {
+                    // Scan for usage data in SSE lines
+                    s.scan_buf.extend_from_slice(&bytes);
+                    while let Some(nl) = s.scan_buf.iter().position(|&b| b == b'\n') {
+                        let line: Vec<u8> = s.scan_buf.drain(..=nl).collect();
+                        let line = String::from_utf8_lossy(&line);
+                        let line = line.trim();
+                        if let Some(data) = line.strip_prefix("data: ")
+                            && data != "[DONE]"
+                            && let Ok(json) = serde_json::from_str::<serde_json::Value>(data)
+                            && let Some(usage) = json.get("usage")
+                        {
+                            if let Some(v) = usage
+                                .get("prompt_tokens")
+                                .and_then(serde_json::Value::as_u64)
+                            {
+                                s.input_tokens = v;
+                            }
+                            if let Some(v) = usage
+                                .get("completion_tokens")
+                                .and_then(serde_json::Value::as_u64)
+                            {
+                                s.output_tokens = v;
+                            }
+                        }
+                    }
+                    // Forward original bytes unchanged
+                    Ok(Some((bytes, s)))
+                }
+                Some(Err(e)) => {
+                    s.usage.record_failure(&s.model, &s.provider);
+                    Err(e)
+                }
+                None => {
+                    // Stream ended — record accumulated usage
+                    s.usage
+                        .record_success(&s.model, &s.provider, s.input_tokens, s.output_tokens);
+                    Ok(None)
+                }
+            }
+        },
+    ))
+}
 
 /// Extract input/output token counts from an OpenAI-compatible usage response.
 fn extract_usage_tokens(json: &serde_json::Value) -> (u64, u64) {
@@ -137,15 +214,20 @@ async fn chat_completions_inner(
             let (input_tok, output_tok) = extract_usage_tokens(&json);
             state
                 .usage
-                .record_success(&model_name, input_tok, output_tok);
+                .record_success(&model_name, &provider, input_tok, output_tok);
             tracing::debug!(model = %model_name, "chat completion complete");
             Ok(Json(json).into_response())
         }
         Ok(ProviderResponse::Stream(byte_stream)) => {
-            state.usage.record_success(&model_name, 0, 0);
             tracing::debug!(model = %model_name, "streaming chat completion");
-            // Convert ByokError → std::io::Error for Body::from_stream
-            let mapped = byte_stream.map_err(|e| std::io::Error::other(e.to_string()));
+            // Wrap stream to extract usage from SSE chunks; records on completion.
+            let tapped = tap_stream_usage(
+                byte_stream,
+                state.usage.clone(),
+                model_name,
+                provider.clone(),
+            );
+            let mapped = tapped.map_err(|e| std::io::Error::other(e.to_string()));
             let body = Body::from_stream(mapped);
             Ok(Response::builder()
                 .status(StatusCode::OK)
@@ -156,7 +238,7 @@ async fn chat_completions_inner(
                 .expect("valid response"))
         }
         Err(e) => {
-            state.usage.record_failure(&model_name);
+            state.usage.record_failure(&model_name, &provider);
             Err(ApiError::from(e))
         }
     }

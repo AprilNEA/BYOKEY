@@ -53,6 +53,9 @@ impl ProviderExecutor for GeminiExecutor {
         let stream = request.stream;
         let mut body = request.into_body();
         body["stream"] = serde_json::Value::Bool(stream);
+        if stream {
+            body["stream_options"] = serde_json::json!({ "include_usage": true });
+        }
 
         let (header_name, header_value) = self.auth_header().await?;
 

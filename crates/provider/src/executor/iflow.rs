@@ -66,7 +66,10 @@ fn create_signature(api_key: &str, session_id: &str, timestamp: u64) -> String {
 impl ProviderExecutor for IFlowExecutor {
     async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
         let stream = request.stream;
-        let body = request.into_body();
+        let mut body = request.into_body();
+        if stream {
+            body["stream_options"] = serde_json::json!({ "include_usage": true });
+        }
 
         let api_key = self.resolve_api_key().await?;
 
