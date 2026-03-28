@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/AprilNEA/BYOKEY/compare/v0.7.1...v0.8.0) - 2026-03-28
+
+### Added
+
+- *(usage)* add streaming token tracking, persistence, and time-series API
+
+### Other
+
+- *(desktop)* add certificate verification step for debugging
+
 ## [0.7.1](https://github.com/AprilNEA/BYOKEY/compare/v0.7.0...v0.7.1) - 2026-03-28
 
 ### Other
