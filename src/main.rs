@@ -36,6 +36,9 @@ struct ServerArgs {
     /// SQLite database path (default: ~/.byokey/tokens.db).
     #[arg(long, value_name = "PATH")]
     db: Option<PathBuf>,
+    /// Log file path. If set, logs are written to this file with daily rotation.
+    #[arg(long, value_name = "PATH")]
+    log_file: Option<PathBuf>,
 }
 
 /// Extended server arguments that include a log file path (for background/daemon modes).

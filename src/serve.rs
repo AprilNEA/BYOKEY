@@ -13,6 +13,7 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
         port,
         host,
         db,
+        log_file,
     } = args;
     let effective_path = config_path.or_else(|| {
         let default = byokey_daemon::paths::config_path().ok()?;
@@ -44,7 +45,12 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
     // _log_guard must be held until server exits to flush buffered writes.
     let _log_guard: Option<tracing_appender::non_blocking::WorkerGuard>;
 
-    if let Some(ref log_path) = snapshot.log.file {
+    // CLI --log-file overrides config.
+    let effective_log_file = log_file
+        .map(|p| p.to_string_lossy().into_owned())
+        .or_else(|| snapshot.log.file.clone());
+
+    if let Some(ref log_path) = effective_log_file {
         let path = std::path::Path::new(log_path);
         let dir = path.parent().unwrap_or(std::path::Path::new("."));
         let filename = path

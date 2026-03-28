@@ -39,6 +39,12 @@ final class ProcessManager {
         return URL(filePath: "/usr/local/bin/byokey")
     }
 
+    /// Persistent log directory inside `~/Library/Logs/Byokey/`.
+    static var logDirectory: URL {
+        FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Logs/Byokey")
+    }
+
     // MARK: - Lifecycle
 
     func start(port: Int = AppEnvironment.defaultPort) {
@@ -47,9 +53,14 @@ final class ProcessManager {
         shouldAutoRestart = true
         errorMessage = nil
 
+        // Ensure log directory exists.
+        let logDir = Self.logDirectory
+        try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
+        let logFile = logDir.appendingPathComponent("server.log")
+
         let proc = Process()
         proc.executableURL = Self.binaryURL
-        proc.arguments = ["serve", "--port", "\(port)"]
+        proc.arguments = ["serve", "--port", "\(port)", "--log-file", logFile.path]
 
         let pipe = Pipe()
         proc.standardOutput = pipe
