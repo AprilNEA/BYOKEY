@@ -33,8 +33,11 @@ const API_URL: &str = "https://api.anthropic.com/v1/messages?beta=true";
 /// Required Anthropic API version header value.
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 
-/// Beta features to enable; `oauth-2025-04-20` is required for OAuth Bearer tokens.
-pub const ANTHROPIC_BETA: &str = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,prompt-caching-2024-07-31,context-management-2025-06-27,prompt-caching-scope-2026-01-05";
+/// Beta features to enable.
+///
+/// `prompt-caching-2024-07-31` removed: prompt caching is GA since Dec 2024;
+/// the beta header is now rejected by the API.
+pub const ANTHROPIC_BETA: &str = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05";
 
 /// User-Agent matching the Claude CLI SDK version.
 pub const USER_AGENT: &str = "claude-cli/2.1.63 (external, sdk-cli)";

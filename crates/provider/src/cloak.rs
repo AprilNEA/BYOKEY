@@ -35,6 +35,21 @@ pub fn apply_cloaking(body: &mut serde_json::Value, config: &CloakConfig, payloa
     }
 }
 
+/// Injects the billing header and agent identifier into a request body's
+/// `system` field without any other cloaking (no sensitive-word obfuscation,
+/// no strict mode). Used by the passthrough handler where OAuth tokens
+/// require the billing header to access Sonnet/Opus models.
+pub fn inject_billing_header(body: &mut serde_json::Value) {
+    let payload_bytes = serde_json::to_vec(body).unwrap_or_default();
+    let billing_block = make_billing_block(&payload_bytes);
+    let agent_block = make_agent_block();
+
+    let existing_blocks = normalise_system(body);
+    let mut blocks = vec![billing_block, agent_block];
+    blocks.extend(existing_blocks);
+    body["system"] = serde_json::Value::Array(blocks);
+}
+
 /// Generates the billing header content block.
 fn make_billing_block(payload_bytes: &[u8]) -> serde_json::Value {
     let mut rng = rand::thread_rng();

@@ -18,6 +18,7 @@ use axum::{
 };
 use byokey_provider::CopilotExecutor;
 use byokey_provider::claude_headers::{ANTHROPIC_BETA, ANTHROPIC_VERSION};
+use byokey_provider::cloak::inject_billing_header;
 use byokey_types::{ByokError, ProviderId};
 use futures_util::TryStreamExt as _;
 use serde_json::Value;
@@ -40,9 +41,13 @@ const COPILOT_GITHUB_API_VERSION: &str = "2025-04-01";
 /// Authenticates with the Claude provider (API key or OAuth), then forwards
 /// the request body verbatim to the Anthropic API and streams the response
 /// back without translation.
-/// Strip the `thinking` field when it should not be forwarded to the Anthropic API:
+/// Strip thinking-related fields when they would cause an API error:
 /// 1. `tool_choice.type == "any"` or `"tool"` — API rejects thinking + forced `tool_choice`.
 /// 2. `thinking.type == "auto"` — not a valid Anthropic API value; API returns 400.
+///
+/// Also removes `output_config.effort` (adaptive thinking control) when thinking is
+/// stripped, and cleans up an empty `output_config` object afterward.
+/// Aligned with upstream `disableThinkingIfToolChoiceForced`.
 fn sanitize_thinking(body: &mut Value) {
     let should_remove = {
         let forced_tool = body
@@ -62,11 +67,20 @@ fn sanitize_thinking(body: &mut Value) {
 
     if should_remove && let Some(obj) = body.as_object_mut() {
         obj.remove("thinking");
+        // Adaptive thinking may also set output_config.effort; remove it to
+        // avoid leaking thinking controls when tool_choice forces tool use.
+        if let Some(oc) = obj.get_mut("output_config").and_then(Value::as_object_mut) {
+            oc.remove("effort");
+            if oc.is_empty() {
+                obj.remove("output_config");
+            }
+        }
     }
 }
 
-/// Merge betas from the request body's `betas` array into the base beta string.
-fn build_beta_header(body: &Value) -> String {
+/// Merge betas from the request body's `betas` array into the base beta string,
+/// then strip the field so the upstream API doesn't reject it as unknown.
+fn build_beta_header(body: &mut Value) -> String {
     let mut betas = ANTHROPIC_BETA.to_string();
     if let Some(arr) = body.get("betas").and_then(Value::as_array) {
         for b in arr {
@@ -77,6 +91,10 @@ fn build_beta_header(body: &Value) -> String {
                 betas.push_str(s);
             }
         }
+    }
+    // Strip `betas` — it's a client-to-proxy field, not a valid API field.
+    if let Some(obj) = body.as_object_mut() {
+        obj.remove("betas");
     }
     betas
 }
@@ -104,7 +122,7 @@ pub async fn anthropic_messages(
     let mut body = body.0;
     sanitize_thinking(&mut body);
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
-    let beta = build_beta_header(&body);
+    let beta = build_beta_header(&mut body);
 
     // Global backend override: `claude.backend: copilot`.
     let config = state.config.load();
@@ -121,6 +139,12 @@ pub async fn anthropic_messages(
     // Default: passthrough to Anthropic API.
     let provider_cfg = config.providers.get(&ProviderId::Claude);
     let api_key = provider_cfg.and_then(|pc| pc.api_key.clone());
+    let is_oauth = api_key.is_none();
+
+    // OAuth tokens require the billing header to access Sonnet/Opus models.
+    if is_oauth {
+        inject_billing_header(&mut body);
+    }
 
     let accept = if stream {
         "text/event-stream"
@@ -135,7 +159,7 @@ pub async fn anthropic_messages(
         .http
         .post(API_URL)
         .header("anthropic-version", ANTHROPIC_VERSION)
-        .header("anthropic-beta", beta)
+        .header("anthropic-beta", &beta)
         .header("anthropic-dangerous-direct-browser-access", "true")
         .header("x-app", "cli")
         .header("user-agent", &profile.user_agent)
@@ -163,6 +187,17 @@ pub async fn anthropic_messages(
         builder.header("authorization", format!("Bearer {}", token.access_token))
     };
 
+    // Log request details for debugging upstream errors.
+    let model = body.get("model").and_then(Value::as_str).unwrap_or("?");
+    let keys: Vec<&str> = body
+        .as_object()
+        .map(|o| o.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    tracing::info!(
+        %model, ?keys, auth = if is_oauth { "oauth" } else { "api_key" },
+        beta = %beta, "anthropic passthrough"
+    );
+
     let resp = builder
         .json(&body)
         .send()
@@ -180,7 +215,7 @@ pub async fn copilot_anthropic_messages(
     let mut body = body.0;
     sanitize_thinking(&mut body);
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
-    let beta = build_beta_header(&body);
+    let beta = build_beta_header(&mut body);
     copilot_messages(&state, body, stream, &beta).await
 }
 
@@ -334,6 +369,11 @@ async fn forward_response(resp: rquest::Response, stream: bool) -> Result<Respon
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
+        tracing::warn!(
+            status = status.as_u16(),
+            body = %text,
+            "anthropic upstream error"
+        );
         return Err(ApiError::from(ByokError::Upstream {
             status: status.as_u16(),
             body: text,
