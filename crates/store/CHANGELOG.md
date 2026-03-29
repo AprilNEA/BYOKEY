@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-store-v0.8.0...byokey-store-v0.9.0) - 2026-03-29
+
+### Other
+
+- improve code quality across all crates
+- *(store)* add in-memory token cache and use UPSERT for saves
+
 ## [0.8.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-store-v0.7.1...byokey-store-v0.8.0) - 2026-03-28
 
 ### Added

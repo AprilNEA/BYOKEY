@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-proxy-v0.8.0...byokey-proxy-v0.9.0) - 2026-03-29
+
+### Added
+
+- *(proxy)* add token usage tracking to all passthrough endpoints
+- complete upstream v6.9.4 sync — all 9 remaining items
+- align Claude/Codex fingerprint and thinking with upstream v6.9.4
+
+### Fixed
+
+- prevent empty system content blocks from reaching Claude API
+- *(proxy)* inject billing header for OAuth passthrough and clean up beta header
+
+### Other
+
+- improve code quality across all crates
+- *(desktop)* unify Desktop→Rust API to OpenAPI-generated client
+- *(proxy)* batch usage writes via mpsc channel instead of per-record spawn
+- deduplicate shared patterns across executors and handlers
+
 ## [0.8.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-proxy-v0.7.1...byokey-proxy-v0.8.0) - 2026-03-28
 
 ### Added
