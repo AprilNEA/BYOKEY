@@ -5,39 +5,40 @@ struct GeneralView: View {
     @Environment(DataService.self) private var dataService
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                DashboardStatusBar()
+        VStack(spacing: 16) {
+            DashboardStatusBar()
 
-                if pm.isReachable {
-                    if dataService.providers.isEmpty, dataService.isLoading {
-                        loadingState
-                    } else if dataService.providers.isEmpty {
-                        emptyState
-                    } else {
-                        DashboardStatsRow()
-                        DashboardHistoryChart()
-                        DashboardActivityCard()
+            if pm.isReachable {
+                if dataService.providers.isEmpty, dataService.isLoading {
+                    loadingState
+                } else if dataService.providers.isEmpty {
+                    emptyState
+                } else {
+                    DashboardStatsRow()
+                    DashboardHistoryChart()
+                    DashboardActivityCard()
 
-                        if let rateLimits = dataService.rateLimits,
-                           rateLimits.providers.contains(where: {
-                               $0.accounts.contains(where: { !$0.snapshot.headers.isEmpty })
-                           })
-                        {
-                            DashboardRateLimitsCard(data: rateLimits)
-                        }
+                    if let rateLimits = dataService.rateLimits,
+                       rateLimits.providers.contains(where: {
+                           $0.accounts.contains(where: { !$0.snapshot.headers.isEmpty })
+                       })
+                    {
+                        DashboardRateLimitsCard(data: rateLimits)
                     }
                 }
-
-                if let error = pm.errorMessage {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                        .font(.caption)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
             }
-            .padding(20)
+
+            if let error = pm.errorMessage {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Spacer(minLength: 0)
         }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle("Dashboard")
     }
 

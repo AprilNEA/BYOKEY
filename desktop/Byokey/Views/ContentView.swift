@@ -69,7 +69,7 @@ struct ContentView: View {
                 }
             }
         }
-        .frame(minWidth: 480, minHeight: 320)
+        .frame(minWidth: 720, minHeight: 560)
         .alert("Server Error", isPresented: $pm.showError) {
             Button("Reload") { pm.restart() }
             Button("OK", role: .cancel) {}

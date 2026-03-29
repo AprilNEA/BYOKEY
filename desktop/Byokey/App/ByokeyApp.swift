@@ -22,7 +22,7 @@ struct ByokeyApp: App {
                     dataService.isServerReachable = newValue
                 }
         }
-        .defaultSize(width: 720, height: 480)
+        .defaultSize(width: 860, height: 640)
 
         MenuBarExtra {
             MenuBarMenu()
