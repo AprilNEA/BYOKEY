@@ -11,16 +11,19 @@ struct Card<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .kerning(0.5)
+            if !title.isEmpty {
+                Text(title)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.accentColor.opacity(0.8))
+                    .kerning(0.8)
+            }
 
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(.background, in: .rect(cornerRadius: 10))
+        .background(.white.opacity(0.85), in: .rect(cornerRadius: 14))
+        .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
     }
 }
 

@@ -14,3 +14,23 @@ typealias RateLimitsResponse = Components.Schemas.RateLimitsResponse
 typealias ProviderRateLimits = Components.Schemas.ProviderRateLimits
 typealias AccountRateLimit = Components.Schemas.AccountRateLimit
 typealias RateLimitSnapshot = Components.Schemas.RateLimitSnapshot
+
+// MARK: - Provider Icon
+
+/// Maps a provider id string to its asset catalog image name.
+/// Falls back to nil when no custom icon is available.
+func providerIconName(for id: String) -> String? {
+    switch id.lowercased() {
+    case "claude":       "provider-claude"
+    case "codex":        "provider-codex"
+    case "gemini":       "provider-gemini"
+    case "copilot":      "provider-copilot"
+    case "kiro":         "provider-kiro"
+    case "antigravity":  "provider-antigravity"
+    case "qwen":         "provider-qwen"
+    case "kimi":         "provider-kimi"
+    case "iflow":        "provider-iflow"
+    case "amp":          "provider-amp"
+    default:             nil
+    }
+}

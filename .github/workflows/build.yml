@@ -172,6 +172,60 @@ jobs:
         with:
           files: ${{ env.DMG_PATH }}
 
+  update-appcast:
+    name: Update Appcast
+    needs: desktop
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Sparkle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/sparkle
+          gh release download --repo sparkle-project/Sparkle \
+            --pattern 'Sparkle-*.tar.xz' -D /tmp/sparkle
+          tar xf /tmp/sparkle/Sparkle-*.tar.xz -C /tmp/sparkle
+
+      - name: Prepare release directory
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/release
+          # Preserve existing appcast entries
+          git show origin/gh-pages:appcast.xml > /tmp/release/appcast.xml 2>/dev/null || true
+          # Download DMGs from the release
+          gh release download "${{ github.event.release.tag_name }}" \
+            --pattern 'Byokey-*.dmg' -D /tmp/release
+
+      - name: Generate appcast
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          KEY_FILE=$(mktemp)
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$KEY_FILE"
+          trap "rm -f $KEY_FILE" EXIT
+
+          /tmp/sparkle/bin/generate_appcast /tmp/release \
+            --ed-key-file "$KEY_FILE" \
+            --download-url-prefix \
+            "https://github.com/AprilNEA/BYOKEY/releases/download/${TAG}/"
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: /tmp/release
+          publish_branch: gh-pages
+          keep_files: true
+          exclude_assets: '**.dmg'
+
   update-homebrew:
     name: Update Homebrew
     needs: build

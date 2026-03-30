@@ -21,26 +21,11 @@ struct ModelsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Models")
-                    .font(.system(size: 28, weight: .bold))
-                Spacer()
-                if pm.isReachable {
-                    HStack(spacing: 4) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundStyle(.secondary)
-                        TextField("Filter models…", text: $searchText)
-                            .textFieldStyle(.plain)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(.white.opacity(0.6), in: .rect(cornerRadius: 8))
-                    .frame(maxWidth: 220)
-                }
+        DetailPage("Models", accessory: {
+            if pm.isReachable {
+                searchField
             }
-            .padding(.bottom, 8)
-
+        }) {
             if pm.isReachable {
                 Form {
                     if dataService.models.isEmpty, dataService.isLoading {
@@ -103,8 +88,19 @@ struct ModelsView: View {
                 Spacer()
             }
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Filter models…", text: $searchText)
+                .textFieldStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.white.opacity(0.6), in: .rect(cornerRadius: 8))
+        .frame(maxWidth: 220)
     }
 
     // MARK: - Summary

@@ -10,6 +10,7 @@ struct DashboardRateLimitsCard: View {
                     ForEach(provider.accounts, id: \.account_id) { account in
                         if !account.snapshot.headers.additionalProperties.isEmpty {
                             rateLimitRow(
+                                providerId: provider.id,
                                 name: provider.display_name,
                                 multiAccount: provider.accounts.count > 1,
                                 accountId: account.account_id,
@@ -24,14 +25,20 @@ struct DashboardRateLimitsCard: View {
     }
 
     private func rateLimitRow(
-        name: String, multiAccount: Bool, accountId: String,
+        providerId: String, name: String, multiAccount: Bool, accountId: String,
         headers: [String: String], capturedAt: UInt64
     ) -> some View {
         let remaining = findHeader(headers, "remaining")
         let limit = findHeader(headers, "limit")
 
         return VStack(alignment: .leading, spacing: 4) {
-            HStack {
+            HStack(spacing: 6) {
+                if let iconName = providerIconName(for: providerId) {
+                    Image(iconName)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 12, height: 12)
+                }
                 Text(name)
                     .fontWeight(.medium)
                 if multiAccount {

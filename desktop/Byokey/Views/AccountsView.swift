@@ -7,7 +7,7 @@ struct AccountsView: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        Group {
+        DetailPage("Accounts") {
             if pm.isReachable {
                 Form {
                     if dataService.providerAccounts.isEmpty, dataService.isLoading {
@@ -41,7 +41,15 @@ struct AccountsView: View {
                                     }
                                 }
                             } header: {
-                                Text(provider.display_name)
+                                HStack(spacing: 6) {
+                                    if let iconName = providerIconName(for: provider.id) {
+                                        Image(iconName)
+                                            .resizable()
+                                            .scaledToFit()
+                                            .frame(width: 14, height: 14)
+                                    }
+                                    Text(provider.display_name)
+                                }
                             } footer: {
                                 HStack {
                                     Spacer()
@@ -73,22 +81,22 @@ struct AccountsView: View {
                     }
                 }
                 .formStyle(.grouped)
+                .scrollContentBackground(.hidden)
             } else if pm.isRunning {
-                ContentUnavailableView {
-                    ProgressView()
-                        .controlSize(.large)
-                } description: {
-                    Text("Waiting for server…")
-                }
+                Spacer()
+                HStack { Spacer(); ProgressView().controlSize(.large); Spacer() }
+                Text("Waiting for server…").foregroundStyle(.secondary)
+                Spacer()
             } else {
+                Spacer()
                 ContentUnavailableView(
                     "Server Not Running",
                     systemImage: "server.rack",
                     description: Text("Enable the proxy server to manage accounts.")
                 )
+                Spacer()
             }
         }
-        .navigationTitle("Accounts")
     }
 
     private func activateAccount(provider: String, accountId: String) async {

@@ -66,6 +66,9 @@ struct DashboardStatusBar: View {
                 }
             }
         }
+        .padding(16)
+        .background(.white.opacity(0.85), in: .rect(cornerRadius: 14))
+        .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
     }
 
     private func statusItem<C: View>(
@@ -73,8 +76,9 @@ struct DashboardStatusBar: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color.accentColor.opacity(0.7))
+                .kerning(0.8)
             content()
                 .font(.subheadline)
         }

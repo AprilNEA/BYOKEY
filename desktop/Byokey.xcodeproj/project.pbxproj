@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		BA0A10052F5460010096A005 /* OpenAPIRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = BA0A10022F5460010096A002 /* OpenAPIRuntime */; };
 		BA0A10062F5460010096A006 /* OpenAPIURLSession in Frameworks */ = {isa = PBXBuildFile; productRef = BA0A10032F5460010096A003 /* OpenAPIURLSession */; };
+		BA0A100A2F5460010096A00A /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = BA0A10092F5460010096A009 /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,6 +31,7 @@
 			files = (
 				BA0A10052F5460010096A005 /* OpenAPIRuntime in Frameworks */,
 				BA0A10062F5460010096A006 /* OpenAPIURLSession in Frameworks */,
+				BA0A100A2F5460010096A00A /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -76,6 +78,7 @@
 			packageProductDependencies = (
 				BA0A10022F5460010096A002 /* OpenAPIRuntime */,
 				BA0A10032F5460010096A003 /* OpenAPIURLSession */,
+				BA0A10092F5460010096A009 /* Sparkle */,
 			);
 			productName = Byokey;
 			productReference = BAD6C0B52F53FC2500968364 /* Byokey.app */;
@@ -108,6 +111,7 @@
 			packageReferences = (
 				BA0A10012F5460010096A001 /* XCRemoteSwiftPackageReference "swift-openapi-runtime" */,
 				BAD6C10E2F544FFC00968364 /* XCRemoteSwiftPackageReference "swift-openapi-urlsession" */,
+				BA0A10082F5460010096A008 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BAD6C0B62F53FC2500968364 /* Products */;
@@ -293,7 +297,7 @@
 		BAD6C0C52F53FC2500968364 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon-Dev";
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Byokey/Byokey.entitlements;
 				CODE_SIGN_STYLE = Automatic;
@@ -304,6 +308,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Byokey/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_RustWorkspaceDir = "$(PROJECT_DIR)/..";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -332,6 +337,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Byokey/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -377,6 +383,14 @@
 				minimumVersion = 1.8.2;
 			};
 		};
+		BA0A10082F5460010096A008 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.6.0;
+			};
+		};
 		BAD6C10E2F544FFC00968364 /* XCRemoteSwiftPackageReference "swift-openapi-urlsession" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/apple/swift-openapi-urlsession";
@@ -397,6 +411,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = BAD6C10E2F544FFC00968364 /* XCRemoteSwiftPackageReference "swift-openapi-urlsession" */;
 			productName = OpenAPIURLSession;
+		};
+		BA0A10092F5460010096A009 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BA0A10082F5460010096A008 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

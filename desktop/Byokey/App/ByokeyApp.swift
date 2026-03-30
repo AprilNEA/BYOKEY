@@ -1,3 +1,4 @@
+import Sparkle
 import SwiftUI
 
 @main
@@ -5,6 +6,7 @@ struct ByokeyApp: App {
     @State private var appEnv = AppEnvironment.shared
     @State private var processManager = ProcessManager()
     @State private var dataService = DataService()
+    @State private var updaterState = UpdaterState()
 
     var body: some Scene {
         Window("BYOKEY", id: "main") {
@@ -12,6 +14,7 @@ struct ByokeyApp: App {
                 .environment(appEnv)
                 .environment(processManager)
                 .environment(dataService)
+                .environment(updaterState)
                 .onAppear {
                     let config = ConfigManager()
                     config.load()
@@ -22,12 +25,14 @@ struct ByokeyApp: App {
                     dataService.isServerReachable = newValue
                 }
         }
-        .defaultSize(width: 860, height: 640)
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 914, height: 672)
 
         MenuBarExtra {
             MenuBarMenu()
                 .environment(appEnv)
                 .environment(processManager)
+                .environment(updaterState)
         } label: {
             Image(systemName: "server.rack")
         }
@@ -36,6 +41,7 @@ struct ByokeyApp: App {
 
 private struct MenuBarMenu: View {
     @Environment(ProcessManager.self) private var pm
+    @Environment(UpdaterState.self) private var updaterState
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -44,6 +50,11 @@ private struct MenuBarMenu: View {
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
         .keyboardShortcut(",", modifiers: .command)
+
+        Button("Check for Updates…") {
+            updaterState.checkForUpdates()
+        }
+        .disabled(!updaterState.canCheckForUpdates)
 
         Divider()
 
