@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2](https://github.com/AprilNEA/BYOKEY/compare/v0.9.1...v0.9.2) - 2026-03-30
+
+### Fixed
+
+- *(ci)* remove empty appcast.xml when gh-pages branch does not exist
+
 ## [0.9.1](https://github.com/AprilNEA/BYOKEY/compare/v0.9.0...v0.9.1) - 2026-03-30
 
 ### Fixed
