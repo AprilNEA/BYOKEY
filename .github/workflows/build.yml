@@ -199,9 +199,9 @@ jobs:
           mkdir -p /tmp/release
           # Preserve existing appcast entries
           git show origin/gh-pages:appcast.xml > /tmp/release/appcast.xml 2>/dev/null || true
-          # Download DMGs from the release
+          # Only arm64 DMG for appcast (generate_appcast rejects duplicate bundle versions)
           gh release download "${{ github.event.release.tag_name }}" \
-            --pattern 'Byokey-*.dmg' -D /tmp/release
+            --pattern 'Byokey-*-arm64.dmg' -D /tmp/release
 
       - name: Generate appcast
         env:
