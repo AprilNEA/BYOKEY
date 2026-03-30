@@ -197,8 +197,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p /tmp/release
-          # Preserve existing appcast entries
-          git show origin/gh-pages:appcast.xml > /tmp/release/appcast.xml 2>/dev/null || true
+          # Preserve existing appcast entries (remove if empty to avoid XML parse error)
+          git show origin/gh-pages:appcast.xml > /tmp/release/appcast.xml 2>/dev/null || rm -f /tmp/release/appcast.xml
           # Only arm64 DMG for appcast (generate_appcast rejects duplicate bundle versions)
           gh release download "${{ github.event.release.tag_name }}" \
             --pattern 'Byokey-*-arm64.dmg' -D /tmp/release
