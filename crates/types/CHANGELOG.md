@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-types-v0.8.0...byokey-types-v0.9.0) - 2026-03-30
+
+### Added
+
+- *(proxy)* intercept and cache AmpCode quota from management responses
+- *(auth)* add AMP token persistence, refresh, and beta header forwarding
+- *(auth)* add proactive token refresh and concurrent refresh dedup
+- complete upstream v6.9.4 sync — all 9 remaining items
+
+### Other
+
+- improve code quality across all crates
+- *(desktop)* unify Desktop→Rust API to OpenAPI-generated client
+
 ## [0.8.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-types-v0.7.1...byokey-types-v0.8.0) - 2026-03-28
 
 ### Added
