@@ -12,6 +12,8 @@ use utoipa::OpenApi;
         crate::handler::usage::usage_handler,
         crate::handler::usage::usage_history_handler,
         crate::handler::models::list_models,
+        crate::handler::amp_threads::list_threads,
+        crate::handler::amp_threads::get_thread,
     ),
     components(schemas(
         crate::handler::status::StatusResponse,
@@ -33,6 +35,16 @@ use utoipa::OpenApi;
         byokey_types::UsageBucket,
         crate::handler::models::ModelsResponse,
         crate::handler::models::ModelEntry,
+        crate::handler::amp_threads::AmpThreadListResponse,
+        crate::handler::amp_threads::AmpThreadListQuery,
+        crate::handler::amp_threads::AmpThreadSummary,
+        crate::handler::amp_threads::AmpThreadDetail,
+        crate::handler::amp_threads::AmpMessage,
+        crate::handler::amp_threads::AmpContentBlock,
+        crate::handler::amp_threads::AmpToolRun,
+        crate::handler::amp_threads::AmpUsage,
+        crate::handler::amp_threads::AmpMessageState,
+        crate::handler::amp_threads::AmpRelationship,
     )),
     tags((name = "management", description = "Daemon management API"))
 )]

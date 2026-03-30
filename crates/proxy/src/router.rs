@@ -9,7 +9,8 @@ use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
 use crate::handler::{
-    accounts, amp, amp_provider, amp_quota, chat, messages, models, ratelimits, status, usage,
+    accounts, amp, amp_provider, amp_quota, amp_threads, chat, messages, models, ratelimits,
+    status, usage,
 };
 use crate::{AppState, openapi};
 
@@ -91,6 +92,11 @@ pub fn make_router(state: Arc<AppState>) -> Router {
         .route(
             "/v0/management/amp/quota",
             get(amp_quota::amp_quota_handler),
+        )
+        .route("/v0/management/amp/threads", get(amp_threads::list_threads))
+        .route(
+            "/v0/management/amp/threads/{id}",
+            get(amp_threads::get_thread),
         )
         .route("/openapi.json", get(openapi::openapi_json))
         .with_state(state)
