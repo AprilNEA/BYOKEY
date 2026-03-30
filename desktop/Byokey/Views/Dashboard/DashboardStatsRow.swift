@@ -49,6 +49,8 @@ struct DashboardStatsRow: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+
+            Spacer(minLength: 0)
         }
     }
 
