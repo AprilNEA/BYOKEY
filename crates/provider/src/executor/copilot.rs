@@ -50,8 +50,8 @@ const REBALANCE_INTERVAL: Duration = Duration::from_secs(300); // 5 min
 /// Quota cache TTL — avoid re-fetching within this window.
 const QUOTA_CACHE_TTL: Duration = Duration::from_secs(300);
 
-/// GitHub Copilot Chat Completions API base URL.
-const API_BASE_URL: &str = "https://api.githubcopilot.com";
+/// Default GitHub Copilot Chat Completions API base URL.
+const DEFAULT_BASE_URL: &str = "https://api.githubcopilot.com";
 
 /// Endpoint to exchange a GitHub OAuth token for a short-lived Copilot API token.
 const COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/token";
@@ -91,17 +91,21 @@ fn quota_score(q: Option<&CachedQuota>) -> f64 {
 pub struct CopilotExecutor {
     ph: ProviderHttp,
     api_key: Option<String>,
+    base_url: Option<String>,
     auth: Arc<AuthManager>,
     /// Cache: GitHub token → short-lived Copilot API token.
     cache: Mutex<HashMap<String, CachedToken>>,
 }
 
+#[bon::bon]
 impl CopilotExecutor {
-    /// Creates a new Copilot executor with an optional API key and auth manager.
+    /// Creates a new Copilot executor.
+    #[builder]
     pub fn new(
         http: rquest::Client,
-        api_key: Option<String>,
         auth: Arc<AuthManager>,
+        api_key: Option<String>,
+        base_url: Option<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
     ) -> Self {
         let mut ph = ProviderHttp::new(http);
@@ -111,6 +115,7 @@ impl CopilotExecutor {
         Self {
             ph,
             api_key,
+            base_url,
             auth,
             cache: Mutex::new(HashMap::new()),
         }
@@ -173,10 +178,11 @@ impl CopilotExecutor {
             Duration::from_secs(1500) // default ~25 min
         };
 
+        let default_base = self.base_url.as_deref().unwrap_or(DEFAULT_BASE_URL);
         let api_endpoint = json
             .pointer("/endpoints/api")
             .and_then(Value::as_str)
-            .unwrap_or(API_BASE_URL)
+            .unwrap_or(default_base)
             .trim_end_matches('/')
             .to_string();
 
@@ -364,7 +370,13 @@ impl CopilotExecutor {
     /// Panics if the internal token cache mutex is poisoned.
     pub async fn copilot_token(&self) -> Result<(String, String)> {
         if let Some(key) = &self.api_key {
-            return Ok((key.clone(), API_BASE_URL.to_string()));
+            let base = self
+                .base_url
+                .as_deref()
+                .unwrap_or(DEFAULT_BASE_URL)
+                .trim_end_matches('/')
+                .to_string();
+            return Ok((key.clone(), base));
         }
 
         let accounts = self.auth.list_accounts(&ProviderId::Copilot).await?;
@@ -533,7 +545,7 @@ mod tests {
 
     fn make_executor() -> CopilotExecutor {
         let (client, auth) = crate::http_util::test_auth();
-        CopilotExecutor::new(client, None, auth, None)
+        CopilotExecutor::builder().http(client).auth(auth).build()
     }
 
     #[test]

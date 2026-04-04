@@ -12,29 +12,49 @@ use byokey_types::{
 use rquest::Client;
 use std::sync::Arc;
 
-/// Gemini OpenAI-compatible endpoint
-const API_URL: &str = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+/// Default Gemini API base URL.
+const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com";
+/// OpenAI-compatible chat completions path.
+const API_PATH: &str = "/v1beta/openai/chat/completions";
 
 /// Executor for the Google Gemini API.
 pub struct GeminiExecutor {
     ph: ProviderHttp,
     api_key: Option<String>,
+    api_url: String,
     auth: Arc<AuthManager>,
 }
 
+#[bon::bon]
 impl GeminiExecutor {
-    /// Creates a new Gemini executor with an optional API key and auth manager.
+    /// Creates a new Gemini executor.
+    #[builder]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(
         http: Client,
-        api_key: Option<String>,
         auth: Arc<AuthManager>,
+        api_key: Option<String>,
+        base_url: Option<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
     ) -> Self {
         let mut ph = ProviderHttp::new(http);
         if let Some(store) = ratelimit {
             ph = ph.with_ratelimit(store, ProviderId::Gemini);
         }
-        Self { ph, api_key, auth }
+        let api_url = format!(
+            "{}{}",
+            base_url
+                .as_deref()
+                .unwrap_or(DEFAULT_BASE_URL)
+                .trim_end_matches('/'),
+            API_PATH
+        );
+        Self {
+            ph,
+            api_key,
+            api_url,
+            auth,
+        }
     }
 
     /// Returns the auth header: `x-goog-api-key` for API keys, `Authorization: Bearer` for OAuth.
@@ -60,7 +80,7 @@ impl ProviderExecutor for GeminiExecutor {
         let builder = self
             .ph
             .client()
-            .post(API_URL)
+            .post(&self.api_url)
             .header(header_name, header_value)
             .header("content-type", "application/json")
             .json(&body);
@@ -79,7 +99,7 @@ mod tests {
 
     fn make_executor() -> GeminiExecutor {
         let (client, auth) = crate::http_util::test_auth();
-        GeminiExecutor::new(client, None, auth, None)
+        GeminiExecutor::builder().http(client).auth(auth).build()
     }
 
     #[test]

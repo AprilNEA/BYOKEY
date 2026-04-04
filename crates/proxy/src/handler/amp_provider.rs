@@ -239,6 +239,14 @@ pub async fn codex_responses_passthrough(
     State(state): State<Arc<AppState>>,
     axum::extract::Json(body): axum::extract::Json<Value>,
 ) -> Result<Response, ApiError> {
+    let mut body = body;
+
+    // The Codex Responses API requires `instructions`; inject an empty default
+    // when the client (e.g. AmpCode) omits it.
+    if body.get("instructions").is_none() {
+        body["instructions"] = Value::String(String::new());
+    }
+
     let config = state.config.load();
     let api_key = config
         .providers
@@ -481,6 +489,7 @@ async fn gemini_native_via_backend(
     let executor = byokey_provider::make_executor(
         backend_id,
         backend_config.api_key,
+        backend_config.base_url,
         state.auth.clone(),
         state.http.clone(),
         Some(state.ratelimits.clone()),

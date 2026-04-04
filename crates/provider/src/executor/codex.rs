@@ -27,8 +27,10 @@ use rquest::Client;
 use serde_json::Value;
 use std::sync::Arc;
 
-/// Standard `OpenAI` Chat Completions endpoint (used with API keys).
-const OPENAI_API_URL: &str = "https://api.openai.com/v1/chat/completions";
+/// Default `OpenAI` API base URL.
+const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
+/// Chat completions API path.
+const OPENAI_API_PATH: &str = "/v1/chat/completions";
 
 /// Codex CLI Responses endpoint (used with OAuth tokens).
 const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
@@ -40,22 +42,40 @@ const CODEX_USER_AGENT: &str = "codex_cli_rs/0.116.0 (Mac OS 26.0.1; arm64) Appl
 pub struct CodexExecutor {
     ph: ProviderHttp,
     api_key: Option<String>,
+    openai_api_url: String,
     auth: Arc<AuthManager>,
 }
 
+#[bon::bon]
 impl CodexExecutor {
-    /// Creates a new Codex executor with an optional API key and auth manager.
+    /// Creates a new Codex executor.
+    #[builder]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(
         http: Client,
-        api_key: Option<String>,
         auth: Arc<AuthManager>,
+        api_key: Option<String>,
+        base_url: Option<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
     ) -> Self {
         let mut ph = ProviderHttp::new(http);
         if let Some(store) = ratelimit {
             ph = ph.with_ratelimit(store, ProviderId::Codex);
         }
-        Self { ph, api_key, auth }
+        let openai_api_url = format!(
+            "{}{}",
+            base_url
+                .as_deref()
+                .unwrap_or(DEFAULT_OPENAI_BASE_URL)
+                .trim_end_matches('/'),
+            OPENAI_API_PATH
+        );
+        Self {
+            ph,
+            api_key,
+            openai_api_url,
+            auth,
+        }
     }
 
     /// Returns `(token, is_oauth)`.  `is_oauth = true` when the token came
@@ -327,7 +347,7 @@ impl ProviderExecutor for CodexExecutor {
         let builder = self
             .ph
             .client()
-            .post(OPENAI_API_URL)
+            .post(&self.openai_api_url)
             .header("authorization", format!("Bearer {token}"))
             .header("content-type", "application/json")
             .header("Conversation_id", &cache_key)
@@ -348,7 +368,7 @@ mod tests {
 
     fn make_executor() -> CodexExecutor {
         let (client, auth) = crate::http_util::test_auth();
-        CodexExecutor::new(client, None, auth, None)
+        CodexExecutor::builder().http(client).auth(auth).build()
     }
 
     #[test]

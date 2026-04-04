@@ -15,8 +15,10 @@ use rquest::Client;
 use serde_json::Value;
 use std::sync::Arc;
 
-/// Kiro Messages API endpoint.
-const KIRO_API_URL: &str = "https://api.kiro.dev/v1/messages";
+/// Default Kiro API base URL.
+const DEFAULT_BASE_URL: &str = "https://api.kiro.dev";
+/// Messages API path.
+const API_PATH: &str = "/v1/messages";
 
 /// Required Anthropic API version header value.
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -25,22 +27,40 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub struct KiroExecutor {
     ph: ProviderHttp,
     api_key: Option<String>,
+    api_url: String,
     auth: Arc<AuthManager>,
 }
 
+#[bon::bon]
 impl KiroExecutor {
-    /// Creates a new Kiro executor with an optional API key and auth manager.
+    /// Creates a new Kiro executor.
+    #[builder]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(
         http: Client,
-        api_key: Option<String>,
         auth: Arc<AuthManager>,
+        api_key: Option<String>,
+        base_url: Option<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
     ) -> Self {
         let mut ph = ProviderHttp::new(http);
         if let Some(store) = ratelimit {
             ph = ph.with_ratelimit(store, ProviderId::Kiro);
         }
-        Self { ph, api_key, auth }
+        let api_url = format!(
+            "{}{}",
+            base_url
+                .as_deref()
+                .unwrap_or(DEFAULT_BASE_URL)
+                .trim_end_matches('/'),
+            API_PATH
+        );
+        Self {
+            ph,
+            api_key,
+            api_url,
+            auth,
+        }
     }
 
     /// Returns the bearer token: API key if present, otherwise fetches an OAuth token.
@@ -65,7 +85,7 @@ impl ProviderExecutor for KiroExecutor {
         let builder = self
             .ph
             .client()
-            .post(KIRO_API_URL)
+            .post(&self.api_url)
             .header("authorization", format!("Bearer {token}"))
             .header("anthropic-version", ANTHROPIC_VERSION)
             .header("content-type", "application/json")
@@ -95,7 +115,7 @@ mod tests {
 
     fn make_executor() -> KiroExecutor {
         let (client, auth) = crate::http_util::test_auth();
-        KiroExecutor::new(client, None, auth, None)
+        KiroExecutor::builder().http(client).auth(auth).build()
     }
 
     #[test]

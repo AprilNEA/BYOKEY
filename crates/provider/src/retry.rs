@@ -4,14 +4,16 @@
 //! tries each key in round-robin order (using [`CredentialRouter`]) until
 //! a request succeeds or all keys are exhausted / in cooldown.
 
-use crate::routing::CredentialRouter;
+use crate::routing::{CredentialRouter, RoutingStrategy};
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
+use byokey_config::KeyRoutingStrategy;
 use byokey_types::{
     ChatRequest, ProviderId, RateLimitStore,
     traits::{ProviderExecutor, ProviderResponse, Result},
 };
 use rquest::Client;
+use std::collections::HashMap;
 use std::{sync::Arc, time::Duration};
 
 /// Default cooldown duration for a key after a retryable error.
@@ -19,9 +21,14 @@ const COOLDOWN_DURATION: Duration = Duration::from_secs(30);
 
 /// Wraps a provider with multi-key retry: on retryable errors, marks the
 /// current key as cooled down and retries with the next available key.
+///
+/// Each key can have its own `base_url`, enabling parallel use of
+/// official and third-party endpoints for the same provider type.
 pub struct RetryExecutor {
     provider: ProviderId,
     router: Arc<CredentialRouter>,
+    /// Per-key base URL overrides.
+    base_urls: HashMap<String, Option<String>>,
     auth: Arc<AuthManager>,
     http: Client,
     models: Vec<String>,
@@ -31,22 +38,37 @@ pub struct RetryExecutor {
 impl RetryExecutor {
     /// Creates a new retry executor.
     ///
-    /// `keys` must contain at least one key.
+    /// `credentials` contains `(api_key, base_url)` pairs. Each key can
+    /// optionally target a different endpoint.
+    ///
+    /// `strategy` controls how keys are selected:
+    /// - `RoundRobin`: rotate evenly across all keys.
+    /// - `Priority`: always prefer the first ready key, only try later keys on failure.
     ///
     /// # Panics
     ///
-    /// Panics if `keys` is empty (propagated from [`CredentialRouter::new`]).
+    /// Panics if `credentials` is empty (propagated from [`CredentialRouter::new`]).
     pub fn new(
         provider: ProviderId,
-        keys: Vec<String>,
+        credentials: Vec<(String, Option<String>)>,
+        strategy: KeyRoutingStrategy,
         auth: Arc<AuthManager>,
         http: Client,
         models: Vec<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
     ) -> Self {
+        let keys: Vec<String> = credentials.iter().map(|(k, _)| k.clone()).collect();
+        let base_urls: HashMap<String, Option<String>> = credentials.into_iter().collect();
+        let routing_strategy = match strategy {
+            KeyRoutingStrategy::RoundRobin => RoutingStrategy::RoundRobin,
+            KeyRoutingStrategy::Priority => RoutingStrategy::FillFirst,
+        };
         Self {
             provider,
-            router: Arc::new(CredentialRouter::new(keys, COOLDOWN_DURATION)),
+            router: Arc::new(
+                CredentialRouter::new(keys, COOLDOWN_DURATION).with_strategy(routing_strategy),
+            ),
+            base_urls,
             auth,
             http,
             models,
@@ -70,9 +92,11 @@ impl ProviderExecutor for RetryExecutor {
                 None => break, // all keys in cooldown
             };
 
+            let base_url = self.base_urls.get(&key).cloned().flatten();
             let executor = crate::factory::make_executor(
                 &self.provider,
                 Some(key.clone()),
+                base_url,
                 Arc::clone(&self.auth),
                 self.http.clone(),
                 self.ratelimit.clone(),
@@ -130,7 +154,8 @@ mod tests {
     fn test_retry_executor_models() {
         let exec = RetryExecutor::new(
             ProviderId::Claude,
-            vec!["key-1".into()],
+            vec![("key-1".into(), None)],
+            KeyRoutingStrategy::default(),
             make_auth(),
             Client::new(),
             vec!["claude-opus-4-5".into()],
@@ -143,7 +168,12 @@ mod tests {
     fn test_retry_executor_multiple_keys() {
         let exec = RetryExecutor::new(
             ProviderId::Claude,
-            vec!["key-1".into(), "key-2".into(), "key-3".into()],
+            vec![
+                ("key-1".into(), None),
+                ("key-2".into(), None),
+                ("key-3".into(), None),
+            ],
+            KeyRoutingStrategy::default(),
             make_auth(),
             Client::new(),
             vec!["claude-opus-4-5".into()],

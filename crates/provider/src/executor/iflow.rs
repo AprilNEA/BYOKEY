@@ -16,29 +16,49 @@ use rquest::Client;
 use sha2::Sha256;
 use std::sync::Arc;
 
-/// iFlow OpenAI-compatible chat completions endpoint.
-const API_URL: &str = "https://apis.iflow.cn/v1/chat/completions";
+/// Default iFlow API base URL.
+const DEFAULT_BASE_URL: &str = "https://apis.iflow.cn";
+/// Chat completions API path.
+const API_PATH: &str = "/v1/chat/completions";
 
 /// Executor for the iFlow (Z.ai / GLM) API.
 pub struct IFlowExecutor {
     ph: ProviderHttp,
     api_key: Option<String>,
+    api_url: String,
     auth: Arc<AuthManager>,
 }
 
+#[bon::bon]
 impl IFlowExecutor {
-    /// Creates a new iFlow executor with an optional API key and auth manager.
+    /// Creates a new iFlow executor.
+    #[builder]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(
         http: Client,
-        api_key: Option<String>,
         auth: Arc<AuthManager>,
+        api_key: Option<String>,
+        base_url: Option<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
     ) -> Self {
         let mut ph = ProviderHttp::new(http);
         if let Some(store) = ratelimit {
             ph = ph.with_ratelimit(store, ProviderId::IFlow);
         }
-        Self { ph, api_key, auth }
+        let api_url = format!(
+            "{}{}",
+            base_url
+                .as_deref()
+                .unwrap_or(DEFAULT_BASE_URL)
+                .trim_end_matches('/'),
+            API_PATH
+        );
+        Self {
+            ph,
+            api_key,
+            api_url,
+            auth,
+        }
     }
 
     /// Resolves the API key: config-provided key first, otherwise from the auth store.
@@ -85,7 +105,7 @@ impl ProviderExecutor for IFlowExecutor {
         let builder = self
             .ph
             .client()
-            .post(API_URL)
+            .post(&self.api_url)
             .header("content-type", "application/json")
             .header("authorization", format!("Bearer {api_key}"))
             .header("user-agent", "iFlow-Cli")
@@ -109,7 +129,7 @@ mod tests {
 
     fn make_executor() -> IFlowExecutor {
         let (client, auth) = crate::http_util::test_auth();
-        IFlowExecutor::new(client, None, auth, None)
+        IFlowExecutor::builder().http(client).auth(auth).build()
     }
 
     #[test]

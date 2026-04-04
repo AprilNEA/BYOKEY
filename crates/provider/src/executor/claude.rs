@@ -23,8 +23,10 @@ use rquest::Client;
 use serde_json::Value;
 use std::sync::Arc;
 
-/// Anthropic Messages API endpoint (with beta flag required by the API).
-const API_URL: &str = "https://api.anthropic.com/v1/messages?beta=true";
+/// Default Anthropic API base URL.
+const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
+/// Messages API path (with beta flag required by the API).
+const API_PATH: &str = "/v1/messages?beta=true";
 
 // ── Shared Claude fingerprint constants ─────────────────────────────
 // Re-exported via `byokey_provider::claude_headers` so the proxy crate's
@@ -60,21 +62,26 @@ enum AuthMode {
 pub struct ClaudeExecutor {
     ph: ProviderHttp,
     api_key: Option<String>,
+    api_url: String,
     auth: Arc<AuthManager>,
     profile_cache: Option<Arc<DeviceProfileCache>>,
     cloak_config: Option<CloakConfig>,
 }
 
+#[bon::bon]
 impl ClaudeExecutor {
-    /// Creates a new Claude executor with an optional API key and auth manager.
+    /// Creates a new Claude executor.
     ///
     /// When `profile_cache` is `Some`, per-auth device fingerprints are
     /// stabilised across requests instead of using static constants.
     /// When `cloak_config` is `Some` and enabled, request cloaking is applied.
+    #[builder]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(
         http: Client,
-        api_key: Option<String>,
         auth: Arc<AuthManager>,
+        api_key: Option<String>,
+        base_url: Option<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
         profile_cache: Option<Arc<DeviceProfileCache>>,
         cloak_config: Option<CloakConfig>,
@@ -83,9 +90,18 @@ impl ClaudeExecutor {
         if let Some(store) = ratelimit {
             ph = ph.with_ratelimit(store, ProviderId::Claude);
         }
+        let api_url = format!(
+            "{}{}",
+            base_url
+                .as_deref()
+                .unwrap_or(DEFAULT_BASE_URL)
+                .trim_end_matches('/'),
+            API_PATH
+        );
         Self {
             ph,
             api_key,
+            api_url,
             auth,
             profile_cache,
             cloak_config,
@@ -149,7 +165,7 @@ impl ProviderExecutor for ClaudeExecutor {
         let builder = self
             .ph
             .client()
-            .post(API_URL)
+            .post(&self.api_url)
             .header("anthropic-version", ANTHROPIC_VERSION)
             .header("anthropic-beta", ANTHROPIC_BETA)
             .header("anthropic-dangerous-direct-browser-access", "true")
@@ -413,7 +429,7 @@ mod tests {
 
     fn make_executor() -> ClaudeExecutor {
         let (client, auth) = crate::http_util::test_auth();
-        ClaudeExecutor::new(client, None, auth, None, None, None)
+        ClaudeExecutor::builder().http(client).auth(auth).build()
     }
 
     #[test]
@@ -427,7 +443,11 @@ mod tests {
     #[test]
     fn test_supported_models_with_api_key() {
         let (client, auth) = crate::http_util::test_auth();
-        let ex = ClaudeExecutor::new(client, Some("sk-ant-test".into()), auth, None, None, None);
+        let ex = ClaudeExecutor::builder()
+            .http(client)
+            .auth(auth)
+            .api_key("sk-ant-test".to_string())
+            .build();
         assert!(!ex.supported_models().is_empty());
     }
 }

@@ -22,31 +22,46 @@ use rquest::Client;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-/// Primary Antigravity API endpoint.
-const PRIMARY_URL: &str = "https://daily-cloudcode-pa.googleapis.com";
-/// Fallback Antigravity API endpoint.
+/// Default primary Antigravity API base URL.
+const DEFAULT_PRIMARY_URL: &str = "https://daily-cloudcode-pa.googleapis.com";
+/// Fallback Antigravity API base URL.
 const FALLBACK_URL: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com";
 
 /// Executor for the Antigravity (Cloud Code) API.
 pub struct AntigravityExecutor {
     ph: ProviderHttp,
     api_key: Option<String>,
+    primary_url: String,
     auth: Arc<AuthManager>,
 }
 
+#[bon::bon]
 impl AntigravityExecutor {
-    /// Creates a new Antigravity executor with an optional API key and auth manager.
+    /// Creates a new Antigravity executor.
+    #[builder]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(
         http: Client,
-        api_key: Option<String>,
         auth: Arc<AuthManager>,
+        api_key: Option<String>,
+        base_url: Option<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
     ) -> Self {
         let mut ph = ProviderHttp::new(http);
         if let Some(store) = ratelimit {
             ph = ph.with_ratelimit(store, ProviderId::Antigravity);
         }
-        Self { ph, api_key, auth }
+        let primary_url = base_url
+            .as_deref()
+            .unwrap_or(DEFAULT_PRIMARY_URL)
+            .trim_end_matches('/')
+            .to_string();
+        Self {
+            ph,
+            api_key,
+            primary_url,
+            auth,
+        }
     }
 
     /// Returns the bearer token: API key if present, otherwise fetches an OAuth token.
@@ -82,7 +97,7 @@ impl AntigravityExecutor {
                 .json(body)
         };
 
-        let result = build_request(PRIMARY_URL).send().await;
+        let result = build_request(&self.primary_url).send().await;
 
         match result {
             Ok(r) if r.status().as_u16() != 429 => Ok(r),
@@ -317,7 +332,10 @@ mod tests {
 
     fn make_executor() -> AntigravityExecutor {
         let (client, auth) = crate::http_util::test_auth();
-        AntigravityExecutor::new(client, None, auth, None)
+        AntigravityExecutor::builder()
+            .http(client)
+            .auth(auth)
+            .build()
     }
 
     #[test]

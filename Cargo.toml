@@ -69,6 +69,8 @@ tiktoken-rs = "0.6"
 jsonptr = "0.4"
 # Async trait
 async-trait = "0.1"
+# Builder
+bon = "3"
 # URL encoding
 serde_urlencoded = "0.7"
 # CLI

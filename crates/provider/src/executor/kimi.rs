@@ -16,32 +16,48 @@ use rquest::Client;
 use serde_json::Value;
 use std::sync::Arc;
 
-/// Kimi OpenAI-compatible chat completions endpoint.
-const API_URL: &str = "https://api.kimi.com/coding/v1/chat/completions";
+/// Default Kimi API base URL.
+const DEFAULT_BASE_URL: &str = "https://api.kimi.com";
+/// Chat completions API path.
+const API_PATH: &str = "/coding/v1/chat/completions";
 
 /// Executor for the Moonshot AI (Kimi) API.
 pub struct KimiExecutor {
     ph: ProviderHttp,
     api_key: Option<String>,
+    api_url: String,
     auth: Arc<AuthManager>,
     device_id: String,
 }
 
+#[bon::bon]
 impl KimiExecutor {
-    /// Creates a new Kimi executor with an optional API key and auth manager.
+    /// Creates a new Kimi executor.
+    #[builder]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(
         http: Client,
-        api_key: Option<String>,
         auth: Arc<AuthManager>,
+        api_key: Option<String>,
+        base_url: Option<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
     ) -> Self {
         let mut ph = ProviderHttp::new(http);
         if let Some(store) = ratelimit {
             ph = ph.with_ratelimit(store, ProviderId::Kimi);
         }
+        let api_url = format!(
+            "{}{}",
+            base_url
+                .as_deref()
+                .unwrap_or(DEFAULT_BASE_URL)
+                .trim_end_matches('/'),
+            API_PATH
+        );
         Self {
             ph,
             api_key,
+            api_url,
             auth,
             device_id: byokey_auth::provider::kimi::device_id(),
         }
@@ -82,7 +98,7 @@ impl ProviderExecutor for KimiExecutor {
         let builder = self
             .ph
             .client()
-            .post(API_URL)
+            .post(&self.api_url)
             .header("content-type", "application/json")
             .header("authorization", format!("Bearer {token}"))
             .header("user-agent", "KimiCLI/1.10.6")
@@ -114,7 +130,7 @@ mod tests {
 
     fn make_executor() -> KimiExecutor {
         let (client, auth) = crate::http_util::test_auth();
-        KimiExecutor::new(client, None, auth, None)
+        KimiExecutor::builder().http(client).auth(auth).build()
     }
 
     #[test]

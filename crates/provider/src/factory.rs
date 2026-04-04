@@ -52,11 +52,12 @@ impl ProviderExecutor for FallbackExecutor {
 pub fn make_executor(
     provider: &ProviderId,
     api_key: Option<String>,
+    base_url: Option<String>,
     auth: Arc<AuthManager>,
     http: Client,
     ratelimit: Option<Arc<RateLimitStore>>,
 ) -> Option<Box<dyn ProviderExecutor>> {
-    make_executor_with_cache(provider, api_key, auth, http, ratelimit, None)
+    make_executor_with_cache(provider, api_key, base_url, auth, http, ratelimit, None)
 }
 
 /// Like [`make_executor`] but accepts an optional [`DeviceProfileCache`]
@@ -65,34 +66,95 @@ pub fn make_executor(
 pub fn make_executor_with_cache(
     provider: &ProviderId,
     api_key: Option<String>,
+    base_url: Option<String>,
     auth: Arc<AuthManager>,
     http: Client,
     ratelimit: Option<Arc<RateLimitStore>>,
     profile_cache: Option<Arc<DeviceProfileCache>>,
 ) -> Option<Box<dyn ProviderExecutor>> {
     match provider {
-        ProviderId::Claude => Some(Box::new(ClaudeExecutor::new(
-            http,
-            api_key,
-            auth,
-            ratelimit,
-            profile_cache,
-            None,
-        ))),
-        ProviderId::Codex => Some(Box::new(CodexExecutor::new(http, api_key, auth, ratelimit))),
-        ProviderId::Gemini => Some(Box::new(GeminiExecutor::new(
-            http, api_key, auth, ratelimit,
-        ))),
-        ProviderId::Kiro => Some(Box::new(KiroExecutor::new(http, api_key, auth, ratelimit))),
-        ProviderId::Copilot => Some(Box::new(CopilotExecutor::new(
-            http, api_key, auth, ratelimit,
-        ))),
-        ProviderId::Antigravity => Some(Box::new(AntigravityExecutor::new(
-            http, api_key, auth, ratelimit,
-        ))),
-        ProviderId::Qwen => Some(Box::new(QwenExecutor::new(http, api_key, auth, ratelimit))),
-        ProviderId::IFlow => Some(Box::new(IFlowExecutor::new(http, api_key, auth, ratelimit))),
-        ProviderId::Kimi => Some(Box::new(KimiExecutor::new(http, api_key, auth, ratelimit))),
+        ProviderId::Claude => Some(Box::new(
+            ClaudeExecutor::builder()
+                .http(http)
+                .auth(auth)
+                .maybe_api_key(api_key)
+                .maybe_base_url(base_url)
+                .maybe_ratelimit(ratelimit)
+                .maybe_profile_cache(profile_cache)
+                .build(),
+        )),
+        ProviderId::Codex => Some(Box::new(
+            CodexExecutor::builder()
+                .http(http)
+                .auth(auth)
+                .maybe_api_key(api_key)
+                .maybe_base_url(base_url)
+                .maybe_ratelimit(ratelimit)
+                .build(),
+        )),
+        ProviderId::Gemini => Some(Box::new(
+            GeminiExecutor::builder()
+                .http(http)
+                .auth(auth)
+                .maybe_api_key(api_key)
+                .maybe_base_url(base_url)
+                .maybe_ratelimit(ratelimit)
+                .build(),
+        )),
+        ProviderId::Kiro => Some(Box::new(
+            KiroExecutor::builder()
+                .http(http)
+                .auth(auth)
+                .maybe_api_key(api_key)
+                .maybe_base_url(base_url)
+                .maybe_ratelimit(ratelimit)
+                .build(),
+        )),
+        ProviderId::Copilot => Some(Box::new(
+            CopilotExecutor::builder()
+                .http(http)
+                .auth(auth)
+                .maybe_api_key(api_key)
+                .maybe_base_url(base_url)
+                .maybe_ratelimit(ratelimit)
+                .build(),
+        )),
+        ProviderId::Antigravity => Some(Box::new(
+            AntigravityExecutor::builder()
+                .http(http)
+                .auth(auth)
+                .maybe_api_key(api_key)
+                .maybe_base_url(base_url)
+                .maybe_ratelimit(ratelimit)
+                .build(),
+        )),
+        ProviderId::Qwen => Some(Box::new(
+            QwenExecutor::builder()
+                .http(http)
+                .auth(auth)
+                .maybe_api_key(api_key)
+                .maybe_base_url(base_url)
+                .maybe_ratelimit(ratelimit)
+                .build(),
+        )),
+        ProviderId::IFlow => Some(Box::new(
+            IFlowExecutor::builder()
+                .http(http)
+                .auth(auth)
+                .maybe_api_key(api_key)
+                .maybe_base_url(base_url)
+                .maybe_ratelimit(ratelimit)
+                .build(),
+        )),
+        ProviderId::Kimi => Some(Box::new(
+            KimiExecutor::builder()
+                .http(http)
+                .auth(auth)
+                .maybe_api_key(api_key)
+                .maybe_base_url(base_url)
+                .maybe_ratelimit(ratelimit)
+                .build(),
+        )),
         ProviderId::Amp => None, // Amp is not a model provider
     }
 }
@@ -134,21 +196,39 @@ pub fn make_executor_for_model<S: BuildHasher>(
     // If a backend override is set, route entirely to that provider.
     if let Some(backend_id) = &config.backend {
         let backend_config = config_fn(backend_id).unwrap_or_default();
-        return make_executor(backend_id, backend_config.api_key, auth, http, ratelimit)
-            .ok_or_else(|| ByokError::UnsupportedModel(model.to_string()));
+        return make_executor(
+            backend_id,
+            backend_config.api_key,
+            backend_config.base_url,
+            auth,
+            http,
+            ratelimit,
+        )
+        .ok_or_else(|| ByokError::UnsupportedModel(model.to_string()));
     }
 
     // If multiple API keys are configured, use RetryExecutor for key rotation.
-    let all_keys = config.all_api_keys();
-    if all_keys.len() > 1 {
-        let keys: Vec<String> = all_keys.into_iter().map(String::from).collect();
+    let all_keys_with_urls = config.all_api_keys_with_base_url();
+    if all_keys_with_urls.len() > 1 {
+        let credentials: Vec<(String, Option<String>)> = all_keys_with_urls
+            .into_iter()
+            .map(|(k, u)| (k.to_string(), u.map(String::from)))
+            .collect();
         // Need supported_models from a temporary executor to pass to RetryExecutor.
-        let models = make_executor(&provider, None, Arc::clone(&auth), http.clone(), None)
-            .map(|e| e.supported_models())
-            .unwrap_or_default();
+        let models = make_executor(
+            &provider,
+            None,
+            config.base_url.clone(),
+            Arc::clone(&auth),
+            http.clone(),
+            None,
+        )
+        .map(|e| e.supported_models())
+        .unwrap_or_default();
         let primary: Box<dyn ProviderExecutor> = Box::new(retry::RetryExecutor::new(
             provider.clone(),
-            keys,
+            credentials,
+            config.routing,
             Arc::clone(&auth),
             http.clone(),
             models,
@@ -158,9 +238,14 @@ pub fn make_executor_for_model<S: BuildHasher>(
         // Wrap with fallback if configured.
         if let Some(fallback_id) = &config.fallback {
             let fallback_config = config_fn(fallback_id).unwrap_or_default();
-            if let Some(fallback) =
-                make_executor(fallback_id, fallback_config.api_key, auth, http, ratelimit)
-            {
+            if let Some(fallback) = make_executor(
+                fallback_id,
+                fallback_config.api_key,
+                fallback_config.base_url,
+                auth,
+                http,
+                ratelimit,
+            ) {
                 return Ok(Box::new(FallbackExecutor { primary, fallback }));
             }
         }
@@ -176,6 +261,7 @@ pub fn make_executor_for_model<S: BuildHasher>(
             make_executor(
                 &provider,
                 config.api_key,
+                config.base_url,
                 Arc::clone(&auth),
                 http.clone(),
                 ratelimit.clone(),
@@ -186,9 +272,14 @@ pub fn make_executor_for_model<S: BuildHasher>(
     // If a fallback is configured, wrap in FallbackExecutor.
     if let Some(fallback_id) = &config.fallback {
         let fallback_config = config_fn(fallback_id).unwrap_or_default();
-        if let Some(fallback) =
-            make_executor(fallback_id, fallback_config.api_key, auth, http, ratelimit)
-        {
+        if let Some(fallback) = make_executor(
+            fallback_id,
+            fallback_config.api_key,
+            fallback_config.base_url,
+            auth,
+            http,
+            ratelimit,
+        ) {
             return Ok(Box::new(FallbackExecutor { primary, fallback }));
         }
     }
@@ -219,7 +310,7 @@ mod tests {
     #[test]
     fn test_make_executor_claude() {
         let auth = make_auth();
-        let ex = make_executor(&ProviderId::Claude, None, auth, make_http(), None);
+        let ex = make_executor(&ProviderId::Claude, None, None, auth, make_http(), None);
         assert!(ex.is_some());
         assert!(
             ex.unwrap()
@@ -235,6 +326,7 @@ mod tests {
         let ex = make_executor(
             &ProviderId::Codex,
             Some("sk-test".into()),
+            None,
             auth,
             make_http(),
             None,
@@ -245,21 +337,28 @@ mod tests {
     #[test]
     fn test_make_executor_gemini() {
         let auth = make_auth();
-        let ex = make_executor(&ProviderId::Gemini, None, auth, make_http(), None);
+        let ex = make_executor(&ProviderId::Gemini, None, None, auth, make_http(), None);
         assert!(ex.is_some());
     }
 
     #[test]
     fn test_make_executor_copilot() {
         let auth = make_auth();
-        let ex = make_executor(&ProviderId::Copilot, None, auth, make_http(), None);
+        let ex = make_executor(&ProviderId::Copilot, None, None, auth, make_http(), None);
         assert!(ex.is_some());
     }
 
     #[test]
     fn test_make_executor_antigravity() {
         let auth = make_auth();
-        let ex = make_executor(&ProviderId::Antigravity, None, auth, make_http(), None);
+        let ex = make_executor(
+            &ProviderId::Antigravity,
+            None,
+            None,
+            auth,
+            make_http(),
+            None,
+        );
         assert!(ex.is_some());
         assert!(
             ex.unwrap()
@@ -272,7 +371,7 @@ mod tests {
     #[test]
     fn test_make_executor_kimi() {
         let auth = make_auth();
-        let ex = make_executor(&ProviderId::Kimi, None, auth, make_http(), None);
+        let ex = make_executor(&ProviderId::Kimi, None, None, auth, make_http(), None);
         assert!(ex.is_some());
         assert!(
             ex.unwrap()
@@ -393,10 +492,12 @@ mod tests {
                         ApiKeyEntry {
                             api_key: "sk-key-1".into(),
                             label: None,
+                            base_url: None,
                         },
                         ApiKeyEntry {
                             api_key: "sk-key-2".into(),
                             label: None,
+                            base_url: None,
                         },
                     ],
                     ..Default::default()

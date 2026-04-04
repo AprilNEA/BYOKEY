@@ -14,6 +14,10 @@ pub struct ApiKeyEntry {
     /// Optional label for identification in logs.
     #[serde(default)]
     pub label: Option<String>,
+    /// Optional custom base URL for this key (overrides the provider-level `base_url`).
+    /// Enables using different endpoints per key, e.g. official API + third-party proxy.
+    #[serde(default)]
+    pub base_url: Option<String>,
 }
 
 /// Default header values injected into Claude API requests.
@@ -58,6 +62,17 @@ pub struct CodexHeaderDefaults {
     pub beta_features: Option<String>,
 }
 
+/// Strategy for selecting among multiple API keys.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyRoutingStrategy {
+    /// Rotate through keys evenly (default).
+    #[default]
+    RoundRobin,
+    /// Always prefer the first ready key; only use later keys on failure.
+    Priority,
+}
+
 /// Configuration for a single provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
@@ -67,9 +82,19 @@ pub struct ProviderConfig {
     /// Multiple API keys with round-robin routing.
     #[serde(default)]
     pub api_keys: Vec<ApiKeyEntry>,
+    /// Custom base URL for the provider API (overrides the default endpoint).
+    /// Only the origin (scheme + host + optional port) should be specified;
+    /// the executor appends its own path. Example: `https://my-proxy.example.com`
+    #[serde(default)]
+    pub base_url: Option<String>,
     /// Whether this provider is enabled (defaults to `true`).
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Strategy for selecting among multiple API keys.
+    /// `round_robin` (default): rotate evenly.
+    /// `priority`: always prefer the first key, only try later keys on failure.
+    #[serde(default)]
+    pub routing: KeyRoutingStrategy,
     /// Always route requests to this provider instead (e.g. `backend: copilot`
     /// lets Gemini requests go through GitHub Copilot).
     #[serde(default)]
@@ -99,7 +124,9 @@ impl Default for ProviderConfig {
         Self {
             api_key: None,
             api_keys: Vec::new(),
+            base_url: None,
             enabled: true,
+            routing: KeyRoutingStrategy::default(),
             backend: None,
             fallback: None,
             max_retry_credentials: None,
@@ -124,6 +151,24 @@ impl ProviderConfig {
             keys.push(entry.api_key.as_str());
         }
         keys
+    }
+
+    /// Returns all configured API keys with their resolved base URLs.
+    ///
+    /// Each entry is `(api_key, base_url)`. Per-key `base_url` takes precedence
+    /// over the provider-level `base_url`.
+    #[must_use]
+    pub fn all_api_keys_with_base_url(&self) -> Vec<(&str, Option<&str>)> {
+        let default_base = self.base_url.as_deref();
+        let mut result = Vec::new();
+        if let Some(ref key) = self.api_key {
+            result.push((key.as_str(), default_base));
+        }
+        for entry in &self.api_keys {
+            let base = entry.base_url.as_deref().or(default_base);
+            result.push((entry.api_key.as_str(), base));
+        }
+        result
     }
 }
 
@@ -643,10 +688,12 @@ providers:
                 ApiKeyEntry {
                     api_key: "multi-1".into(),
                     label: None,
+                    base_url: None,
                 },
                 ApiKeyEntry {
                     api_key: "multi-2".into(),
                     label: None,
+                    base_url: None,
                 },
             ],
             ..Default::default()

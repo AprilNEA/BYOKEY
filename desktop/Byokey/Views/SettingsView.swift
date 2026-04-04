@@ -91,6 +91,24 @@ struct SettingsView: View {
                         }
                     }
 
+                    Section("Provider Overrides") {
+                        ForEach(KnownProvider.allCases) { provider in
+                            ProviderOverrideRow(
+                                provider: provider,
+                                override_: Binding(
+                                    get: { config.providerOverrides[provider.rawValue] ?? ProviderOverride() },
+                                    set: { newVal in
+                                        if newVal.isEmpty {
+                                            config.providerOverrides.removeValue(forKey: provider.rawValue)
+                                        } else {
+                                            config.providerOverrides[provider.rawValue] = newVal
+                                        }
+                                    }
+                                )
+                            )
+                        }
+                    }
+
                     Section {
                         LabeledContent("Path") {
                             Text(config.configURL.path)
@@ -130,6 +148,36 @@ struct SettingsView: View {
         }
         .onChange(of: config.port) { _, newPort in
             appEnv.port = newPort
+        }
+    }
+}
+
+/// Expandable row for a single provider's base_url / api_key overrides.
+private struct ProviderOverrideRow: View {
+    let provider: KnownProvider
+    @Binding var override_: ProviderOverride
+    @State private var isExpanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            TextField("Base URL", text: $override_.baseUrl, prompt: Text("https://custom-endpoint.example.com"))
+                .textFieldStyle(.roundedBorder)
+                .font(.caption)
+            TextField("API Key", text: $override_.apiKey, prompt: Text("sk-..."))
+                .textFieldStyle(.roundedBorder)
+                .font(.caption)
+        } label: {
+            HStack {
+                Text(provider.displayName)
+                if !override_.isEmpty {
+                    Circle()
+                        .fill(.green)
+                        .frame(width: 6, height: 6)
+                }
+            }
+        }
+        .onAppear {
+            if !override_.isEmpty { isExpanded = true }
         }
     }
 }

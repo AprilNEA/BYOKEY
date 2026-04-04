@@ -13,29 +13,49 @@ use byokey_types::{
 use rquest::Client;
 use std::sync::Arc;
 
-/// Qwen OpenAI-compatible endpoint
-const API_URL: &str = "https://portal.qwen.ai/v1/chat/completions";
+/// Default Qwen API base URL.
+const DEFAULT_BASE_URL: &str = "https://portal.qwen.ai";
+/// Chat completions API path.
+const API_PATH: &str = "/v1/chat/completions";
 
 /// Executor for the Alibaba Qwen API.
 pub struct QwenExecutor {
     ph: ProviderHttp,
     api_key: Option<String>,
+    api_url: String,
     auth: Arc<AuthManager>,
 }
 
+#[bon::bon]
 impl QwenExecutor {
-    /// Creates a new Qwen executor with an optional API key and auth manager.
+    /// Creates a new Qwen executor.
+    #[builder]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(
         http: Client,
-        api_key: Option<String>,
         auth: Arc<AuthManager>,
+        api_key: Option<String>,
+        base_url: Option<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
     ) -> Self {
         let mut ph = ProviderHttp::new(http);
         if let Some(store) = ratelimit {
             ph = ph.with_ratelimit(store, ProviderId::Qwen);
         }
-        Self { ph, api_key, auth }
+        let api_url = format!(
+            "{}{}",
+            base_url
+                .as_deref()
+                .unwrap_or(DEFAULT_BASE_URL)
+                .trim_end_matches('/'),
+            API_PATH
+        );
+        Self {
+            ph,
+            api_key,
+            api_url,
+            auth,
+        }
     }
 
     /// Returns the Bearer token: API key if configured, otherwise OAuth access token.
@@ -63,7 +83,7 @@ impl ProviderExecutor for QwenExecutor {
         let builder = self
             .ph
             .client()
-            .post(API_URL)
+            .post(&self.api_url)
             .header("content-type", "application/json")
             .header("authorization", format!("Bearer {token}"))
             .header("user-agent", "QwenCode/0.10.3 (darwin; arm64)")
@@ -93,7 +113,7 @@ mod tests {
 
     fn make_executor() -> QwenExecutor {
         let (client, auth) = crate::http_util::test_auth();
-        QwenExecutor::new(client, None, auth, None)
+        QwenExecutor::builder().http(client).auth(auth).build()
     }
 
     #[test]

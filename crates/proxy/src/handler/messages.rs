@@ -26,7 +26,10 @@ use std::sync::Arc;
 
 use crate::{AppState, UsageRecorder, error::ApiError};
 
-const API_URL: &str = "https://api.anthropic.com/v1/messages?beta=true";
+/// Default Anthropic API base URL.
+const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
+/// Messages API path (with beta flag required by the API).
+const API_PATH: &str = "/v1/messages?beta=true";
 
 // Copilot identification headers (matching VS Code Copilot Chat extension).
 const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.35.0";
@@ -225,6 +228,14 @@ pub async fn anthropic_messages(
     // Default: passthrough to Anthropic API.
     let provider_cfg = config.providers.get(&ProviderId::Claude);
     let api_key = provider_cfg.and_then(|pc| pc.api_key.clone());
+    let api_url = format!(
+        "{}{}",
+        provider_cfg
+            .and_then(|pc| pc.base_url.as_deref())
+            .unwrap_or(DEFAULT_BASE_URL)
+            .trim_end_matches('/'),
+        API_PATH
+    );
     let is_oauth = api_key.is_none();
 
     // OAuth tokens require the billing header to access Sonnet/Opus models.
@@ -243,7 +254,7 @@ pub async fn anthropic_messages(
 
     let builder = state
         .http
-        .post(API_URL)
+        .post(&api_url)
         .header("anthropic-version", ANTHROPIC_VERSION)
         .header("anthropic-beta", &beta)
         .header("anthropic-dangerous-direct-browser-access", "true")
@@ -362,12 +373,13 @@ async fn copilot_messages(
         .cloned()
         .unwrap_or_default();
 
-    let executor = CopilotExecutor::new(
-        state.http.clone(),
-        copilot_config.api_key,
-        state.auth.clone(),
-        Some(state.ratelimits.clone()),
-    );
+    let executor = CopilotExecutor::builder()
+        .http(state.http.clone())
+        .auth(state.auth.clone())
+        .maybe_api_key(copilot_config.api_key)
+        .maybe_base_url(copilot_config.base_url)
+        .ratelimit(state.ratelimits.clone())
+        .build();
 
     let accounts = state
         .auth

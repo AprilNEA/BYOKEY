@@ -1,6 +1,34 @@
 import AppKit
 import Foundation
 
+/// Per-provider override (base_url / api_key).
+struct ProviderOverride: Equatable {
+    var baseUrl: String = ""
+    var apiKey: String = ""
+
+    var isEmpty: Bool { baseUrl.isEmpty && apiKey.isEmpty }
+}
+
+/// Known provider IDs matching the Rust `ProviderId` enum.
+enum KnownProvider: String, CaseIterable, Identifiable {
+    case claude, codex, gemini, copilot, kiro, antigravity, qwen, iflow, kimi
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .claude: "Claude"
+        case .codex: "Codex / OpenAI"
+        case .gemini: "Gemini"
+        case .copilot: "GitHub Copilot"
+        case .kiro: "Kiro"
+        case .antigravity: "Antigravity"
+        case .qwen: "Qwen"
+        case .iflow: "iFlow"
+        case .kimi: "Kimi"
+        }
+    }
+}
+
 /// Reads and writes `~/.config/byokey/settings.json`.
 ///
 /// Uses a typed `Codable` struct for known fields. Unknown keys are preserved
@@ -24,6 +52,11 @@ final class ConfigManager {
 
     var keepaliveSeconds: Int = 15 { didSet { scheduleSave() } }
     var bootstrapRetries: Int = 1 { didSet { scheduleSave() } }
+
+    // MARK: - Provider Overrides
+
+    /// Per-provider custom endpoint and API key overrides.
+    var providerOverrides: [String: ProviderOverride] = [:] { didSet { scheduleSave() } }
 
     // MARK: - State
 
@@ -79,6 +112,21 @@ final class ConfigManager {
         logLevel = config.log?.level ?? "info"
         keepaliveSeconds = config.streaming?.keepalive_seconds ?? 15
         bootstrapRetries = config.streaming?.bootstrap_retries ?? 1
+
+        // Load provider overrides from raw overlay
+        if let providers = rawOverlay["providers"] as? [String: Any] {
+            var overrides: [String: ProviderOverride] = [:]
+            for (key, value) in providers {
+                guard let dict = value as? [String: Any] else { continue }
+                var override_ = ProviderOverride()
+                override_.baseUrl = dict["base_url"] as? String ?? ""
+                override_.apiKey = dict["api_key"] as? String ?? ""
+                if !override_.isEmpty {
+                    overrides[key] = override_
+                }
+            }
+            providerOverrides = overrides
+        }
     }
 
     // MARK: - Save
@@ -117,6 +165,32 @@ final class ConfigManager {
             if proxyUrl.isEmpty {
                 rawOverlay.removeValue(forKey: "proxy_url")
             }
+        }
+
+        // Merge provider overrides into raw overlay (preserving other provider keys)
+        var providers = rawOverlay["providers"] as? [String: Any] ?? [:]
+        for (providerId, override_) in providerOverrides {
+            var dict = providers[providerId] as? [String: Any] ?? [:]
+            if override_.baseUrl.isEmpty {
+                dict.removeValue(forKey: "base_url")
+            } else {
+                dict["base_url"] = override_.baseUrl
+            }
+            if override_.apiKey.isEmpty {
+                dict.removeValue(forKey: "api_key")
+            } else {
+                dict["api_key"] = override_.apiKey
+            }
+            if dict.isEmpty {
+                providers.removeValue(forKey: providerId)
+            } else {
+                providers[providerId] = dict
+            }
+        }
+        if providers.isEmpty {
+            rawOverlay.removeValue(forKey: "providers")
+        } else {
+            rawOverlay["providers"] = providers
         }
 
         let dir = configURL.deletingLastPathComponent()
