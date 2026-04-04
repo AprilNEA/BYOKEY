@@ -3,6 +3,15 @@
     <channel>
         <title>Byokey</title>
         <item>
+            <title>0.10.0</title>
+            <pubDate>Sat, 04 Apr 2026 08:11:22 +0000</pubDate>
+            <sparkle:version>27</sparkle:version>
+            <sparkle:shortVersionString>0.10.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.2</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/AprilNEA/BYOKEY/releases/download/v0.10.0/Byokey-v0.10.0-arm64.dmg" length="12241267" type="application/octet-stream" sparkle:edSignature="5ITN0xhQS38byiOI52vEbyP8aqELO6H2F4TaVPC6JGLxWQnQmWRF7FfW2Ks/taDFuEFnKN3jiAINSkCAJTogCA=="/>
+        </item>
+        <item>
             <title>byokey-daemon-v0.10.0</title>
             <pubDate>Sat, 04 Apr 2026 08:00:50 +0000</pubDate>
             <sparkle:version>26</sparkle:version>
@@ -19,15 +28,6 @@
             <sparkle:minimumSystemVersion>15.2</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/AprilNEA/BYOKEY/releases/download/v0.9.2/Byokey-v0.9.2-arm64.dmg" length="12213437" type="application/octet-stream" sparkle:edSignature="o96Rb4Evj44VC8rO/t2JbCz1GC3gJaY1Tyrdx7k3djLT0IYVCIOJsByBPpbm0rdudKZt8Ls70pwbHnQC6PLQCg=="/>
-        </item>
-        <item>
-            <title>byokey-daemon-v0.9.2</title>
-            <pubDate>Mon, 30 Mar 2026 07:09:38 +0000</pubDate>
-            <sparkle:version>24</sparkle:version>
-            <sparkle:shortVersionString>byokey-daemon-v0.9.2</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.2</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/AprilNEA/BYOKEY/releases/download/byokey-daemon-v0.9.2/Byokey-byokey-daemon-v0.9.2-arm64.dmg" length="12213384" type="application/octet-stream" sparkle:edSignature="OW7bf9OAfl1AucVCvmHSGjGK4gBs3oRuVK8V6wQt5gwXpQsRDsfkgf5u2iuVoE0tZnz9n/RtVDhA3kvK+EIcBg=="/>
         </item>
     </channel>
 </rss>
