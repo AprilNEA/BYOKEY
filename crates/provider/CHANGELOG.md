@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-provider-v0.9.2...byokey-provider-v0.10.0) - 2026-04-04
+
+### Fixed
+
+- *(proxy)* inject default `instructions` for Codex Responses API passthrough
+
 ## [0.9.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-provider-v0.8.0...byokey-provider-v0.9.0) - 2026-03-30
 
 ### Added
