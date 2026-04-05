@@ -66,6 +66,7 @@ jobs:
 
   desktop:
     name: Desktop ${{ matrix.arch }}
+    if: startsWith(github.event.release.tag_name, 'v')
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -174,6 +175,7 @@ jobs:
 
   update-appcast:
     name: Update Appcast
+    if: startsWith(github.event.release.tag_name, 'v')
     needs: desktop
     runs-on: macos-latest
     permissions:
@@ -199,9 +201,10 @@ jobs:
           mkdir -p /tmp/release
           # Preserve existing appcast entries (remove if empty to avoid XML parse error)
           git show origin/gh-pages:appcast.xml > /tmp/release/appcast.xml 2>/dev/null || rm -f /tmp/release/appcast.xml
-          # Only arm64 DMG for appcast (generate_appcast rejects duplicate bundle versions)
+          # Download both arm64 and x86_64 DMGs; generate_appcast creates
+          # separate <item> entries with matching hardwareRequirements
           gh release download "${{ github.event.release.tag_name }}" \
-            --pattern 'Byokey-*-arm64.dmg' -D /tmp/release
+            --pattern 'Byokey-*.dmg' -D /tmp/release
 
       - name: Generate appcast
         env:

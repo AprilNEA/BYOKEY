@@ -27,6 +27,14 @@ struct ByokeyApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 914, height: 672)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    updaterState.checkForUpdates()
+                }
+                .disabled(!updaterState.canCheckForUpdates)
+            }
+        }
 
         MenuBarExtra {
             MenuBarMenu()
