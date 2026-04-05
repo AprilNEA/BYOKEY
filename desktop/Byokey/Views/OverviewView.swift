@@ -64,50 +64,6 @@ struct OverviewView: View {
                 }
             }
 
-            // PROVIDERS
-            if pm.isReachable {
-                sectionTitle("PROVIDERS")
-
-                let columns = [
-                    GridItem(.flexible(), spacing: 12),
-                    GridItem(.flexible(), spacing: 12),
-                ]
-
-                LazyVGrid(columns: columns, spacing: 12) {
-                    ForEach(dataService.providers, id: \.id) { provider in
-                        overviewCard {
-                            HStack(spacing: 10) {
-                                if let iconName = providerIconName(for: provider.id) {
-                                    Image(iconName)
-                                        .resizable()
-                                        .scaledToFit()
-                                        .frame(width: 18, height: 18)
-                                }
-                                Text(provider.display_name)
-                                    .fontWeight(.semibold)
-                                Spacer()
-                                Text("\(provider.models_count) models")
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
-                            }
-
-                            Text(providerDescription(provider))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-
-                            HStack(spacing: 5) {
-                                Circle()
-                                    .fill(providerColor(provider))
-                                    .frame(width: 8, height: 8)
-                                Text(providerStatusText(provider))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-            }
-
             Spacer(minLength: 0)
         }
     }
@@ -133,29 +89,6 @@ struct OverviewView: View {
         .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
     }
 
-    private func providerColor(_ p: Components.Schemas.ProviderStatus) -> Color {
-        switch p.auth_status {
-        case .valid: .green
-        case .expired: .orange
-        case .not_configured: .gray
-        }
-    }
-
-    private func providerStatusText(_ p: Components.Schemas.ProviderStatus) -> String {
-        switch p.auth_status {
-        case .valid: "Authenticated"
-        case .expired: "Token expired"
-        case .not_configured: "Not configured"
-        }
-    }
-
-    private func providerDescription(_ p: Components.Schemas.ProviderStatus) -> String {
-        if p.enabled {
-            "Active provider routing \(p.models_count) models."
-        } else {
-            "Provider is disabled."
-        }
-    }
 }
 
 #Preview {

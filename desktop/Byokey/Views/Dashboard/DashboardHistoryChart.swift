@@ -37,7 +37,7 @@ struct DashboardHistoryChart: View {
                         AxisValueLabel()
                     }
                 }
-                .frame(height: 120)
+                .frame(minHeight: 60, idealHeight: 120)
             } else {
                 Text("No request data yet")
                     .foregroundStyle(.tertiary)

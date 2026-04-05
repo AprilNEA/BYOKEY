@@ -25,7 +25,6 @@ struct DashboardStatsRow: View {
             )
             .frame(maxHeight: .infinity, alignment: .top)
         }
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var requestsCard: some View {
@@ -88,7 +87,7 @@ struct DashboardStatsRow: View {
                 }
                 .chartXAxis(.hidden)
                 .chartYAxis(.hidden)
-                .frame(height: 36)
+                .frame(minHeight: 20, idealHeight: 36)
 
                 if let peak = points.max(by: { $0.value < $1.value })?.value, peak > 0 {
                     Text("Peak \(formatTokens(peak))")

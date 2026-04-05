@@ -13,9 +13,9 @@ struct GeneralView: View {
                     emptyState
                 } else {
                     DashboardStatsRow()
+                        .layoutPriority(1)
                     DashboardHistoryChart()
-                    DashboardActivityCard()
-
+                        .layoutPriority(1)
                     if let rateLimits = dataService.rateLimits,
                        rateLimits.providers.contains(where: {
                            $0.accounts.contains(where: { !$0.snapshot.headers.additionalProperties.isEmpty })
