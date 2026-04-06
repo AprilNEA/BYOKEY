@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1](https://github.com/AprilNEA/BYOKEY/compare/byokey-proxy-v0.10.0...byokey-proxy-v0.10.1) - 2026-04-06
+
+### Fixed
+
+- *(claude)* normalize temperature for thinking and update beta headers
+
+### Other
+
+- *(provider)* migrate ClaudeExecutor to aigw translation layer
+
 ## [0.10.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-proxy-v0.9.2...byokey-proxy-v0.10.0) - 2026-04-04
 
 ### Fixed
