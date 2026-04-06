@@ -30,14 +30,18 @@ dependencies = [
 
 [[package]]
 name = "aigw"
-version = "0.1.0"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b0bf17ca65661b99d29884984bce817585156c634809be388273f954013068c"
 dependencies = [
  "aigw-anthropic",
 ]
 
 [[package]]
 name = "aigw-anthropic"
-version = "0.1.0"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e247abb6d94cec715257361a6db81c55a5c069e7f3682bb7ea031fe039a3e9fc"
 dependencies = [
  "aigw-core",
  "bon",
@@ -56,7 +60,9 @@ dependencies = [
 
 [[package]]
 name = "aigw-core"
-version = "0.1.0"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a664aa9ce1de7dd698f603bf9c062c2d71c4132616a3343afdddfa8c8052b4da"
 dependencies = [
  "bon",
  "bytes",

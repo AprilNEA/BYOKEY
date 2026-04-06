@@ -130,6 +130,36 @@ fn sanitize_thinking(body: &mut Value) {
             }
         }
     }
+
+    // Anthropic rejects temperature != 1 when thinking is active.
+    normalize_temperature_for_thinking(body);
+}
+
+/// Force `temperature` to `1` when thinking is enabled/adaptive/auto.
+///
+/// Anthropic API returns 400 if temperature is set to anything other than 1
+/// while a thinking mode is active. When thinking was stripped (e.g. by
+/// `tool_choice` conflict), we leave temperature as-is so non-thinking requests
+/// keep their original sampling behaviour.
+fn normalize_temperature_for_thinking(body: &mut Value) {
+    let thinking_active = body
+        .get("thinking")
+        .and_then(|th| th.get("type"))
+        .and_then(Value::as_str)
+        .is_some_and(|t| matches!(t, "enabled" | "adaptive" | "auto"));
+
+    if !thinking_active {
+        return;
+    }
+
+    match body.get("temperature") {
+        // temperature == 1 is already valid; no temperature field is fine too.
+        None => {}
+        Some(v) if v.as_f64() == Some(1.0) => {}
+        Some(_) => {
+            body["temperature"] = serde_json::json!(1);
+        }
+    }
 }
 
 /// Remove thinking-related fields and associated adaptive controls.
@@ -749,5 +779,75 @@ mod tests {
         });
         strip_thinking_fields(&mut body);
         assert!(body.get("output_config").is_none());
+    }
+
+    // ── normalize_temperature_for_thinking ─────────────────────────────
+
+    #[test]
+    fn adaptive_thinking_coerces_temperature_to_one() {
+        let mut body = json!({
+            "model": "claude-opus-4-6",
+            "temperature": 0,
+            "thinking": {"type": "adaptive"}
+        });
+        sanitize_thinking(&mut body);
+        assert_eq!(body["temperature"], 1);
+    }
+
+    #[test]
+    fn enabled_thinking_coerces_temperature_to_one() {
+        let mut body = json!({
+            "model": "claude-opus-4-6",
+            "temperature": 0.2,
+            "thinking": {"type": "enabled", "budget_tokens": 2048}
+        });
+        sanitize_thinking(&mut body);
+        assert_eq!(body["temperature"], 1);
+    }
+
+    #[test]
+    fn temperature_one_with_thinking_is_unchanged() {
+        let mut body = json!({
+            "model": "claude-opus-4-6",
+            "temperature": 1,
+            "thinking": {"type": "adaptive"}
+        });
+        sanitize_thinking(&mut body);
+        assert_eq!(body["temperature"], 1);
+    }
+
+    #[test]
+    fn no_thinking_leaves_temperature_alone() {
+        let mut body = json!({
+            "model": "claude-opus-4-6",
+            "temperature": 0,
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        sanitize_thinking(&mut body);
+        assert_eq!(body["temperature"], 0);
+    }
+
+    #[test]
+    fn forced_tool_choice_strips_thinking_keeps_temperature() {
+        let mut body = json!({
+            "model": "claude-opus-4-6",
+            "temperature": 0,
+            "thinking": {"type": "adaptive"},
+            "tool_choice": {"type": "any"}
+        });
+        sanitize_thinking(&mut body);
+        assert!(body.get("thinking").is_none());
+        // Temperature should remain at 0 — thinking was stripped.
+        assert_eq!(body["temperature"], 0);
+    }
+
+    #[test]
+    fn no_temperature_with_thinking_is_fine() {
+        let mut body = json!({
+            "model": "claude-opus-4-6",
+            "thinking": {"type": "adaptive"}
+        });
+        sanitize_thinking(&mut body);
+        assert!(body.get("temperature").is_none());
     }
 }

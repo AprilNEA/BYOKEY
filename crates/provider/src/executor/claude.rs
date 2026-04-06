@@ -42,7 +42,7 @@ pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 ///
 /// `prompt-caching-2024-07-31` removed: prompt caching is GA since Dec 2024;
 /// the beta header is now rejected by the API.
-pub const ANTHROPIC_BETA: &str = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05";
+pub const ANTHROPIC_BETA: &str = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,structured-outputs-2025-12-15,fast-mode-2026-02-01,redact-thinking-2026-02-12,token-efficient-tools-2026-03-28";
 
 /// User-Agent matching the Claude CLI SDK version.
 pub const USER_AGENT: &str = "claude-cli/2.1.63 (external, sdk-cli)";
@@ -221,10 +221,11 @@ impl ProviderExecutor for ClaudeExecutor {
             .translate_request(&aigw_request)
             .map_err(|e| byokey_types::ByokError::Translation(e.to_string()))?;
 
-        // Post-process on the Anthropic-format body (cache control, cloaking).
+        // Post-process on the Anthropic-format body (cache control, temperature, cloaking).
         let mut body: Value = serde_json::from_slice(&translated.body)
             .map_err(|e| byokey_types::ByokError::Translation(e.to_string()))?;
         body = inject_cache_control(body);
+        normalize_temperature_for_thinking(&mut body);
 
         // Apply cloaking before setting stream flag (payload hash covers the pre-stream body).
         if let Some(ref cc) = self.cloak_config
@@ -264,6 +265,31 @@ impl ProviderExecutor for ClaudeExecutor {
 
     fn supported_models(&self) -> Vec<String> {
         registry::models_for_provider(&ProviderId::Claude)
+    }
+}
+
+/// Force `temperature` to `1` when thinking is active.
+///
+/// Anthropic API returns 400 if temperature != 1 while `thinking.type` is
+/// `enabled` or `adaptive`. This runs after aigw translation so the body is
+/// already in Anthropic format.
+fn normalize_temperature_for_thinking(body: &mut Value) {
+    let thinking_active = body
+        .get("thinking")
+        .and_then(|th| th.get("type"))
+        .and_then(Value::as_str)
+        .is_some_and(|t| matches!(t, "enabled" | "adaptive"));
+
+    if !thinking_active {
+        return;
+    }
+
+    match body.get("temperature") {
+        None => {}
+        Some(v) if v.as_f64() == Some(1.0) => {}
+        Some(_) => {
+            body["temperature"] = serde_json::json!(1);
+        }
     }
 }
 
