@@ -10,6 +10,7 @@
 //!
 //! The response (streaming SSE or complete JSON) is returned as-is.
 
+use aigw::anthropic::{AuthMode, Transport, TransportConfig};
 use axum::{
     body::Body,
     extract::State,
@@ -21,15 +22,11 @@ use byokey_provider::claude_headers::{ANTHROPIC_BETA, ANTHROPIC_VERSION};
 use byokey_provider::cloak::inject_billing_header;
 use byokey_types::{ByokError, ProviderId, ThinkingCapability};
 use futures_util::{StreamExt as _, TryStreamExt as _, stream::try_unfold};
+use secrecy::SecretString;
 use serde_json::Value;
 use std::sync::Arc;
 
 use crate::{AppState, UsageRecorder, error::ApiError};
-
-/// Default Anthropic API base URL.
-const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
-/// Messages API path (with beta flag required by the API).
-const API_PATH: &str = "/v1/messages?beta=true";
 
 // Copilot identification headers (matching VS Code Copilot Chat extension).
 const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.35.0";
@@ -202,6 +199,8 @@ fn detect_initiator(body: &Value) -> &'static str {
     if is_agent { "agent" } else { "user" }
 }
 
+use byokey_provider::executor::claude::build_fingerprint_headers;
+
 pub async fn anthropic_messages(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -228,14 +227,6 @@ pub async fn anthropic_messages(
     // Default: passthrough to Anthropic API.
     let provider_cfg = config.providers.get(&ProviderId::Claude);
     let api_key = provider_cfg.and_then(|pc| pc.api_key.clone());
-    let api_url = format!(
-        "{}{}",
-        provider_cfg
-            .and_then(|pc| pc.base_url.as_deref())
-            .unwrap_or(DEFAULT_BASE_URL)
-            .trim_end_matches('/'),
-        API_PATH
-    );
     let is_oauth = api_key.is_none();
 
     // OAuth tokens require the billing header to access Sonnet/Opus models.
@@ -243,46 +234,53 @@ pub async fn anthropic_messages(
         inject_billing_header(&mut body);
     }
 
-    let accept = if stream {
-        "text/event-stream"
-    } else {
-        "application/json"
-    };
-
-    // Resolve stable device fingerprint from the profile cache.
-    let profile = state.device_profiles.resolve("global");
-
-    let builder = state
-        .http
-        .post(&api_url)
-        .header("anthropic-version", ANTHROPIC_VERSION)
-        .header("anthropic-beta", &beta)
-        .header("anthropic-dangerous-direct-browser-access", "true")
-        .header("x-app", "cli")
-        .header("user-agent", &profile.user_agent)
-        .header("content-type", "application/json")
-        .header("accept", accept)
-        .header("connection", "keep-alive")
-        .header("accept-encoding", "identity")
-        .header("x-stainless-lang", "js")
-        .header("x-stainless-runtime", "node")
-        .header("x-stainless-runtime-version", &profile.runtime_version)
-        .header("x-stainless-package-version", &profile.package_version)
-        .header("x-stainless-os", &profile.os)
-        .header("x-stainless-arch", &profile.arch)
-        .header("x-stainless-retry-count", "0")
-        .header("x-stainless-timeout", "600");
-
-    let builder = if let Some(key) = api_key {
-        builder.header("x-api-key", key)
+    // Resolve auth credential + mode.
+    let (credential, auth_mode) = if let Some(key) = api_key {
+        (key, AuthMode::ApiKey)
     } else {
         let token = state
             .auth
             .get_token(&ProviderId::Claude)
             .await
             .map_err(ApiError::from)?;
-        builder.header("authorization", format!("Bearer {}", token.access_token))
+        (token.access_token, AuthMode::Bearer)
     };
+
+    // Resolve stable device fingerprint from the profile cache.
+    let profile = state.device_profiles.resolve("global");
+
+    // Build Transport — handles auth header, version, beta, and fingerprint.
+    let transport = Transport::new(TransportConfig {
+        api_key: SecretString::from(credential),
+        auth_mode,
+        base_url: provider_cfg
+            .and_then(|pc| pc.base_url.clone())
+            .unwrap_or_else(|| "https://api.anthropic.com".to_owned()),
+        beta: Some(beta.clone()),
+        extra_headers: build_fingerprint_headers(&profile),
+        ..Default::default()
+    })
+    .map_err(|e| ApiError(ByokError::Config(e.to_string())))?;
+
+    let api_url = format!("{}?beta=true", transport.url("/v1/messages"));
+
+    let accept = if stream {
+        "text/event-stream"
+    } else {
+        "application/json"
+    };
+
+    // Apply Transport headers to rquest builder.
+    let mut builder = state.http.post(&api_url);
+    for (name, value) in transport.headers() {
+        if let Ok(v) = value.to_str() {
+            builder = builder.header(name.as_str(), v);
+        }
+    }
+    let builder = builder
+        .header("accept", accept)
+        .header("connection", "keep-alive")
+        .header("accept-encoding", "identity");
 
     // Log request details for debugging upstream errors.
     let model = body.get("model").and_then(Value::as_str).unwrap_or("?");

@@ -17,6 +17,7 @@ pub mod http_util;
 pub mod registry;
 pub mod retry;
 pub mod routing;
+pub mod stream_bridge;
 
 pub use device_profile::DeviceProfileCache;
 pub use executor::{

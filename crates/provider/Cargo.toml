@@ -16,6 +16,10 @@ byokey-types = { workspace = true, features = ["rquest"] }
 byokey-config.workspace = true
 byokey-auth.workspace = true
 byokey-translate.workspace = true
+aigw.workspace = true
+aigw-core.workspace = true
+reqwest.workspace = true
+secrecy.workspace = true
 rquest.workspace = true
 rand.workspace = true
 eventsource-stream.workspace = true

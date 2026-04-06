@@ -34,6 +34,10 @@ byokey-translate = { version = "0.10.0", path = "crates/translate" }
 byokey-provider = { version = "0.10.0", path = "crates/provider" }
 byokey-proxy = { version = "0.10.0", path = "crates/proxy" }
 byokey-daemon = { version = "0.10.0", path = "crates/daemon" }
+aigw = { path = "../../aprilnea/aigateway/providers/aigw", default-features = false, features = ["anthropic", "anthropic-claude-code"] }
+aigw-core = { path = "../../aprilnea/aigateway/providers/aigw-core" }
+reqwest = { version = "0.12", default-features = false }
+secrecy = "0.10"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

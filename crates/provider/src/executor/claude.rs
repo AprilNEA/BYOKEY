@@ -2,31 +2,34 @@
 //!
 //! Auth: `x-api-key` for raw API keys, `Authorization: Bearer` for OAuth tokens.
 //! Format: `OpenAI` -> Anthropic (translate), Anthropic -> `OpenAI` (translate).
+//!
+//! Transport (URL/header construction) is delegated to
+//! [`aigw::anthropic::Transport`], while HTTP sending uses `rquest` for TLS
+//! fingerprinting.
 use crate::cloak;
-use crate::device_profile::DeviceProfileCache;
+use crate::device_profile::{DeviceProfile, DeviceProfileCache};
 use crate::http_util::ProviderHttp;
 use crate::registry;
+use aigw::anthropic::translate::{AnthropicRequestTranslator, AnthropicResponseTranslator};
+use aigw::anthropic::{AuthMode as AigwAuthMode, Transport, TransportConfig};
+use aigw_core::translate::{RequestTranslator as _, ResponseTranslator as _};
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
 use byokey_config::CloakConfig;
-use byokey_translate::{ClaudeToOpenAI, OpenAIToClaude, inject_cache_control};
+use byokey_translate::inject_cache_control;
 use byokey_types::{
     ChatRequest, ProviderId, RateLimitStore,
-    traits::{
-        ByteStream, ProviderExecutor, ProviderResponse, RequestTranslator, ResponseTranslator,
-        Result,
-    },
+    traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
 };
 use bytes::Bytes;
 use futures_util::{StreamExt as _, stream::try_unfold};
 use rquest::Client;
+use secrecy::SecretString;
 use serde_json::Value;
 use std::sync::Arc;
 
 /// Default Anthropic API base URL.
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
-/// Messages API path (with beta flag required by the API).
-const API_PATH: &str = "/v1/messages?beta=true";
 
 // ── Shared Claude fingerprint constants ─────────────────────────────
 // Re-exported via `byokey_provider::claude_headers` so the proxy crate's
@@ -50,19 +53,68 @@ pub const SDK_PACKAGE_VERSION: &str = "0.74.0";
 /// Node.js runtime version for X-Stainless-Runtime-Version.
 pub const RUNTIME_VERSION: &str = "v22.13.1";
 
-/// Authentication mode for the Claude API.
-enum AuthMode {
-    /// Raw API key sent via `x-api-key` header.
+/// Credential resolved at request time.
+enum Credential {
+    /// Raw API key.
     ApiKey(String),
-    /// OAuth token sent via `Authorization: Bearer` header.
+    /// OAuth token.
     Bearer(String),
+}
+
+/// Build the `extra_headers` for [`TransportConfig`] from a device fingerprint.
+///
+/// # Panics
+///
+/// Panics if any profile field contains non-ASCII characters that are invalid
+/// in HTTP header values. All default profiles use ASCII-only values.
+pub fn build_fingerprint_headers(profile: &DeviceProfile) -> reqwest::header::HeaderMap {
+    let mut h = reqwest::header::HeaderMap::new();
+    h.insert(
+        "anthropic-dangerous-direct-browser-access",
+        "true".parse().expect("static header"),
+    );
+    h.insert("x-app", "cli".parse().expect("static header"));
+    h.insert(
+        reqwest::header::USER_AGENT,
+        profile.user_agent.parse().expect("valid user-agent"),
+    );
+    h.insert("x-stainless-lang", "js".parse().expect("static header"));
+    h.insert(
+        "x-stainless-runtime",
+        "node".parse().expect("static header"),
+    );
+    h.insert(
+        "x-stainless-runtime-version",
+        profile
+            .runtime_version
+            .parse()
+            .expect("valid runtime version"),
+    );
+    h.insert(
+        "x-stainless-package-version",
+        profile
+            .package_version
+            .parse()
+            .expect("valid package version"),
+    );
+    h.insert("x-stainless-os", profile.os.parse().expect("valid os"));
+    h.insert(
+        "x-stainless-arch",
+        profile.arch.parse().expect("valid arch"),
+    );
+    h.insert(
+        "x-stainless-retry-count",
+        "0".parse().expect("static header"),
+    );
+    h.insert("x-stainless-timeout", "600".parse().expect("static header"));
+    h
 }
 
 /// Executor for the Anthropic Claude API.
 pub struct ClaudeExecutor {
     ph: ProviderHttp,
     api_key: Option<String>,
-    api_url: String,
+    base_url: String,
     auth: Arc<AuthManager>,
     profile_cache: Option<Arc<DeviceProfileCache>>,
     cloak_config: Option<CloakConfig>,
@@ -90,31 +142,54 @@ impl ClaudeExecutor {
         if let Some(store) = ratelimit {
             ph = ph.with_ratelimit(store, ProviderId::Claude);
         }
-        let api_url = format!(
-            "{}{}",
-            base_url
-                .as_deref()
-                .unwrap_or(DEFAULT_BASE_URL)
-                .trim_end_matches('/'),
-            API_PATH
-        );
+        let base_url = base_url
+            .as_deref()
+            .unwrap_or(DEFAULT_BASE_URL)
+            .trim_end_matches('/')
+            .to_owned();
         Self {
             ph,
             api_key,
-            api_url,
+            base_url,
             auth,
             profile_cache,
             cloak_config,
         }
     }
 
-    /// Resolves the authentication mode: API key if present, otherwise OAuth token.
-    async fn get_auth(&self) -> Result<AuthMode> {
+    /// Resolves the credential: API key if present, otherwise OAuth token.
+    async fn get_credential(&self) -> Result<Credential> {
         if let Some(key) = &self.api_key {
-            return Ok(AuthMode::ApiKey(key.clone()));
+            return Ok(Credential::ApiKey(key.clone()));
         }
         let token = self.auth.get_token(&ProviderId::Claude).await?;
-        Ok(AuthMode::Bearer(token.access_token))
+        Ok(Credential::Bearer(token.access_token))
+    }
+
+    /// Build an [`aigw::anthropic::Transport`] for the current request.
+    ///
+    /// The transport pre-builds all standard Anthropic headers (auth, version,
+    /// beta) plus device-fingerprint headers, so callers only need to copy them
+    /// into the `rquest` builder.
+    fn build_transport(
+        &self,
+        credential: &Credential,
+        fingerprint: &DeviceProfile,
+    ) -> Result<Transport> {
+        let (secret, auth_mode) = match credential {
+            Credential::ApiKey(k) => (k.clone(), AigwAuthMode::ApiKey),
+            Credential::Bearer(t) => (t.clone(), AigwAuthMode::Bearer),
+        };
+        Transport::new(TransportConfig {
+            api_key: SecretString::from(secret),
+            auth_mode,
+            base_url: self.base_url.clone(),
+            version: ANTHROPIC_VERSION.to_owned(),
+            beta: Some(ANTHROPIC_BETA.to_owned()),
+            extra_headers: build_fingerprint_headers(fingerprint),
+            ..Default::default()
+        })
+        .map_err(|e| byokey_types::ByokError::Config(e.to_string()))
     }
 }
 
@@ -122,7 +197,33 @@ impl ClaudeExecutor {
 impl ProviderExecutor for ClaudeExecutor {
     async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
         let stream = request.stream;
-        let mut body = OpenAIToClaude.translate_request(request.into_body())?;
+        let credential = self.get_credential().await?;
+
+        // Resolve fingerprint: use cached profile when available, else statics.
+        let scope_key = match &credential {
+            Credential::ApiKey(k) => format!("api_key:{k}"),
+            Credential::Bearer(_) => "global".to_string(),
+        };
+        let fingerprint = self
+            .profile_cache
+            .as_ref()
+            .map_or_else(DeviceProfile::default, |cache| cache.resolve(&scope_key));
+
+        // Build Transport + Translator.
+        let transport = self.build_transport(&credential, &fingerprint)?;
+        let translator = AnthropicRequestTranslator::new(&transport, None);
+
+        // Translate: BYOKEY ChatRequest → aigw ChatRequest → Anthropic body.
+        let aigw_request: aigw_core::model::ChatRequest =
+            serde_json::from_value(request.into_body())
+                .map_err(|e| byokey_types::ByokError::Translation(e.to_string()))?;
+        let translated = translator
+            .translate_request(&aigw_request)
+            .map_err(|e| byokey_types::ByokError::Translation(e.to_string()))?;
+
+        // Post-process on the Anthropic-format body (cache control, cloaking).
+        let mut body: Value = serde_json::from_slice(&translated.body)
+            .map_err(|e| byokey_types::ByokError::Translation(e.to_string()))?;
         body = inject_cache_control(body);
 
         // Apply cloaking before setting stream flag (payload hash covers the pre-stream body).
@@ -133,60 +234,16 @@ impl ProviderExecutor for ClaudeExecutor {
             cloak::apply_cloaking(&mut body, cc, &serialized);
         }
 
-        body["stream"] = Value::Bool(stream);
-
-        let auth = self.get_auth().await?;
-
-        // Resolve fingerprint: use cached profile when available, else statics.
-        let scope_key = match &auth {
-            AuthMode::ApiKey(k) => format!("api_key:{k}"),
-            AuthMode::Bearer(_) => "global".to_string(),
-        };
-
-        let (ua, pkg_ver, rt_ver, os, arch) = if let Some(cache) = &self.profile_cache {
-            let p = cache.resolve(&scope_key);
-            (
-                p.user_agent,
-                p.package_version,
-                p.runtime_version,
-                p.os,
-                p.arch,
-            )
-        } else {
-            (
-                USER_AGENT.to_string(),
-                SDK_PACKAGE_VERSION.to_string(),
-                RUNTIME_VERSION.to_string(),
-                "MacOS".to_string(),
-                "arm64".to_string(),
-            )
-        };
-
-        let builder = self
-            .ph
-            .client()
-            .post(&self.api_url)
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .header("anthropic-beta", ANTHROPIC_BETA)
-            .header("anthropic-dangerous-direct-browser-access", "true")
-            .header("x-app", "cli")
-            .header("user-agent", &ua)
-            .header("content-type", "application/json")
-            // Stainless SDK fingerprint headers — mimic real Claude Code client
-            .header("x-stainless-lang", "js")
-            .header("x-stainless-runtime", "node")
-            .header("x-stainless-runtime-version", &rt_ver)
-            .header("x-stainless-package-version", &pkg_ver)
-            .header("x-stainless-os", &os)
-            .header("x-stainless-arch", &arch)
-            .header("x-stainless-retry-count", "0")
-            // Prevent compressed SSE streams from breaking line scanner
-            .header("accept-encoding", "identity");
-
-        let builder = match &auth {
-            AuthMode::ApiKey(key) => builder.header("x-api-key", key.as_str()),
-            AuthMode::Bearer(tok) => builder.header("authorization", format!("Bearer {tok}")),
-        };
+        // Build rquest from TranslatedRequest URL/headers + modified body.
+        let api_url = format!("{}?beta=true", translated.url);
+        let mut builder = self.ph.client().post(&api_url);
+        for (name, value) in &translated.headers {
+            if let Ok(v) = value.to_str() {
+                builder = builder.header(name.as_str(), v);
+            }
+        }
+        // Prevent compressed SSE streams from breaking the line scanner.
+        let builder = builder.header("accept-encoding", "identity");
 
         let resp = self.ph.send(builder.json(&body)).await?;
 
@@ -194,9 +251,14 @@ impl ProviderExecutor for ClaudeExecutor {
             let byte_stream: ByteStream = ProviderHttp::byte_stream(resp);
             Ok(ProviderResponse::Stream(translate_claude_sse(byte_stream)))
         } else {
-            let json: Value = resp.json().await?;
-            let translated = ClaudeToOpenAI.translate_response(json)?;
-            Ok(ProviderResponse::Complete(translated))
+            // Use aigw's response translator for non-streaming responses.
+            let resp_bytes = resp.bytes().await.map_err(byokey_types::ByokError::from)?;
+            let aigw_response = AnthropicResponseTranslator
+                .translate_response(http::StatusCode::OK, &resp_bytes)
+                .map_err(|e| byokey_types::ByokError::Translation(e.to_string()))?;
+            let value = serde_json::to_value(aigw_response)
+                .map_err(|e| byokey_types::ByokError::Translation(e.to_string()))?;
+            Ok(ProviderResponse::Complete(value))
         }
     }
 
@@ -208,41 +270,29 @@ impl ProviderExecutor for ClaudeExecutor {
 /// Wraps a raw Claude SSE `ByteStream` and translates its events to
 /// `OpenAI` chat completion chunk SSE format line-by-line.
 ///
-/// Claude SSE events handled:
-/// - `message_start`         → extract `id` and `model`; emit first chunk with `role`
-/// - `content_block_start`   → for `tool_use` blocks: emit `tool_calls` opening chunk
-/// - `content_block_delta`   → `text_delta` → content; `input_json_delta` → tool arguments
-/// - `message_delta`         → emit finish chunk (`stop_reason` mapped to `finish_reason`)
-/// - `message_stop`          → emit `data: [DONE]`
-#[allow(clippy::too_many_lines)]
+/// Delegates semantic parsing to [`aigw`]'s `AnthropicStreamParser`, then
+/// converts the canonical `StreamEvent`s to `OpenAI` SSE bytes via
+/// [`stream_bridge`](crate::stream_bridge).
 pub(crate) fn translate_claude_sse(inner: ByteStream) -> ByteStream {
+    use crate::stream_bridge::{SseContext, stream_events_to_sse};
+    use aigw::anthropic::translate::AnthropicStreamParser;
+    use aigw_core::translate::StreamParser;
+
     struct State {
         inner: ByteStream,
         buf: Vec<u8>,
-        id: String,
-        model: String,
+        parser: AnthropicStreamParser,
+        ctx: SseContext,
         done: bool,
-        /// Index of the most recently started `tool_call`, or -1 if not in a tool block.
-        tool_call_index: i64,
-        /// Whether the current content block is a `tool_use` block.
-        in_tool_use: bool,
-        /// Accumulated input token count from `message_start`.
-        input_tokens: u64,
-        /// Accumulated output token count from `message_delta`.
-        output_tokens: u64,
     }
 
     Box::pin(try_unfold(
         State {
             inner,
             buf: Vec::new(),
-            id: "chatcmpl-claude".to_string(),
-            model: "claude".to_string(),
+            parser: AnthropicStreamParser::new(),
+            ctx: SseContext::default(),
             done: false,
-            tool_call_index: -1,
-            in_tool_use: false,
-            input_tokens: 0,
-            output_tokens: 0,
         },
         |mut s| async move {
             loop {
@@ -251,159 +301,25 @@ pub(crate) fn translate_claude_sse(inner: ByteStream) -> ByteStream {
                     let line = String::from_utf8_lossy(&raw);
                     let line = line.trim_end_matches(['\r', '\n']);
 
-                    if let Some(data) = line.strip_prefix("data: ")
-                        && let Ok(ev) = serde_json::from_str::<Value>(data)
-                    {
-                        match ev["type"].as_str().unwrap_or("") {
-                            "message_start" => {
-                                if let Some(id) = ev.pointer("/message/id").and_then(Value::as_str)
-                                {
-                                    s.id = format!("chatcmpl-{id}");
-                                }
-                                if let Some(model) =
-                                    ev.pointer("/message/model").and_then(Value::as_str)
-                                {
-                                    s.model = model.to_string();
-                                }
-                                if let Some(tokens) = ev
-                                    .pointer("/message/usage/input_tokens")
-                                    .and_then(Value::as_u64)
-                                {
-                                    s.input_tokens = tokens;
-                                }
-                                let chunk = serde_json::json!({
-                                    "id": &s.id,
-                                    "object": "chat.completion.chunk",
-                                    "model": &s.model,
-                                    "choices": [{
-                                        "index": 0,
-                                        "delta": {"role": "assistant", "content": ""},
-                                        "finish_reason": null
-                                    }]
-                                });
-                                return Ok(Some((Bytes::from(format!("data: {chunk}\n\n")), s)));
-                            }
-                            "content_block_start" => {
-                                let block_type = ev
-                                    .pointer("/content_block/type")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("");
-                                if block_type == "tool_use" {
-                                    s.in_tool_use = true;
-                                    s.tool_call_index += 1;
-                                    let id = ev
-                                        .pointer("/content_block/id")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or("")
-                                        .to_string();
-                                    let name = ev
-                                        .pointer("/content_block/name")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or("")
-                                        .to_string();
-                                    let idx = s.tool_call_index;
-                                    let chunk = serde_json::json!({
-                                        "id": &s.id,
-                                        "object": "chat.completion.chunk",
-                                        "model": &s.model,
-                                        "choices": [{"index": 0, "delta": {
-                                            "tool_calls": [{"index": idx, "id": id, "type": "function", "function": {"name": name, "arguments": ""}}]
-                                        }, "finish_reason": null}]
-                                    });
-                                    return Ok(Some((
-                                        Bytes::from(format!("data: {chunk}\n\n")),
-                                        s,
-                                    )));
-                                }
-                                s.in_tool_use = false;
-                            }
-                            "content_block_delta" => {
-                                let delta_type = ev
-                                    .pointer("/delta/type")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("");
-                                if delta_type == "text_delta" {
-                                    let text = ev
-                                        .pointer("/delta/text")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or("");
-                                    let chunk = serde_json::json!({
-                                        "id": &s.id,
-                                        "object": "chat.completion.chunk",
-                                        "model": &s.model,
-                                        "choices": [{
-                                            "index": 0,
-                                            "delta": {"content": text},
-                                            "finish_reason": null
-                                        }]
-                                    });
-                                    return Ok(Some((
-                                        Bytes::from(format!("data: {chunk}\n\n")),
-                                        s,
-                                    )));
-                                } else if delta_type == "input_json_delta" && s.in_tool_use {
-                                    let partial = ev
-                                        .pointer("/delta/partial_json")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or("");
-                                    let idx = s.tool_call_index;
-                                    let chunk = serde_json::json!({
-                                        "id": &s.id,
-                                        "object": "chat.completion.chunk",
-                                        "model": &s.model,
-                                        "choices": [{"index": 0, "delta": {
-                                            "tool_calls": [{"index": idx, "function": {"arguments": partial}}]
-                                        }, "finish_reason": null}]
-                                    });
-                                    return Ok(Some((
-                                        Bytes::from(format!("data: {chunk}\n\n")),
-                                        s,
-                                    )));
-                                }
-                            }
-                            "message_delta" => {
-                                if let Some(tokens) =
-                                    ev.pointer("/usage/output_tokens").and_then(Value::as_u64)
-                                {
-                                    s.output_tokens = tokens;
-                                }
-                                let finish_reason = match ev
-                                    .pointer("/delta/stop_reason")
-                                    .and_then(Value::as_str)
-                                {
-                                    Some("max_tokens") => "length",
-                                    Some("tool_use") => "tool_calls",
-                                    _ => "stop",
-                                };
-                                let chunk = serde_json::json!({
-                                    "id": &s.id,
-                                    "object": "chat.completion.chunk",
-                                    "model": &s.model,
-                                    "choices": [{
-                                        "index": 0,
-                                        "delta": {},
-                                        "finish_reason": finish_reason
-                                    }]
-                                });
-                                return Ok(Some((Bytes::from(format!("data: {chunk}\n\n")), s)));
-                            }
-                            "message_stop" => {
-                                s.done = true;
-                                let usage_chunk = serde_json::json!({
-                                    "id": &s.id,
-                                    "object": "chat.completion.chunk",
-                                    "model": &s.model,
-                                    "choices": [],
-                                    "usage": {
-                                        "prompt_tokens": s.input_tokens,
-                                        "completion_tokens": s.output_tokens,
-                                        "total_tokens": s.input_tokens + s.output_tokens
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        match s.parser.parse_event("", data) {
+                            Ok(events) if !events.is_empty() => {
+                                let sse_bytes = stream_events_to_sse(&events, &mut s.ctx);
+                                if !sse_bytes.is_empty() {
+                                    // Check if Done was emitted.
+                                    if events
+                                        .iter()
+                                        .any(|e| matches!(e, aigw_core::model::StreamEvent::Done))
+                                    {
+                                        s.done = true;
                                     }
-                                });
-                                let out = format!("data: {usage_chunk}\n\ndata: [DONE]\n\n");
-                                return Ok(Some((Bytes::from(out), s)));
+                                    return Ok(Some((Bytes::from(sse_bytes), s)));
+                                }
                             }
-                            _ => {} // ping, content_block_stop
+                            Err(e) => {
+                                tracing::warn!(error = %e, "claude stream parse error");
+                            }
+                            _ => {} // empty events (ping, content_block_stop)
                         }
                     }
                     continue;

@@ -38,6 +38,12 @@ pub struct DeviceProfile {
     version: Option<(u32, u32, u32)>,
 }
 
+impl Default for DeviceProfile {
+    fn default() -> Self {
+        Self::baseline()
+    }
+}
+
 impl DeviceProfile {
     /// Build a profile from baseline defaults.
     fn baseline() -> Self {
