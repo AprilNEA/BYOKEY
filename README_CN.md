@@ -118,7 +118,7 @@ export OPENAI_API_KEY=any          # byokey 忽略 key 的值
 **对于 Amp：**
 
 ```jsonc
-// ~/.amp/settings.json
+// ~/.config/amp/settings.json
 {
   "amp.url": "http://localhost:8018/amp"
 }
