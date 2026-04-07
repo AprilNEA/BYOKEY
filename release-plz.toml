@@ -16,33 +16,46 @@ git_tag_enable = true
 name = "byokey-types"
 git_tag_enable = false
 git_release_enable = false
+changelog_update = false
 
 [[package]]
 name = "byokey-config"
 git_tag_enable = false
 git_release_enable = false
+changelog_update = false
 
 [[package]]
 name = "byokey-store"
 git_tag_enable = false
 git_release_enable = false
+changelog_update = false
 
 [[package]]
 name = "byokey-auth"
 git_tag_enable = false
 git_release_enable = false
+changelog_update = false
 
 [[package]]
 name = "byokey-translate"
 git_tag_enable = false
 git_release_enable = false
+changelog_update = false
 
 [[package]]
 name = "byokey-provider"
 git_tag_enable = false
 git_release_enable = false
+changelog_update = false
 
 [[package]]
 name = "byokey-proxy"
 git_tag_enable = false
 git_release_enable = false
+changelog_update = false
+
+[[package]]
+name = "byokey-daemon"
+git_tag_enable = false
+git_release_enable = false
+changelog_update = false
