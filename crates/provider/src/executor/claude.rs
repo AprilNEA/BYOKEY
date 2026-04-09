@@ -42,16 +42,16 @@ pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 ///
 /// `prompt-caching-2024-07-31` removed: prompt caching is GA since Dec 2024;
 /// the beta header is now rejected by the API.
-pub const ANTHROPIC_BETA: &str = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,structured-outputs-2025-12-15,fast-mode-2026-02-01,redact-thinking-2026-02-12,token-efficient-tools-2026-03-28";
+pub const ANTHROPIC_BETA: &str = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advanced-tool-use-2025-11-20,effort-2025-11-24,structured-outputs-2025-12-15,fast-mode-2026-02-01,token-efficient-tools-2026-03-28";
 
-/// User-Agent matching the Claude CLI SDK version.
-pub const USER_AGENT: &str = "claude-cli/2.1.63 (external, sdk-cli)";
+/// User-Agent matching the Claude CLI version.
+pub const USER_AGENT: &str = "claude-cli/2.1.88 (external, cli)";
 
-/// Anthropic SDK package version (matches @anthropic-ai/sdk).
+/// Anthropic SDK package version (matches @anthropic-ai/sdk bundled with CLI 2.1.88).
 pub const SDK_PACKAGE_VERSION: &str = "0.74.0";
 
 /// Node.js runtime version for X-Stainless-Runtime-Version.
-pub const RUNTIME_VERSION: &str = "v22.13.1";
+pub const RUNTIME_VERSION: &str = "v22.13.0";
 
 /// Credential resolved at request time.
 enum Credential {
@@ -62,6 +62,12 @@ enum Credential {
 }
 
 /// Build the `extra_headers` for [`TransportConfig`] from a device fingerprint.
+///
+/// Includes all headers that a real Claude Code CLI sends:
+/// - Device fingerprint (`x-stainless-*`, `user-agent`)
+/// - Session identity (`x-claude-code-session-id`)
+/// - Request identity (`x-client-request-id`)
+/// - Access flags (`anthropic-dangerous-direct-browser-access`, `x-app`)
 ///
 /// # Panics
 ///
@@ -77,6 +83,11 @@ pub fn build_fingerprint_headers(profile: &DeviceProfile) -> reqwest::header::He
     h.insert(
         reqwest::header::USER_AGENT,
         profile.user_agent.parse().expect("valid user-agent"),
+    );
+    // Claude Code session ID — one per CLI process, stable across requests.
+    h.insert(
+        "x-claude-code-session-id",
+        profile.session_id.parse().expect("valid session id"),
     );
     h.insert("x-stainless-lang", "js".parse().expect("static header"));
     h.insert(
@@ -107,6 +118,14 @@ pub fn build_fingerprint_headers(profile: &DeviceProfile) -> reqwest::header::He
         "0".parse().expect("static header"),
     );
     h.insert("x-stainless-timeout", "600".parse().expect("static header"));
+    // Per-request unique identifier.
+    h.insert(
+        "x-client-request-id",
+        uuid::Uuid::new_v4()
+            .to_string()
+            .parse()
+            .expect("valid uuid"),
+    );
     h
 }
 
@@ -227,12 +246,20 @@ impl ProviderExecutor for ClaudeExecutor {
         body = inject_cache_control(body);
         normalize_temperature_for_thinking(&mut body);
 
-        // Apply cloaking before setting stream flag (payload hash covers the pre-stream body).
+        // Apply cloaking with identity from the device profile.
         if let Some(ref cc) = self.cloak_config
             && cc.enabled
         {
-            let serialized = serde_json::to_vec(&body).unwrap_or_default();
-            cloak::apply_cloaking(&mut body, cc, &serialized);
+            // account_uuid: derive a stable UUID from the scope key.
+            let account_uuid =
+                uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, scope_key.as_bytes()).to_string();
+            cloak::apply_cloaking(
+                &mut body,
+                cc,
+                &fingerprint.device_id,
+                &account_uuid,
+                &fingerprint.session_id,
+            );
         }
 
         // Build rquest from TranslatedRequest URL/headers + modified body.

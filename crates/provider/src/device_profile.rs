@@ -10,21 +10,22 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use uuid::Uuid;
 
 /// Cached profiles expire after 7 days.
 const PROFILE_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
 
 // ── Baseline defaults ───────────────────────────────────────────────
-const DEFAULT_USER_AGENT: &str = "claude-cli/2.1.63 (external, sdk-cli)";
+const DEFAULT_USER_AGENT: &str = "claude-cli/2.1.88 (external, cli)";
 const DEFAULT_PACKAGE_VERSION: &str = "0.74.0";
-const DEFAULT_RUNTIME_VERSION: &str = "v22.13.1";
+const DEFAULT_RUNTIME_VERSION: &str = "v22.13.0";
 const DEFAULT_OS: &str = "MacOS";
 const DEFAULT_ARCH: &str = "arm64";
 
 /// Snapshot of a device fingerprint used for Claude API headers.
 #[derive(Clone, Debug)]
 pub struct DeviceProfile {
-    /// Full `User-Agent` string (e.g. `claude-cli/2.1.63 (external, sdk-cli)`).
+    /// Full `User-Agent` string (e.g. `claude-cli/2.1.88 (external, cli)`).
     pub user_agent: String,
     /// `x-stainless-package-version` value.
     pub package_version: String,
@@ -34,6 +35,10 @@ pub struct DeviceProfile {
     pub os: String,
     /// `x-stainless-arch` value (always pinned to baseline).
     pub arch: String,
+    /// Stable session UUID — one per scope, mimics a CLI process session.
+    pub session_id: String,
+    /// Stable device ID — 64-char hex, mimics Claude Code's `getOrCreateUserID()`.
+    pub device_id: String,
     /// Parsed `(major, minor, patch)` from the user-agent string, if available.
     version: Option<(u32, u32, u32)>,
 }
@@ -45,7 +50,7 @@ impl Default for DeviceProfile {
 }
 
 impl DeviceProfile {
-    /// Build a profile from baseline defaults.
+    /// Build a profile from baseline defaults with fresh session/device IDs.
     fn baseline() -> Self {
         Self {
             user_agent: DEFAULT_USER_AGENT.to_string(),
@@ -53,12 +58,14 @@ impl DeviceProfile {
             runtime_version: DEFAULT_RUNTIME_VERSION.to_string(),
             os: DEFAULT_OS.to_string(),
             arch: DEFAULT_ARCH.to_string(),
+            session_id: Uuid::new_v4().to_string(),
+            device_id: hex::encode(rand::random::<[u8; 32]>()),
             version: parse_version(DEFAULT_USER_AGENT),
         }
     }
 
     /// Build a profile from an incoming user-agent string, keeping OS/Arch
-    /// pinned to baseline.
+    /// pinned to baseline and generating fresh session/device IDs.
     fn from_ua(ua: &str) -> Self {
         Self {
             user_agent: ua.to_string(),
@@ -66,6 +73,8 @@ impl DeviceProfile {
             runtime_version: DEFAULT_RUNTIME_VERSION.to_string(),
             os: DEFAULT_OS.to_string(),
             arch: DEFAULT_ARCH.to_string(),
+            session_id: Uuid::new_v4().to_string(),
+            device_id: hex::encode(rand::random::<[u8; 32]>()),
             version: parse_version(ua),
         }
     }
@@ -201,14 +210,16 @@ mod tests {
         assert_eq!(p.user_agent, DEFAULT_USER_AGENT);
         assert_eq!(p.os, DEFAULT_OS);
         assert_eq!(p.arch, DEFAULT_ARCH);
-        assert_eq!(p.version, Some((2, 1, 63)));
+        assert_eq!(p.version, Some((2, 1, 88)));
+        assert!(!p.session_id.is_empty());
+        assert_eq!(p.device_id.len(), 64);
     }
 
     #[test]
     fn parse_version_happy_path() {
         assert_eq!(
-            parse_version("claude-cli/2.1.63 (external, sdk-cli)"),
-            Some((2, 1, 63))
+            parse_version("claude-cli/2.1.88 (external, cli)"),
+            Some((2, 1, 88))
         );
     }
 
@@ -234,7 +245,7 @@ mod tests {
     fn resolve_or_upgrade_upgrades_version() {
         let cache = DeviceProfileCache::new();
         let _ = cache.resolve("k");
-        let upgraded = cache.resolve_or_upgrade("k", Some("claude-cli/3.0.0 (external, sdk-cli)"));
+        let upgraded = cache.resolve_or_upgrade("k", Some("claude-cli/3.0.0 (external, cli)"));
         assert_eq!(upgraded.version, Some((3, 0, 0)));
         assert!(upgraded.user_agent.contains("3.0.0"));
     }
@@ -243,18 +254,36 @@ mod tests {
     fn resolve_or_upgrade_does_not_downgrade() {
         let cache = DeviceProfileCache::new();
         let _ = cache.resolve("k");
-        let after = cache.resolve_or_upgrade("k", Some("claude-cli/1.0.0 (external, sdk-cli)"));
-        // Should still be baseline 2.1.63
-        assert_eq!(after.version, Some((2, 1, 63)));
+        let after = cache.resolve_or_upgrade("k", Some("claude-cli/1.0.0 (external, cli)"));
+        // Should still be baseline 2.1.88
+        assert_eq!(after.version, Some((2, 1, 88)));
     }
 
     #[test]
     fn different_scope_keys_get_independent_profiles() {
         let cache = DeviceProfileCache::new();
-        let _ = cache.resolve_or_upgrade("a", Some("claude-cli/9.9.9 (external, sdk-cli)"));
+        let _ = cache.resolve_or_upgrade("a", Some("claude-cli/9.9.9 (external, cli)"));
         let b = cache.resolve("b");
         // "b" should still be baseline
-        assert_eq!(b.version, Some((2, 1, 63)));
+        assert_eq!(b.version, Some((2, 1, 88)));
+    }
+
+    #[test]
+    fn session_id_is_stable_within_cache() {
+        let cache = DeviceProfileCache::new();
+        let a = cache.resolve("k");
+        let b = cache.resolve("k");
+        assert_eq!(a.session_id, b.session_id);
+        assert_eq!(a.device_id, b.device_id);
+    }
+
+    #[test]
+    fn different_scopes_get_different_ids() {
+        let cache = DeviceProfileCache::new();
+        let a = cache.resolve("scope-a");
+        let b = cache.resolve("scope-b");
+        assert_ne!(a.session_id, b.session_id);
+        assert_ne!(a.device_id, b.device_id);
     }
 
     #[test]

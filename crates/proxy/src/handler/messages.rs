@@ -259,9 +259,18 @@ pub async fn anthropic_messages(
     let api_key = provider_cfg.and_then(|pc| pc.api_key.clone());
     let is_oauth = api_key.is_none();
 
+    // Resolve stable device fingerprint from the profile cache.
+    let profile = state.device_profiles.resolve("global");
+
     // OAuth tokens require the billing header to access Sonnet/Opus models.
     if is_oauth {
-        inject_billing_header(&mut body);
+        let account_uuid = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, b"global").to_string();
+        inject_billing_header(
+            &mut body,
+            Some(&profile.device_id),
+            Some(&account_uuid),
+            Some(&profile.session_id),
+        );
     }
 
     // Resolve auth credential + mode.
@@ -275,9 +284,6 @@ pub async fn anthropic_messages(
             .map_err(ApiError::from)?;
         (token.access_token, AuthMode::Bearer)
     };
-
-    // Resolve stable device fingerprint from the profile cache.
-    let profile = state.device_profiles.resolve("global");
 
     // Build Transport — handles auth header, version, beta, and fingerprint.
     let transport = Transport::new(TransportConfig {

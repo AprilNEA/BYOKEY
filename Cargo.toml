@@ -60,7 +60,7 @@ arc-swap = "1"
 # Auth
 oauth2 = "5"
 rand = { version = "0.8", features = ["std"] }
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "v5"] }
 sha2 = "0.10"
 base64 = "0.22"
 open = "5"

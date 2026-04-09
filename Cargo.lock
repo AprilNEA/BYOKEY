@@ -691,6 +691,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "utoipa",
+ "uuid",
 ]
 
 [[package]]

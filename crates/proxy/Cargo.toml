@@ -37,6 +37,7 @@ utoipa.workspace = true
 aigw.workspace = true
 reqwest.workspace = true
 secrecy.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
