@@ -14,7 +14,7 @@ exclude = ["desktop/src-tauri"]
 
 [workspace.package]
 edition = "2024"
-version = "0.11.0"
+version = "0.11.1"
 authors = ["AprilNEA <github@sku.moe>"]
 description = "Bring Your Own Keys — AI subscription-to-API proxy gateway"
 license = "MIT OR Apache-2.0"
@@ -26,14 +26,14 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Workspace crates
-byokey-types = { version = "0.11.0", path = "crates/types" }
-byokey-config = { version = "0.11.0", path = "crates/config" }
-byokey-store = { version = "0.11.0", path = "crates/store" }
-byokey-auth = { version = "0.11.0", path = "crates/auth" }
-byokey-translate = { version = "0.11.0", path = "crates/translate" }
-byokey-provider = { version = "0.11.0", path = "crates/provider" }
-byokey-proxy = { version = "0.11.0", path = "crates/proxy" }
-byokey-daemon = { version = "0.11.0", path = "crates/daemon" }
+byokey-types = { version = "0.11.1", path = "crates/types" }
+byokey-config = { version = "0.11.1", path = "crates/config" }
+byokey-store = { version = "0.11.1", path = "crates/store" }
+byokey-auth = { version = "0.11.1", path = "crates/auth" }
+byokey-translate = { version = "0.11.1", path = "crates/translate" }
+byokey-provider = { version = "0.11.1", path = "crates/provider" }
+byokey-proxy = { version = "0.11.1", path = "crates/proxy" }
+byokey-daemon = { version = "0.11.1", path = "crates/daemon" }
 aigw = { version = "0.2.0", default-features = false, features = ["anthropic", "anthropic-claude-code"] }
 aigw-core = "0.2.0"
 reqwest = { version = "0.12", default-features = false }
