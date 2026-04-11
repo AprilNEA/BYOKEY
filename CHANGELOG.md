@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1](https://github.com/AprilNEA/BYOKEY/compare/v0.10.0...v0.11.1) - 2026-04-11
+
+### Fixed
+
+- *(provider)* align Claude request fingerprint with real CLI behavior
+- *(readme)* update Amp configuration path in README ([#63](https://github.com/AprilNEA/BYOKEY/pull/63))
+- *(release-plz)* disable internal crate changelogs and add cliff.toml
+- *(claude)* normalize temperature for thinking and update beta headers
+- *(desktop)* add update menu item and fix CI for x86_64 appcast
+
+### Other
+
+- release v0.11.0 ([#67](https://github.com/AprilNEA/BYOKEY/pull/67))
+- *(provider)* migrate ClaudeExecutor to aigw translation layer
+- *(desktop)* redesign Activity dashboard and Accounts view
+
 ## [0.11.0](https://github.com/AprilNEA/BYOKEY/compare/v0.10.0...v0.11.0) - 2026-04-09
 
 ### Fixed
