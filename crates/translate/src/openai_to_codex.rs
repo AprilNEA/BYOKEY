@@ -6,6 +6,8 @@
 //! - `messages` → `input` (typed message objects with content parts)
 //! - `system` role → top-level `instructions` field
 //! - `max_tokens` is intentionally dropped (unsupported on `ChatGPT` OAuth sessions)
+//! - sampling knobs like `temperature` are dropped for ChatGPT-backed Codex OAuth
+//!   sessions because the upstream endpoint rejects them
 
 use byokey_types::{ByokError, RequestTranslator, Result};
 use serde_json::{Value, json};
@@ -195,10 +197,11 @@ impl RequestTranslator for OpenAIToCodex {
         // API at chatgpt.com rejects `max_output_tokens` for ChatGPT-backed
         // OAuth sessions. The API-key path bypasses this translator entirely
         // (uses the standard Chat Completions endpoint), so no mapping needed.
-
-        if let Some(t) = req.get("temperature") {
-            out["temperature"] = t.clone();
-        }
+        //
+        // Likewise, do not forward chat-style sampling knobs like `temperature`.
+        // Factory Droid's generic chat-completions mode sends `temperature: 1`
+        // by default, but ChatGPT-backed Codex OAuth sessions reject it with:
+        // `{"detail":"Unsupported parameter: temperature"}`.
 
         Ok(out)
     }
@@ -248,6 +251,17 @@ mod tests {
         let out = OpenAIToCodex.translate_request(req).unwrap();
         assert!(out.get("max_output_tokens").is_none());
         assert!(out.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn test_temperature_dropped() {
+        let req = json!({
+            "model": "o4-mini",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 1
+        });
+        let out = OpenAIToCodex.translate_request(req).unwrap();
+        assert!(out.get("temperature").is_none());
     }
 
     #[test]
