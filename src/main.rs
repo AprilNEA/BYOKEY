@@ -1,8 +1,7 @@
-mod amp;
-mod auth;
+mod actions;
 mod control_server;
-mod daemon;
-mod serve;
+
+use actions::{amp, auth, daemon, serve};
 
 use anyhow::Result;
 use byokey_store::SqliteTokenStore;
@@ -138,11 +137,8 @@ enum Commands {
     },
 }
 
-#[tokio::main]
-async fn main() {
-    let cli = Cli::parse();
-
-    let result: Result<()> = match cli.command {
+async fn run(command: Commands) -> Result<()> {
+    match command {
         Commands::Serve { server } => serve::cmd_serve(server).await,
         Commands::Start { daemon } => daemon::cmd_start(daemon),
         Commands::Stop => daemon::cmd_stop(),
@@ -153,19 +149,36 @@ async fn main() {
             provider,
             account,
             store,
-        } => auth::cmd_login(provider, account, store.db).await,
+        } => {
+            auth::AuthCmd::new(store.db)
+                .await?
+                .login(provider, account)
+                .await
+        }
         Commands::Logout {
             provider,
             account,
             store,
-        } => auth::cmd_logout(provider, account, store.db).await,
-        Commands::Status { store } => auth::cmd_status(store.db).await,
-        Commands::Accounts { provider, store } => auth::cmd_accounts(provider, store.db).await,
+        } => {
+            auth::AuthCmd::new(store.db)
+                .await?
+                .logout(provider, account)
+                .await
+        }
+        Commands::Status { store } => auth::AuthCmd::new(store.db).await?.status().await,
+        Commands::Accounts { provider, store } => {
+            auth::AuthCmd::new(store.db).await?.accounts(provider).await
+        }
         Commands::Switch {
             provider,
             account,
             store,
-        } => auth::cmd_switch(provider, account, store.db).await,
+        } => {
+            auth::AuthCmd::new(store.db)
+                .await?
+                .switch(provider, account)
+                .await
+        }
         Commands::Amp { action } => amp::cmd_amp(action),
         Commands::Openapi => {
             use utoipa::OpenApi as _;
@@ -179,12 +192,17 @@ async fn main() {
             clap_complete::generate(shell, &mut Cli::command(), "byokey", &mut std::io::stdout());
             Ok(())
         }
-    };
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let cli = Cli::parse();
 
     // Skip tokio runtime drop to avoid hanging on spawn_blocking tasks that
     // can't exit (config watcher, thread index watcher). All real work is done
     // by this point; nothing is lost by exiting immediately.
-    match result {
+    match run(cli.command).await {
         Ok(()) => std::process::exit(0),
         Err(e) => {
             eprintln!("Error: {e:#}");

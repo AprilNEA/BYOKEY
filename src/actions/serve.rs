@@ -108,9 +108,10 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
     }
     let app = byokey_proxy::make_router(Arc::clone(&state));
 
-    // Spawn the Amp-dedicated listener when amp.port is configured.
+    // Spawn the Amp-dedicated listener (default port 18018).
     let config_snapshot = config_arc.load();
-    if let Some(amp_port) = config_snapshot.amp.port {
+    {
+        let amp_port = config_snapshot.amp.port;
         let amp_addr = format!("{effective_host}:{amp_port}");
         let amp_app = byokey_proxy::make_amp_router(Arc::clone(&state));
         let parsed: std::net::SocketAddr = amp_addr
