@@ -20,6 +20,23 @@ pub enum PollResult {
     SlowDown,
 }
 
+fn device_code_message(provider: &ProviderId, dc: &DeviceCodeResponse) -> Option<String> {
+    match provider {
+        ProviderId::Copilot => Some(format!(
+            "Authorize your device code\nOpen this URL in your browser: {}\nEnter this code: {}",
+            dc.verification_uri, dc.user_code
+        )),
+        _ => None,
+    }
+}
+
+fn login_success_message(provider: &ProviderId) -> Option<&'static str> {
+    match provider {
+        ProviderId::Copilot => Some("GitHub Copilot login successful"),
+        _ => None,
+    }
+}
+
 /// Provider-specific behavior for the Device Authorization Grant flow.
 #[async_trait]
 pub trait DeviceCodeFlow: Send + Sync {
@@ -64,12 +81,16 @@ pub async fn run<P: DeviceCodeFlow>(
 ) -> Result<()> {
     let creds = crate::credentials::fetch(provider.provider_name(), http).await?;
     let dc = provider.request_device_code(http, &creds).await?;
+    let provider_id = provider.provider_id();
 
     tracing::info!(
         uri = %dc.verification_uri,
         code = %dc.user_code,
         "visit URL and enter verification code"
     );
+    if let Some(message) = device_code_message(&provider_id, &dc) {
+        println!("{message}");
+    }
     open_browser(&dc.verification_uri);
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(dc.expires_in);
@@ -84,8 +105,11 @@ pub async fn run<P: DeviceCodeFlow>(
 
         match provider.poll_token(http, &creds, &dc.device_code).await? {
             PollResult::Success(tok) => {
-                save_login_token(auth, &provider.provider_id(), tok, account).await?;
-                tracing::info!(provider = %provider.provider_id(), "login successful");
+                save_login_token(auth, &provider_id, tok, account).await?;
+                if let Some(message) = login_success_message(&provider_id) {
+                    println!("{message}");
+                }
+                tracing::info!(provider = %provider_id, "login successful");
                 return Ok(());
             }
             PollResult::Pending => {}
@@ -112,5 +136,52 @@ pub fn parse_poll_response(json: &serde_json::Value) -> Result<PollResult> {
             let tok = token::parse_token_response(json)?;
             Ok(PollResult::Success(tok))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_copilot_device_code_message_includes_url_and_code() {
+        let dc = DeviceCodeResponse {
+            device_code: "device-code".into(),
+            user_code: "ABCD-1234".into(),
+            verification_uri: "https://github.com/login/device".into(),
+            expires_in: 900,
+            interval: 5,
+        };
+
+        let message = device_code_message(&ProviderId::Copilot, &dc).unwrap();
+        assert!(message.contains("Authorize your device code"));
+        assert!(message.contains("https://github.com/login/device"));
+        assert!(message.contains("ABCD-1234"));
+    }
+
+    #[test]
+    fn test_non_copilot_device_code_message_is_not_shown() {
+        let dc = DeviceCodeResponse {
+            device_code: "device-code".into(),
+            user_code: "ABCD-1234".into(),
+            verification_uri: "https://example.com/device".into(),
+            expires_in: 900,
+            interval: 5,
+        };
+
+        assert!(device_code_message(&ProviderId::Qwen, &dc).is_none());
+    }
+
+    #[test]
+    fn test_copilot_login_success_message_is_shown() {
+        assert_eq!(
+            login_success_message(&ProviderId::Copilot),
+            Some("GitHub Copilot login successful")
+        );
+    }
+
+    #[test]
+    fn test_non_copilot_login_success_message_is_not_shown() {
+        assert!(login_success_message(&ProviderId::Qwen).is_none());
     }
 }
