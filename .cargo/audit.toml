@@ -1,4 +1,14 @@
 [advisories]
-# rsa: Marvin Attack timing side-channel — no patch available.
-# Transitive dep via sqlx-mysql; not directly used for network-exposed RSA ops.
-ignore = ["RUSTSEC-2023-0071"]
+ignore = [
+    # rsa: Marvin Attack timing side-channel — no patch available.
+    # Transitive dep via sqlx-mysql; not directly used for network-exposed RSA ops.
+    "RUSTSEC-2023-0071",
+    # rand 0.8.5: unsound with a custom `log` logger calling `rand::thread_rng()`.
+    # Pinned by oauth2 + tarpc (no 0.9-compatible release yet). BYOKEY uses
+    # `tracing`, not a custom `log` logger, so the bug path is unreachable.
+    "RUSTSEC-2026-0097",
+    # lru 0.13.0: `IterMut` violates Stacked Borrows.
+    # Transitive dep via rquest; no update available. BYOKEY does not
+    # call `IterMut` on LRU caches.
+    "RUSTSEC-2026-0002",
+]
