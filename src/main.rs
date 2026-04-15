@@ -81,7 +81,7 @@ enum Commands {
     /// Manage OS-level service registration (launchd / systemd / Windows SCM).
     Service {
         #[command(subcommand)]
-        action: ServiceAction,
+        action: daemon::ServiceAction,
     },
     /// Authenticate with a provider.
     Login {
@@ -127,7 +127,7 @@ enum Commands {
     /// Amp-related utilities.
     Amp {
         #[command(subcommand)]
-        action: AmpAction,
+        action: amp::AmpAction,
     },
     /// Export the OpenAPI specification as JSON.
     Openapi,
@@ -138,77 +138,17 @@ enum Commands {
     },
 }
 
-#[derive(Subcommand, Debug)]
-enum AmpAction {
-    /// Inject the byokey proxy URL into Amp configuration.
-    Inject {
-        /// The proxy URL to inject (default: http://localhost:8018).
-        #[arg(long)]
-        url: Option<String>,
-    },
-    /// Manage Amp ads patching.
-    Ads {
-        #[command(subcommand)]
-        action: AdsAction,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum AdsAction {
-    /// Patch Amp to hide ads (preserves impression telemetry).
-    Disable {
-        /// Explicit path(s) to the bundle file. Auto-detected if omitted.
-        #[arg(value_name = "PATH")]
-        paths: Vec<PathBuf>,
-        /// Also patch editor extensions (VS Code, Cursor, Windsurf).
-        #[arg(long, conflicts_with = "all")]
-        extension: bool,
-        /// Patch both CLI binary and editor extensions.
-        #[arg(long, conflicts_with = "extension")]
-        all: bool,
-    },
-    /// Restore original Amp files (re-enable ads).
-    Enable {
-        /// Explicit path(s) to the bundle file. Auto-detected if omitted.
-        #[arg(value_name = "PATH")]
-        paths: Vec<PathBuf>,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum ServiceAction {
-    /// Install byokey as an OS-managed service and start it.
-    Install {
-        #[command(flatten)]
-        daemon: DaemonArgs,
-    },
-    /// Uninstall the OS-managed service.
-    Uninstall,
-    /// Start the installed service.
-    Start,
-    /// Stop the installed service.
-    Stop,
-    /// Show the OS-managed service's registration and running state.
-    Status,
-}
-
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     let cli = Cli::parse();
 
-    match cli.command {
+    let result: Result<()> = match cli.command {
         Commands::Serve { server } => serve::cmd_serve(server).await,
         Commands::Start { daemon } => daemon::cmd_start(daemon),
         Commands::Stop => daemon::cmd_stop(),
         Commands::Restart { daemon } => daemon::cmd_restart(daemon),
         Commands::Reload => daemon::cmd_reload(),
-        Commands::Service { action } => match action {
-            ServiceAction::Install { daemon } => daemon::cmd_service_install(daemon),
-            ServiceAction::Uninstall => daemon::cmd_service_uninstall(),
-            ServiceAction::Start => daemon::cmd_service_start(),
-            ServiceAction::Stop => daemon::cmd_service_stop(),
-            ServiceAction::Status => daemon::cmd_service_status(),
-        },
+        Commands::Service { action } => daemon::cmd_service(action),
         Commands::Login {
             provider,
             account,
@@ -226,17 +166,7 @@ async fn main() -> Result<()> {
             account,
             store,
         } => auth::cmd_switch(provider, account, store.db).await,
-        Commands::Amp { action } => match action {
-            AmpAction::Inject { url } => amp::cmd_amp_inject(url),
-            AmpAction::Ads { action } => match action {
-                AdsAction::Disable {
-                    paths,
-                    extension,
-                    all,
-                } => amp::cmd_ads_disable(paths, extension || all),
-                AdsAction::Enable { paths } => amp::cmd_ads_enable(paths),
-            },
-        },
+        Commands::Amp { action } => amp::cmd_amp(action),
         Commands::Openapi => {
             use utoipa::OpenApi as _;
             let spec = byokey_proxy::ApiDoc::openapi()
@@ -248,6 +178,17 @@ async fn main() -> Result<()> {
         Commands::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "byokey", &mut std::io::stdout());
             Ok(())
+        }
+    };
+
+    // Skip tokio runtime drop to avoid hanging on spawn_blocking tasks that
+    // can't exit (config watcher, amp threads watcher). All real work is done
+    // by this point; nothing is lost by exiting immediately.
+    match result {
+        Ok(()) => std::process::exit(0),
+        Err(e) => {
+            eprintln!("Error: {e:#}");
+            std::process::exit(1);
         }
     }
 }

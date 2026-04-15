@@ -2,9 +2,61 @@ mod bundle;
 mod patch;
 
 use anyhow::Result;
+use clap::Subcommand;
 use std::path::PathBuf;
 
-pub fn cmd_amp_inject(url: Option<String>) -> Result<()> {
+#[derive(Subcommand, Debug)]
+pub enum AmpAction {
+    /// Inject the byokey proxy URL into Amp configuration.
+    Inject {
+        /// The proxy URL to inject (default: http://localhost:8018).
+        #[arg(long)]
+        url: Option<String>,
+    },
+    /// Manage Amp ads patching.
+    Ads {
+        #[command(subcommand)]
+        action: AdsAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum AdsAction {
+    /// Patch Amp to hide ads (preserves impression telemetry).
+    Disable {
+        /// Explicit path(s) to the bundle file. Auto-detected if omitted.
+        #[arg(value_name = "PATH")]
+        paths: Vec<PathBuf>,
+        /// Also patch editor extensions (VS Code, Cursor, Windsurf).
+        #[arg(long, conflicts_with = "all")]
+        extension: bool,
+        /// Patch both CLI binary and editor extensions.
+        #[arg(long, conflicts_with = "extension")]
+        all: bool,
+    },
+    /// Restore original Amp files (re-enable ads).
+    Enable {
+        /// Explicit path(s) to the bundle file. Auto-detected if omitted.
+        #[arg(value_name = "PATH")]
+        paths: Vec<PathBuf>,
+    },
+}
+
+pub fn cmd_amp(action: AmpAction) -> Result<()> {
+    match action {
+        AmpAction::Inject { url } => cmd_amp_inject(url),
+        AmpAction::Ads { action } => match action {
+            AdsAction::Disable {
+                paths,
+                extension,
+                all,
+            } => cmd_ads_disable(paths, extension || all),
+            AdsAction::Enable { paths } => cmd_ads_enable(paths),
+        },
+    }
+}
+
+fn cmd_amp_inject(url: Option<String>) -> Result<()> {
     let url = url.unwrap_or_else(|| "http://localhost:8018/amp".to_string());
     let settings_path = amp_settings_path();
 
@@ -32,7 +84,7 @@ pub fn cmd_amp_inject(url: Option<String>) -> Result<()> {
     Ok(())
 }
 
-pub fn cmd_ads_disable(paths: Vec<PathBuf>, extension: bool) -> Result<()> {
+fn cmd_ads_disable(paths: Vec<PathBuf>, extension: bool) -> Result<()> {
     let bundles = if paths.is_empty() {
         println!("searching for amp bundle...");
         let found = bundle::find_amp_bundles(extension);
@@ -95,7 +147,7 @@ pub fn cmd_ads_disable(paths: Vec<PathBuf>, extension: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn cmd_ads_enable(paths: Vec<PathBuf>) -> Result<()> {
+fn cmd_ads_enable(paths: Vec<PathBuf>) -> Result<()> {
     let bundles = if paths.is_empty() {
         println!("searching for patched amp bundles...");
         // Search everywhere (CLI + extensions) to restore all patched files.

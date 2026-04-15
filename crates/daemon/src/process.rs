@@ -111,7 +111,23 @@ pub fn start(opts: StartOptions) -> Result<StartResult> {
         source: e,
     })?;
 
+    // Wait for the child to bind the control socket so concurrent `start`s
+    // don't race on port bind.
+    wait_for_ready(Duration::from_secs(READY_TIMEOUT_SECS));
+
     Ok(StartResult { pid, log_path })
+}
+
+const READY_TIMEOUT_SECS: u64 = 10;
+
+fn wait_for_ready(timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if control::is_alive() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
 }
 
 pub fn stop() -> Result<StopResult> {

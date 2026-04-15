@@ -1,6 +1,34 @@
 use anyhow::Result;
+use clap::Subcommand;
 
 use crate::DaemonArgs;
+
+#[derive(Subcommand, Debug)]
+pub enum ServiceAction {
+    /// Install byokey as an OS-managed service and start it.
+    Install {
+        #[command(flatten)]
+        daemon: DaemonArgs,
+    },
+    /// Uninstall the OS-managed service.
+    Uninstall,
+    /// Start the installed service.
+    Start,
+    /// Stop the installed service.
+    Stop,
+    /// Show the OS-managed service's registration and running state.
+    Status,
+}
+
+pub fn cmd_service(action: ServiceAction) -> Result<()> {
+    match action {
+        ServiceAction::Install { daemon } => cmd_service_install(daemon),
+        ServiceAction::Uninstall => cmd_service_uninstall(),
+        ServiceAction::Start => cmd_service_start(),
+        ServiceAction::Stop => cmd_service_stop(),
+        ServiceAction::Status => cmd_service_status(),
+    }
+}
 
 fn start_opts(args: DaemonArgs) -> byokey_daemon::process::StartOptions {
     byokey_daemon::process::StartOptions {
@@ -56,7 +84,7 @@ pub fn cmd_reload() -> Result<()> {
 
 // ── Service (OS-managed) ─────────────────────────────────────────────────────
 
-pub fn cmd_service_install(args: DaemonArgs) -> Result<()> {
+fn cmd_service_install(args: DaemonArgs) -> Result<()> {
     let result = byokey_daemon::service::install(service_opts(args))?;
     println!("service installed ({})", result.backend);
     println!("label:   {}", result.label);
@@ -67,25 +95,25 @@ pub fn cmd_service_install(args: DaemonArgs) -> Result<()> {
     Ok(())
 }
 
-pub fn cmd_service_uninstall() -> Result<()> {
+fn cmd_service_uninstall() -> Result<()> {
     byokey_daemon::service::uninstall()?;
     println!("service uninstalled");
     Ok(())
 }
 
-pub fn cmd_service_start() -> Result<()> {
+fn cmd_service_start() -> Result<()> {
     byokey_daemon::service::start()?;
     println!("service started");
     Ok(())
 }
 
-pub fn cmd_service_stop() -> Result<()> {
+fn cmd_service_stop() -> Result<()> {
     byokey_daemon::service::stop()?;
     println!("service stopped");
     Ok(())
 }
 
-pub fn cmd_service_status() -> Result<()> {
+fn cmd_service_status() -> Result<()> {
     let st = byokey_daemon::service::status()?;
     println!("backend:   {}", st.backend);
     println!("installed: {}", if st.installed { "yes" } else { "no" });

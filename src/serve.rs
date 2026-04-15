@@ -108,6 +108,32 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
     }
     let app = byokey_proxy::make_router(state);
 
+    // Acquire the HTTP listener. Prefer a pre-opened fd from systemfd /
+    // systemd / launchd socket activation (no rebind on restart, no
+    // EADDRINUSE in dev loops). Fall back to a fresh sync bind so that
+    // EADDRINUSE surfaces immediately — `tokio::net::TcpListener::bind`
+    // routes through async DNS and can hang in this process's runtime.
+    let listener = match listenfd::ListenFd::from_env().take_tcp_listener(0) {
+        Ok(Some(l)) => {
+            tracing::info!("using inherited TCP listener from environment");
+            l.set_nonblocking(true)
+                .map_err(|e| anyhow::anyhow!("set_nonblocking: {e}"))?;
+            tokio::net::TcpListener::from_std(l).map_err(|e| anyhow::anyhow!("from_std: {e}"))?
+        }
+        _ => {
+            let parsed: std::net::SocketAddr = addr
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid address {addr}: {e}"))?;
+            let std_listener = std::net::TcpListener::bind(parsed)
+                .map_err(|e| anyhow::anyhow!("bind {addr}: {e}"))?;
+            std_listener
+                .set_nonblocking(true)
+                .map_err(|e| anyhow::anyhow!("set_nonblocking: {e}"))?;
+            tokio::net::TcpListener::from_std(std_listener)
+                .map_err(|e| anyhow::anyhow!("from_std: {e}"))?
+        }
+    };
+
     // ── Control socket + unified shutdown signal ───────────────────────────
     let shutdown = Arc::new(Notify::new());
     let sock_path = byokey_daemon::paths::control_sock_path()
@@ -133,45 +159,26 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
     tracing::info!(socket = %sock_path.display(), "control socket ready");
 
     spawn_signal_handler(Arc::clone(&shutdown));
-
-    // Check for TLS configuration.
-    let tls_config = snapshot.tls.clone().filter(|t| t.enable);
     drop(snapshot);
+    tracing::info!(addr = %addr, "byokey listening");
 
-    let serve_result = if let Some(tls) = tls_config {
-        let rustls_config =
-            axum_server::tls_rustls::RustlsConfig::from_pem_file(&tls.cert, &tls.key)
-                .await
-                .map_err(|e| anyhow::anyhow!("TLS config error: {e}"))?;
-        let sock_addr: std::net::SocketAddr = addr
-            .parse()
-            .map_err(|e| anyhow::anyhow!("invalid address: {e}"))?;
-        let handle = axum_server::Handle::new();
-        let handle_for_shutdown = handle.clone();
-        let shutdown_for_task = Arc::clone(&shutdown);
-        tokio::spawn(async move {
-            shutdown_for_task.notified().await;
-            handle_for_shutdown.graceful_shutdown(Some(std::time::Duration::from_secs(10)));
-        });
-        tracing::info!(%sock_addr, "byokey listening (TLS)");
-        axum_server::bind_rustls(sock_addr, rustls_config)
-            .handle(handle)
-            .serve(app.into_make_service())
-            .await
-            .map_err(anyhow::Error::from)
-    } else {
-        let listener = tokio::net::TcpListener::bind(&addr).await?;
-        tracing::info!(addr = %addr, "byokey listening");
-        let shutdown_for_serve = Arc::clone(&shutdown);
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                shutdown_for_serve.notified().await;
-            })
-            .await
-            .map_err(anyhow::Error::from)
-    };
+    let shutdown_for_serve = Arc::clone(&shutdown);
+    let serve_result = axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            shutdown_for_serve.notified().await;
+        })
+        .await
+        .map_err(anyhow::Error::from);
 
     ctl_handle.cleanup();
+
+    // Aux tokio tasks (config watcher, amp threads watcher, control listener)
+    // keep the runtime alive after axum::serve returns. Since the HTTP side has
+    // already drained via graceful_shutdown and the socket is cleaned up, exit
+    // the process explicitly to avoid a hang on shutdown.
+    if serve_result.is_ok() {
+        std::process::exit(0);
+    }
     serve_result
 }
 
