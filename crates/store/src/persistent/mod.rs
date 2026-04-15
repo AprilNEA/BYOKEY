@@ -12,7 +12,7 @@ mod token;
 mod usage;
 
 use byokey_types::OAuthToken;
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, Statement};
+use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection, Statement};
 use sea_orm_migration::MigratorTrait;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -47,7 +47,10 @@ impl SqliteTokenStore {
     ///
     /// Returns a [`sea_orm::DbErr`] if the connection or migrations fail.
     pub async fn new(database_url: &str) -> std::result::Result<Self, sea_orm::DbErr> {
-        let db = Database::connect(database_url).await?;
+        // sqlx emits every PRAGMA / migration query at INFO; silence it.
+        let mut opt = ConnectOptions::new(database_url);
+        opt.sqlx_logging(false);
+        let db = Database::connect(opt).await?;
         migration::backfill_pre_migration_install(&db).await?;
         Migrator::up(&db, None).await?;
         Ok(Self {
