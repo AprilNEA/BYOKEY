@@ -8,6 +8,7 @@
 //! - [`openapi`]  — `OpenAPI` specification generation.
 //! - [`usage`]    — In-memory request/token usage tracking.
 
+pub mod dump;
 pub mod error;
 pub mod handler;
 #[allow(clippy::needless_for_each)]

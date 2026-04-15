@@ -2,11 +2,17 @@
 
 use axum::extract::DefaultBodyLimit;
 use axum::{
-    Router,
+    Router, http, middleware,
     routing::{get, post},
 };
 use std::sync::Arc;
+use std::time::Duration;
+use tower_http::classify::ServerErrorsFailureClass;
+use tower_http::request_id::{
+    MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer,
+};
 use tower_http::trace::TraceLayer;
+use tracing::{Span, info_span};
 
 use crate::handler::{amp, chat, management, messages, models};
 use crate::{AppState, openapi};
@@ -41,7 +47,42 @@ pub fn make_router(state: Arc<AppState>) -> Router {
         .route("/openapi.json", get(openapi::openapi_json))
         .with_state(state)
         .layer(DefaultBodyLimit::max(200 * 1024 * 1024)) // 200 MB for image uploads
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|req: &http::Request<_>| {
+                    let request_id = req
+                        .extensions()
+                        .get::<RequestId>()
+                        .and_then(|id| id.header_value().to_str().ok())
+                        .unwrap_or("-");
+                    info_span!(
+                        "http",
+                        method = %req.method(),
+                        uri = %req.uri(),
+                        request_id = request_id,
+                    )
+                })
+                .on_request(|_req: &http::Request<_>, _span: &Span| {
+                    tracing::debug!("request received");
+                })
+                .on_response(
+                    |resp: &http::Response<_>, latency: Duration, _span: &Span| {
+                        tracing::info!(status = resp.status().as_u16(), ?latency, "response sent");
+                    },
+                )
+                .on_failure(
+                    |err: ServerErrorsFailureClass, latency: Duration, _span: &Span| {
+                        tracing::error!(
+                            error = %err,
+                            ?latency,
+                            "request failed"
+                        );
+                    },
+                ),
+        )
+        .layer(PropagateRequestIdLayer::x_request_id())
+        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
+        .layer(middleware::from_fn(crate::dump::dump_middleware))
 }
 
 #[cfg(test)]

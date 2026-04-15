@@ -23,7 +23,15 @@ impl UsageStore for SqliteTokenStore {
                 now_unix().into(),
             ],
         );
-        self.connection().execute_raw(stmt).await?;
+        self.connection().execute_raw(stmt).await.map_err(|e| {
+            tracing::warn!(
+                model = %rec.model,
+                provider = %rec.provider,
+                error = %e,
+                "usage insert failed — billing record lost"
+            );
+            e
+        })?;
         Ok(())
     }
 
@@ -74,11 +82,26 @@ impl UsageStore for SqliteTokenStore {
         for row in &rows {
             #[allow(clippy::cast_sign_loss)]
             buckets.push(UsageBucket {
-                period_start: row.try_get_by_index::<i64>(0).unwrap_or(0),
-                model: row.try_get_by_index::<String>(1).unwrap_or_default(),
-                request_count: row.try_get_by_index::<i64>(2).unwrap_or(0) as u64,
-                input_tokens: row.try_get_by_index::<i64>(3).unwrap_or(0) as u64,
-                output_tokens: row.try_get_by_index::<i64>(4).unwrap_or(0) as u64,
+                period_start: row.try_get_by_index::<i64>(0).unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, col = 0, "usage query column parse failed");
+                    0
+                }),
+                model: row.try_get_by_index::<String>(1).unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, col = 1, "usage query column parse failed");
+                    String::new()
+                }),
+                request_count: row.try_get_by_index::<i64>(2).unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, col = 2, "usage query column parse failed");
+                    0
+                }) as u64,
+                input_tokens: row.try_get_by_index::<i64>(3).unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, col = 3, "usage query column parse failed");
+                    0
+                }) as u64,
+                output_tokens: row.try_get_by_index::<i64>(4).unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, col = 4, "usage query column parse failed");
+                    0
+                }) as u64,
             });
         }
         Ok(buckets)

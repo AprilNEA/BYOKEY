@@ -31,6 +31,15 @@ pub enum DaemonError {
     #[error("{tool} failed")]
     ServiceToolFailed { tool: &'static str },
 
+    #[error("service is not installed")]
+    ServiceNotInstalled,
+
+    #[error("control request failed: {msg}")]
+    ControlFailed { msg: String },
+
+    #[error("malformed PID file: {raw}")]
+    MalformedPidFile { raw: String },
+
     #[error("autostart is not supported on this platform")]
     PlatformUnsupported,
 }

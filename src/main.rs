@@ -1,5 +1,6 @@
 mod amp;
 mod auth;
+mod control_server;
 mod daemon;
 mod serve;
 
@@ -41,14 +42,11 @@ struct ServerArgs {
     log_file: Option<PathBuf>,
 }
 
-/// Extended server arguments that include a log file path (for background/daemon modes).
+/// Extended server arguments for background/daemon modes.
 #[derive(clap::Args, Debug)]
 struct DaemonArgs {
     #[command(flatten)]
     server: ServerArgs,
-    /// Log file path (default: ~/.byokey/server.log).
-    #[arg(long, value_name = "PATH")]
-    log_file: Option<PathBuf>,
 }
 
 /// Shared arguments for commands that access the token store.
@@ -78,10 +76,12 @@ enum Commands {
         #[command(flatten)]
         daemon: DaemonArgs,
     },
-    /// Manage auto-start on system boot.
-    Autostart {
+    /// Reload the running server's configuration without restarting.
+    Reload,
+    /// Manage OS-level service registration (launchd / systemd / Windows SCM).
+    Service {
         #[command(subcommand)]
-        action: AutostartAction,
+        action: ServiceAction,
     },
     /// Authenticate with a provider.
     Login {
@@ -176,15 +176,19 @@ enum AdsAction {
 }
 
 #[derive(Subcommand, Debug)]
-enum AutostartAction {
-    /// Register byokey as a boot-time service.
-    Enable {
+enum ServiceAction {
+    /// Install byokey as an OS-managed service and start it.
+    Install {
         #[command(flatten)]
         daemon: DaemonArgs,
     },
-    /// Unregister the boot-time service.
-    Disable,
-    /// Show boot-time service registration status.
+    /// Uninstall the OS-managed service.
+    Uninstall,
+    /// Start the installed service.
+    Start,
+    /// Stop the installed service.
+    Stop,
+    /// Show the OS-managed service's registration and running state.
     Status,
 }
 
@@ -197,10 +201,13 @@ async fn main() -> Result<()> {
         Commands::Start { daemon } => daemon::cmd_start(daemon),
         Commands::Stop => daemon::cmd_stop(),
         Commands::Restart { daemon } => daemon::cmd_restart(daemon),
-        Commands::Autostart { action } => match action {
-            AutostartAction::Enable { daemon } => daemon::cmd_autostart_enable(daemon),
-            AutostartAction::Disable => daemon::cmd_autostart_disable(),
-            AutostartAction::Status => daemon::cmd_autostart_status(),
+        Commands::Reload => daemon::cmd_reload(),
+        Commands::Service { action } => match action {
+            ServiceAction::Install { daemon } => daemon::cmd_service_install(daemon),
+            ServiceAction::Uninstall => daemon::cmd_service_uninstall(),
+            ServiceAction::Start => daemon::cmd_service_start(),
+            ServiceAction::Stop => daemon::cmd_service_stop(),
+            ServiceAction::Status => daemon::cmd_service_status(),
         },
         Commands::Login {
             provider,

@@ -84,6 +84,7 @@ impl TokenStore for SqliteTokenStore {
         label: Option<&str>,
         token: &OAuthToken,
     ) -> Result<()> {
+        tracing::debug!(%provider, %account_id, "saving account token");
         let key = provider.to_string();
         let json = serde_json::to_string(token).map_err(|e| ByokError::Storage(e.to_string()))?;
         let now = now_unix();
@@ -117,7 +118,10 @@ impl TokenStore for SqliteTokenStore {
                 ],
             )
             .await
-            .map_err(|e| ByokError::Storage(e.to_string()))?;
+            .map_err(|e| {
+                tracing::warn!(%provider, %account_id, error = %e, "failed to write account token");
+                ByokError::Storage(e.to_string())
+            })?;
         } else {
             db_exec_raw(
                 &self.db,
@@ -136,7 +140,10 @@ impl TokenStore for SqliteTokenStore {
                 ],
             )
             .await
-            .map_err(|e| ByokError::Storage(e.to_string()))?;
+            .map_err(|e| {
+                tracing::warn!(%provider, %account_id, error = %e, "failed to write account token");
+                ByokError::Storage(e.to_string())
+            })?;
         }
 
         self.cache.lock().unwrap().remove(&key);
@@ -172,6 +179,7 @@ impl TokenStore for SqliteTokenStore {
     }
 
     async fn set_active(&self, provider: &ProviderId, account_id: &str) -> Result<()> {
+        tracing::debug!(%provider, %account_id, "setting active account");
         let key = provider.to_string();
 
         // Verify the target account exists.
@@ -202,7 +210,10 @@ impl TokenStore for SqliteTokenStore {
         )
         .await?;
 
-        txn.commit().await?;
+        txn.commit().await.map_err(|e| {
+            tracing::warn!(%provider, %account_id, error = %e, "set_active transaction commit failed");
+            e
+        })?;
 
         self.cache.lock().unwrap().remove(&key);
         Ok(())

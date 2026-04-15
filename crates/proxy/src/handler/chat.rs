@@ -130,6 +130,12 @@ pub async fn chat_completions(
     chat_completions_inner(state, request, false).await
 }
 
+#[tracing::instrument(skip_all, fields(
+    model = %request.model,
+    force_copilot,
+    provider = tracing::field::Empty,
+    bare_model = tracing::field::Empty,
+))]
 async fn chat_completions_inner(
     state: Arc<AppState>,
     mut request: ChatRequest,
@@ -175,12 +181,10 @@ async fn chat_completions_inner(
 
     let provider = byokey_provider::resolve_provider(&suffix.model)
         .map_or_else(|| "unknown".to_string(), |p| p.to_string());
-    tracing::info!(
-        model = %suffix.model,
-        provider = %provider,
-        stream = request.stream,
-        "chat completion request"
-    );
+    let span = tracing::Span::current();
+    span.record("provider", provider.as_str());
+    span.record("bare_model", bare_model);
+    tracing::info!(stream = request.stream, "chat completion request");
 
     // Replace model name with the clean version (suffix stripped)
     request.model.clone_from(&suffix.model);

@@ -299,8 +299,10 @@ impl AuthManager {
         let new_token = match refresh_result {
             Ok(t) => t,
             Err(ByokError::Auth(ref msg)) if msg.starts_with("invalid_grant:") => {
-                tracing::warn!(%provider, "refresh token revoked or expired, removing stored token");
-                let _ = self.store.remove(provider).await;
+                tracing::error!(%provider, "refresh token revoked or expired — user must re-authenticate");
+                if let Err(e) = self.store.remove(provider).await {
+                    tracing::warn!(%provider, error = %e, "failed to remove revoked token from store");
+                }
                 return Err(ByokError::TokenExpired(provider.clone()));
             }
             Err(e) => return Err(e),

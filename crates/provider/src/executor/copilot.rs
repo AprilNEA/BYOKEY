@@ -628,6 +628,10 @@ impl ProviderExecutor for CopilotExecutor {
             }
         }
 
+        tracing::error!(
+            attempts = max_attempts,
+            "all copilot accounts exhausted for chat request"
+        );
         Err(last_err.unwrap_or_else(|| ByokError::Auth("no copilot accounts available".into())))
     }
 

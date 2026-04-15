@@ -48,8 +48,11 @@ impl SqliteTokenStore {
     /// Returns a [`sea_orm::DbErr`] if the connection or migrations fail.
     pub async fn new(database_url: &str) -> std::result::Result<Self, sea_orm::DbErr> {
         // sqlx emits every PRAGMA / migration query at INFO; silence it.
+        // `max_connections` defaults to 1 for SQLite under sea-orm v2, which
+        // can deadlock if a connection isn't released between the migration
+        // and the next query. Bump it explicitly.
         let mut opt = ConnectOptions::new(database_url);
-        opt.sqlx_logging(false);
+        opt.sqlx_logging(false).max_connections(8);
         let db = Database::connect(opt).await?;
         migration::backfill_pre_migration_install(&db).await?;
         Migrator::up(&db, None).await?;

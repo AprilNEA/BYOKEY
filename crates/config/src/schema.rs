@@ -324,12 +324,21 @@ impl Default for StreamingConfig {
     }
 }
 
+/// Output format for structured logs.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LogFormat {
+    #[default]
+    Text,
+    Json,
+}
+
 /// Logging configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogConfig {
-    /// Output format: "text" (default) or "json".
-    #[serde(default = "default_log_format")]
-    pub format: String,
+    /// Output format: text (default) or json.
+    #[serde(default)]
+    pub format: LogFormat,
     /// Optional log file path. If set, logs are written to this file
     /// with daily rotation. Stdout logging continues alongside.
     #[serde(default)]
@@ -339,10 +348,6 @@ pub struct LogConfig {
     pub level: String,
 }
 
-fn default_log_format() -> String {
-    "text".to_string()
-}
-
 fn default_log_level() -> String {
     "info".to_string()
 }
@@ -350,7 +355,7 @@ fn default_log_level() -> String {
 impl Default for LogConfig {
     fn default() -> Self {
         Self {
-            format: default_log_format(),
+            format: LogFormat::default(),
             file: None,
             level: default_log_level(),
         }
@@ -1013,7 +1018,7 @@ payload:
     #[test]
     fn test_default_log_config() {
         let c = Config::default();
-        assert_eq!(c.log.format, "text");
+        assert_eq!(c.log.format, LogFormat::Text);
         assert!(c.log.file.is_none());
         assert_eq!(c.log.level, "info");
     }
@@ -1027,7 +1032,7 @@ log:
   level: "debug"
 "#;
         let c = Config::from_yaml(yaml).unwrap();
-        assert_eq!(c.log.format, "json");
+        assert_eq!(c.log.format, LogFormat::Json);
         assert_eq!(c.log.file.as_deref(), Some("/tmp/byokey.log"));
         assert_eq!(c.log.level, "debug");
     }

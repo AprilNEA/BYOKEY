@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::thread;
+use std::time::{Duration, Instant};
 
+use crate::control;
 use crate::error::{DaemonError, Result};
 use crate::paths;
 
@@ -22,7 +25,7 @@ pub struct StartResult {
 }
 
 pub struct StopResult {
-    pub pid: u32,
+    pub pid: Option<u32>,
 }
 
 pub enum ServerStatus {
@@ -31,28 +34,24 @@ pub enum ServerStatus {
     Stopped,
 }
 
-pub fn start(opts: StartOptions) -> Result<StartResult> {
-    let pid_path = opts.pid_file.map_or_else(paths::pid_path, Ok)?;
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-    // Detect stale or live PID file.
-    if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
-        let pid = pid_str.trim().to_owned();
-        let alive = std::process::Command::new("kill")
-            .args(["-0", &pid])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success());
-        if alive {
-            return Err(DaemonError::AlreadyRunning {
-                pid: pid.parse().unwrap_or(0),
-            });
-        }
-        // Stale PID — clean up and continue.
+pub fn start(opts: StartOptions) -> Result<StartResult> {
+    // Authoritative liveness: control socket.
+    if let Ok(info) = control::status() {
+        return Err(DaemonError::AlreadyRunning { pid: info.pid });
+    }
+
+    // Clean up any stale socket/pid file from an unclean exit.
+    if let Ok(sock) = paths::control_sock_path() {
+        let _ = std::fs::remove_file(&sock);
+    }
+    let pid_path = opts.pid_file.clone().map_or_else(paths::pid_path, Ok)?;
+    if pid_path.exists() {
         let _ = std::fs::remove_file(&pid_path);
     }
 
-    let log_path = opts.log_file.map_or_else(paths::log_path, Ok)?;
+    let log_path = opts.log_file.clone().map_or_else(paths::log_path, Ok)?;
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| DaemonError::Io {
             path: parent.to_path_buf(),
@@ -116,46 +115,79 @@ pub fn start(opts: StartOptions) -> Result<StartResult> {
 }
 
 pub fn stop() -> Result<StopResult> {
+    // Preferred path: graceful shutdown over the control socket.
+    if let Ok(info) = control::status() {
+        let pid = info.pid;
+        control::shutdown()?;
+        wait_for_shutdown();
+        cleanup_pid_file();
+        return Ok(StopResult { pid: Some(pid) });
+    }
+
+    // Fallback: no live server behind the socket. If a pid file exists, try SIGTERM.
     let pid_path = paths::pid_path()?;
     let pid_str = std::fs::read_to_string(&pid_path).map_err(|_| DaemonError::NotRunning)?;
-    let pid = pid_str.trim().to_owned();
+    let pid: u32 = pid_str
+        .trim()
+        .parse()
+        .map_err(|_| DaemonError::MalformedPidFile {
+            raw: pid_str.trim().to_owned(),
+        })?;
 
     let ok = std::process::Command::new("kill")
-        .arg(&pid)
+        .arg(pid.to_string())
         .status()
         .is_ok_and(|s| s.success());
     let _ = std::fs::remove_file(&pid_path);
 
-    let pid_num = pid.parse().unwrap_or(0);
     if ok {
-        Ok(StopResult { pid: pid_num })
+        Ok(StopResult { pid: Some(pid) })
     } else {
-        Err(DaemonError::StopFailed { pid: pid_num })
+        Err(DaemonError::StopFailed { pid })
     }
 }
 
 pub fn restart(opts: StartOptions) -> Result<StartResult> {
-    // Try to stop — ignore errors (may not be running).
     let _ = stop();
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    // Give the socket/pid cleanup a moment (stop() already waited for graceful exit).
+    thread::sleep(Duration::from_millis(100));
     start(opts)
 }
 
 pub fn status() -> Result<ServerStatus> {
+    // Authoritative: is the control socket answering?
+    if let Ok(info) = control::status() {
+        return Ok(ServerStatus::Running { pid: info.pid });
+    }
+
+    // Non-authoritative fallback: pid file only.
     let pid_path = paths::pid_path()?;
     let Ok(pid_str) = std::fs::read_to_string(&pid_path) else {
         return Ok(ServerStatus::Stopped);
     };
     let pid: u32 = pid_str.trim().parse().unwrap_or(0);
-    let alive = std::process::Command::new("kill")
-        .args(["-0", pid_str.trim()])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success());
-    if alive {
-        Ok(ServerStatus::Running { pid })
-    } else {
-        Ok(ServerStatus::Stale { pid })
+    if pid == 0 {
+        return Ok(ServerStatus::Stopped);
+    }
+    // A pid file exists but the socket is unreachable — treat as stale.
+    Ok(ServerStatus::Stale { pid })
+}
+
+fn wait_for_shutdown() {
+    let Ok(sock) = paths::control_sock_path() else {
+        return;
+    };
+    let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
+    while Instant::now() < deadline {
+        if !sock.exists() && !control::is_alive() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn cleanup_pid_file() {
+    if let Ok(p) = paths::pid_path() {
+        let _ = std::fs::remove_file(p);
     }
 }

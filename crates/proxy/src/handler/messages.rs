@@ -231,6 +231,10 @@ fn detect_initiator(body: &Value) -> &'static str {
 
 use byokey_provider::executor::claude::build_fingerprint_headers;
 
+#[tracing::instrument(skip_all, fields(
+    model = %body.0.get("model").and_then(serde_json::Value::as_str).unwrap_or("-"),
+    stream = body.0.get("stream").and_then(serde_json::Value::as_bool).unwrap_or(false),
+))]
 pub async fn anthropic_messages(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -393,6 +397,11 @@ fn build_copilot_messages_request(
 /// With multiple Copilot accounts, retries with quota-aware rotation
 /// on transient failures.
 #[allow(clippy::too_many_lines)]
+#[tracing::instrument(skip_all, fields(
+    model = %body.get("model").and_then(serde_json::Value::as_str).unwrap_or("-"),
+    stream,
+    attempt = tracing::field::Empty,
+))]
 async fn copilot_messages(
     state: &Arc<AppState>,
     body: Value,
@@ -440,6 +449,7 @@ async fn copilot_messages(
 
     let mut last_err = None;
     for attempt in 0..max_attempts {
+        tracing::Span::current().record("attempt", attempt);
         let (token, endpoint) = match executor.copilot_token().await {
             Ok(t) => t,
             Err(e) => {
@@ -508,6 +518,10 @@ async fn copilot_messages(
         }
     }
 
+    tracing::error!(
+        attempts = max_attempts,
+        "all copilot accounts exhausted for messages request"
+    );
     state.usage.record_failure(&model_name, "copilot");
     Err(last_err
         .unwrap_or_else(|| ApiError(ByokError::Auth("no copilot accounts available".into()))))
@@ -620,10 +634,10 @@ async fn forward_response(
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        tracing::warn!(
+        tracing::error!(
             status = status.as_u16(),
             body = %text,
-            "anthropic upstream error"
+            "anthropic upstream error (non-retryable)"
         );
         usage.record_failure(model, provider);
         return Err(ApiError::from(ByokError::Upstream {
