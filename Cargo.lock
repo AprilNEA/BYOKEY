@@ -49,8 +49,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b0bf17ca65661b99d29884984bce817585156c634809be388273f954013068c"
 dependencies = [
  "aigw-anthropic",
- "aigw-openai",
- "aigw-openai-compat",
 ]
 
 [[package]]
@@ -87,42 +85,6 @@ dependencies = [
  "serde_json",
  "strum",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "aigw-openai"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8444245aae14d74ef30012a09a0c6fdeca7994d0909a7bc5319a5f9b58cd0cd"
-dependencies = [
- "aigw-core",
- "bon",
- "bytes",
- "eventsource-stream",
- "futures-core",
- "futures-util",
- "http",
- "reqwest",
- "secrecy",
- "serde",
- "serde_json",
- "strum",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "aigw-openai-compat"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c87fcb742d1e7b175e3b34499beb29f38d78ec6deb72ee3c052961e41dd6f93"
-dependencies = [
- "aigw-core",
- "aigw-openai",
- "bytes",
- "http",
- "secrecy",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -722,7 +684,7 @@ checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 
 [[package]]
 name = "byokey"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -751,7 +713,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-auth"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -774,7 +736,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-config"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -791,7 +753,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-daemon"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "futures-util",
  "serde",
@@ -805,7 +767,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-provider"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "aigw",
  "aigw-core",
@@ -840,7 +802,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-proxy"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "aigw",
  "anyhow",
@@ -873,7 +835,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-store"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -890,7 +852,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-translate"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "byokey-types",
@@ -901,7 +863,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-types"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "bytes",
