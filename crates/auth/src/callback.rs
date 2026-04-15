@@ -1,72 +1,69 @@
 //! Local HTTP callback server for OAuth redirect flows.
 //!
-//! Binds a TCP listener on `127.0.0.1:<port>`, waits for the OAuth provider
-//! to redirect the browser back, and extracts the query parameters (e.g.
-//! `code` and `state`) from the request.
+//! Binds TCP listeners on both `[::1]:<port>` and `127.0.0.1:<port>` to cover
+//! IPv6-first systems (macOS resolves `localhost` → `::1`), waits for the OAuth
+//! provider to redirect the browser back, and extracts query parameters.
 
 use byokey_types::{ByokError, Result};
 use std::{collections::HashMap, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 
 const TIMEOUT_SECS: u64 = 120;
 const SUCCESS_HTML: &[u8] =
     b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n\
     <html><body><h1>Login successful!</h1><p>You may close this tab.</p></body></html>";
 
-/// Bind the local callback port and return the listener.
+/// Listeners bound on both IPv4 and IPv6 loopback (whichever are available).
+pub struct CallbackListeners {
+    v4: Option<TcpListener>,
+    v6: Option<TcpListener>,
+}
+
+/// Bind the callback port on both `[::1]` and `127.0.0.1`.
 ///
-/// The caller should bind the port **before** opening the browser to avoid a
-/// race condition, then call [`accept_callback`] on the returned listener.
+/// At least one must succeed; returns an error only if both fail.
 ///
 /// # Errors
 ///
-/// Returns an error if the port is already in use or cannot be bound.
-pub async fn bind_callback(port: u16) -> Result<TcpListener> {
-    let addr = format!("127.0.0.1:{port}");
-    TcpListener::bind(&addr).await.map_err(|e| {
-        if e.kind() == std::io::ErrorKind::AddrInUse {
-            ByokError::Auth(format!(
-                "port {port} is already in use (another OAuth service may be running, e.g. vibeproxy/cli-proxy)\n\
-                 run `lsof -i :{port}` to find the process and stop it before retrying"
-            ))
-        } else {
-            ByokError::Auth(format!("failed to bind callback port {port}: {e}"))
-        }
-    })
+/// Returns an error if neither address can be bound.
+pub async fn bind_callback(port: u16) -> Result<CallbackListeners> {
+    let v6 = TcpListener::bind(format!("[::1]:{port}")).await.ok();
+    let v4 = TcpListener::bind(format!("127.0.0.1:{port}")).await.ok();
+
+    if v4.is_none() && v6.is_none() {
+        return Err(ByokError::Auth(format!(
+            "port {port} is already in use (another OAuth service may be running, e.g. vibeproxy/cli-proxy)\n\
+             run `lsof -i :{port}` to find the process and stop it before retrying"
+        )));
+    }
+    Ok(CallbackListeners { v4, v6 })
 }
 
-/// Wait for a single OAuth callback on an already-bound listener.
+/// Wait for a single OAuth callback on the bound listeners.
 ///
-/// Parses the query parameters from the incoming HTTP request and returns
-/// them as a map. Times out after 120 seconds.
+/// Accepts from whichever listener receives a connection first (IPv4 or IPv6).
+/// Times out after 120 seconds.
 ///
 /// # Errors
 ///
 /// Returns an error on accept/read failure or if the timeout expires.
-pub async fn accept_callback(listener: TcpListener) -> Result<HashMap<String, String>> {
+pub async fn accept_callback(listeners: CallbackListeners) -> Result<HashMap<String, String>> {
     let accept = async {
-        let (mut stream, _) = listener
-            .accept()
-            .await
-            .map_err(|e| ByokError::Auth(e.to_string()))?;
+        let stream = match (listeners.v4, listeners.v6) {
+            (Some(v4), Some(v6)) => {
+                tokio::select! {
+                    r = v4.accept() => r.map(|(s, _)| s),
+                    r = v6.accept() => r.map(|(s, _)| s),
+                }
+            }
+            (Some(v4), None) => v4.accept().await.map(|(s, _)| s),
+            (None, Some(v6)) => v6.accept().await.map(|(s, _)| s),
+            (None, None) => unreachable!("bind_callback guarantees at least one"),
+        }
+        .map_err(|e| ByokError::Auth(e.to_string()))?;
 
-        let mut buf = vec![0u8; 8192];
-        let n = stream
-            .read(&mut buf)
-            .await
-            .map_err(|e| ByokError::Auth(e.to_string()))?;
-
-        let request = String::from_utf8_lossy(&buf[..n]);
-        let params = parse_query_from_request(&request)?;
-
-        stream
-            .write_all(SUCCESS_HTML)
-            .await
-            .map_err(|e| ByokError::Auth(format!("write error: {e}")))?;
-        let _ = stream.shutdown().await;
-
-        Ok::<HashMap<String, String>, ByokError>(params)
+        handle_callback_stream(stream).await
     };
 
     tokio::time::timeout(Duration::from_secs(TIMEOUT_SECS), accept)
@@ -74,17 +71,37 @@ pub async fn accept_callback(listener: TcpListener) -> Result<HashMap<String, St
         .map_err(|_| ByokError::Auth("timed out waiting for OAuth callback".into()))?
 }
 
+async fn handle_callback_stream(
+    mut stream: TcpStream,
+) -> std::result::Result<HashMap<String, String>, ByokError> {
+    let mut buf = vec![0u8; 8192];
+    let n = stream
+        .read(&mut buf)
+        .await
+        .map_err(|e| ByokError::Auth(e.to_string()))?;
+
+    let request = String::from_utf8_lossy(&buf[..n]);
+    let params = parse_query_from_request(&request)?;
+
+    stream
+        .write_all(SUCCESS_HTML)
+        .await
+        .map_err(|e| ByokError::Auth(format!("write error: {e}")))?;
+    let _ = stream.shutdown().await;
+
+    Ok(params)
+}
+
 /// Bind a local port, wait for a single OAuth callback, and return its query parameters.
 ///
 /// Convenience wrapper around [`bind_callback`] + [`accept_callback`].
-/// Primarily useful in tests or scenarios where early binding is not needed.
 ///
 /// # Errors
 ///
 /// Returns an error if binding or accepting fails, or if the timeout expires.
 pub async fn wait_for_callback(port: u16) -> Result<HashMap<String, String>> {
-    let listener = bind_callback(port).await?;
-    accept_callback(listener).await
+    let listeners = bind_callback(port).await?;
+    accept_callback(listeners).await
 }
 
 fn parse_query_from_request(request: &str) -> Result<HashMap<String, String>> {

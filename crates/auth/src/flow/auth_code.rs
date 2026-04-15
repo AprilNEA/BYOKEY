@@ -63,7 +63,12 @@ pub async fn run<P: AuthCodeFlow>(
     http: &rquest::Client,
     account: Option<&str>,
 ) -> Result<()> {
+    eprintln!(
+        "[login] fetching credentials for {}...",
+        provider.provider_name()
+    );
     let creds = crate::credentials::fetch(provider.provider_name(), http).await?;
+    eprintln!("[login] credentials fetched");
 
     let (verifier, challenge) = if provider.uses_pkce() {
         pkce::generate_pkce()
@@ -73,20 +78,29 @@ pub async fn run<P: AuthCodeFlow>(
     let state = pkce::random_state();
     let auth_url = provider.build_auth_url(&creds.client_id, &challenge, &state);
 
-    let listener = callback::bind_callback(provider.callback_port()).await?;
+    eprintln!(
+        "[login] binding callback on port {}...",
+        provider.callback_port()
+    );
+    let listeners = callback::bind_callback(provider.callback_port()).await?;
+    eprintln!("[login] opening browser...");
     open_browser(&auth_url);
-    let params = callback::accept_callback(listener).await?;
+    eprintln!("[login] waiting for OAuth callback...");
+    let params = callback::accept_callback(listeners).await?;
+    eprintln!("[login] callback received");
 
     verify_state(&params, &state)?;
     let code = extract_code(&params)?;
 
+    eprintln!("[login] exchanging code for token...");
     let tok = provider
         .exchange_code(http, &creds, code, &verifier, &state)
         .await?;
     let tok = provider.post_process(tok, http).await?;
 
+    eprintln!("[login] saving token...");
     save_login_token(auth, &provider.provider_id(), tok, account).await?;
-    tracing::info!(provider = %provider.provider_id(), "login successful");
+    eprintln!("[login] done");
     Ok(())
 }
 
