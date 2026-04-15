@@ -36,7 +36,7 @@ pub struct Config {
     /// Provider configuration map.
     #[serde(default)]
     pub providers: HashMap<ProviderId, ProviderConfig>,
-    /// `AmpCode` 管理代理配置。
+    /// `AmpCode` proxy integration configuration.
     #[serde(default)]
     pub amp: AmpConfig,
     /// Global upstream proxy URL (e.g. "socks5://user:pass@host:port").

@@ -1,11 +1,7 @@
-//! Control socket protocol between the CLI and the running `byokey serve` process.
+//! Control RPC between the CLI and the running `byokey serve` process.
 //!
-//! A running server binds `~/.byokey/control.sock` and accepts newline-delimited JSON
-//! requests. The CLI uses socket connectivity as the authoritative signal of liveness,
-//! avoiding PID-file races and PID reuse.
+//! Uses tarpc over a Unix domain socket (`~/.byokey/control.sock`).
 
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -16,23 +12,6 @@ use crate::paths;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "cmd", rename_all = "lowercase")]
-pub enum Request {
-    Status,
-    Shutdown,
-    Reload,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Response {
-    pub ok: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub data: Option<StatusData>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusData {
     pub pid: u32,
@@ -42,44 +21,37 @@ pub struct StatusData {
     pub uptime_secs: u64,
 }
 
-/// Connect to the control socket, send a request, and read the response.
-pub fn request(sock: &Path, req: &Request) -> Result<Response> {
-    let mut stream = UnixStream::connect(sock).map_err(|e| DaemonError::Io {
-        path: sock.to_path_buf(),
-        source: e,
-    })?;
-    stream.set_read_timeout(Some(DEFAULT_TIMEOUT)).ok();
-    stream.set_write_timeout(Some(DEFAULT_TIMEOUT)).ok();
-
-    let payload = serde_json::to_vec(req).map_err(|e| DaemonError::Io {
-        path: sock.to_path_buf(),
-        source: std::io::Error::other(e),
-    })?;
-    stream.write_all(&payload).map_err(|e| DaemonError::Io {
-        path: sock.to_path_buf(),
-        source: e,
-    })?;
-    stream.write_all(b"\n").map_err(|e| DaemonError::Io {
-        path: sock.to_path_buf(),
-        source: e,
-    })?;
-    stream.flush().ok();
-
-    let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    reader.read_line(&mut line).map_err(|e| DaemonError::Io {
-        path: sock.to_path_buf(),
-        source: e,
-    })?;
-    serde_json::from_str(line.trim()).map_err(|e| DaemonError::Io {
-        path: sock.to_path_buf(),
-        source: std::io::Error::other(e),
-    })
+#[tarpc::service]
+pub trait Control {
+    async fn status() -> StatusData;
+    async fn shutdown();
+    async fn reload() -> std::result::Result<(), String>;
 }
 
 /// Default socket path (`~/.byokey/control.sock`).
 pub fn default_socket() -> Result<PathBuf> {
     paths::control_sock_path()
+}
+
+async fn connect(sock: &Path) -> Result<ControlClient> {
+    let stream = tokio::net::UnixStream::connect(sock)
+        .await
+        .map_err(|e| DaemonError::Io {
+            path: sock.to_path_buf(),
+            source: e,
+        })?;
+    let transport = tarpc::serde_transport::new(
+        tokio_util::codec::Framed::new(stream, tokio_util::codec::LengthDelimitedCodec::new()),
+        tarpc::tokio_serde::formats::Json::default(),
+    );
+    let client = ControlClient::new(tarpc::client::Config::default(), transport).spawn();
+    Ok(client)
+}
+
+fn make_context() -> tarpc::context::Context {
+    let mut ctx = tarpc::context::current();
+    ctx.deadline = std::time::Instant::now() + DEFAULT_TIMEOUT;
+    ctx
 }
 
 /// True if the server is reachable over the control socket.
@@ -88,86 +60,86 @@ pub fn is_alive() -> bool {
     let Ok(path) = default_socket() else {
         return false;
     };
-    matches!(
-        request(&path, &Request::Status),
-        Ok(Response { ok: true, .. })
-    )
+    let Ok(rt) = tokio::runtime::Handle::try_current() else {
+        return false;
+    };
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            rt.block_on(async {
+                let Ok(client) = connect(&path).await else {
+                    return false;
+                };
+                client.status(make_context()).await.is_ok()
+            })
+        })
+        .join()
+        .unwrap_or(false)
+    })
 }
 
 pub fn status() -> Result<StatusData> {
     let path = default_socket()?;
-    let resp = request(&path, &Request::Status)?;
-    match resp {
-        Response {
-            ok: true,
-            data: Some(data),
-            ..
-        } => Ok(data),
-        Response { error, .. } => Err(DaemonError::ControlFailed {
-            msg: error.unwrap_or_else(|| "status request failed".to_owned()),
-        }),
-    }
+    let rt = tokio::runtime::Handle::try_current().map_err(|_| DaemonError::ControlFailed {
+        msg: "no tokio runtime".to_owned(),
+    })?;
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            rt.block_on(async {
+                let client = connect(&path).await?;
+                client
+                    .status(make_context())
+                    .await
+                    .map_err(|e| DaemonError::ControlFailed { msg: e.to_string() })
+            })
+        })
+        .join()
+        .unwrap_or(Err(DaemonError::ControlFailed {
+            msg: "thread panicked".to_owned(),
+        }))
+    })
 }
 
 pub fn shutdown() -> Result<()> {
     let path = default_socket()?;
-    let resp = request(&path, &Request::Shutdown)?;
-    if resp.ok {
-        Ok(())
-    } else {
-        Err(DaemonError::ControlFailed {
-            msg: resp
-                .error
-                .unwrap_or_else(|| "shutdown request failed".to_owned()),
+    let rt = tokio::runtime::Handle::try_current().map_err(|_| DaemonError::ControlFailed {
+        msg: "no tokio runtime".to_owned(),
+    })?;
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            rt.block_on(async {
+                let client = connect(&path).await?;
+                client
+                    .shutdown(make_context())
+                    .await
+                    .map_err(|e| DaemonError::ControlFailed { msg: e.to_string() })
+            })
         })
-    }
+        .join()
+        .unwrap_or(Err(DaemonError::ControlFailed {
+            msg: "thread panicked".to_owned(),
+        }))
+    })
 }
 
 pub fn reload() -> Result<()> {
     let path = default_socket()?;
-    let resp = request(&path, &Request::Reload)?;
-    if resp.ok {
-        Ok(())
-    } else {
-        Err(DaemonError::ControlFailed {
-            msg: resp
-                .error
-                .unwrap_or_else(|| "reload request failed".to_owned()),
+    let rt = tokio::runtime::Handle::try_current().map_err(|_| DaemonError::ControlFailed {
+        msg: "no tokio runtime".to_owned(),
+    })?;
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            rt.block_on(async {
+                let client = connect(&path).await?;
+                client
+                    .reload(make_context())
+                    .await
+                    .map_err(|e| DaemonError::ControlFailed { msg: e.to_string() })?
+                    .map_err(|msg| DaemonError::ControlFailed { msg })
+            })
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn request_roundtrip_json() {
-        let s = serde_json::to_string(&Request::Status).unwrap();
-        assert_eq!(s, r#"{"cmd":"status"}"#);
-        let s = serde_json::to_string(&Request::Shutdown).unwrap();
-        assert_eq!(s, r#"{"cmd":"shutdown"}"#);
-        let s = serde_json::to_string(&Request::Reload).unwrap();
-        assert_eq!(s, r#"{"cmd":"reload"}"#);
-    }
-
-    #[test]
-    fn response_roundtrip_json() {
-        let ok = Response {
-            ok: true,
-            data: None,
-            error: None,
-        };
-        assert_eq!(serde_json::to_string(&ok).unwrap(), r#"{"ok":true}"#);
-
-        let err = Response {
-            ok: false,
-            data: None,
-            error: Some("nope".to_owned()),
-        };
-        assert_eq!(
-            serde_json::to_string(&err).unwrap(),
-            r#"{"ok":false,"error":"nope"}"#
-        );
-    }
+        .join()
+        .unwrap_or(Err(DaemonError::ControlFailed {
+            msg: "thread panicked".to_owned(),
+        }))
+    })
 }

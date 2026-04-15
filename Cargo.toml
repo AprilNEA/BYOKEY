@@ -85,6 +85,9 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 # Regex (used by amp patch)
 regex = "1"
+# RPC
+tarpc = { version = "0.37", features = ["tokio1", "serde-transport", "unix", "serde-transport-json"] }
+tokio-util = { version = "0.7", features = ["codec"] }
 # Futures
 futures-core = "0.3"
 futures-util = "0.3"
@@ -142,6 +145,9 @@ rquest.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-appender.workspace = true
+tarpc.workspace = true
+tokio-util.workspace = true
+futures-util.workspace = true
 serde_json.workspace = true
 regex.workspace = true
 utoipa.workspace = true

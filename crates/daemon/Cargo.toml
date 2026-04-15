@@ -15,4 +15,8 @@ workspace = true
 thiserror.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true
+tarpc.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+futures-util.workspace = true
 service-manager = "0.11"

@@ -8,24 +8,25 @@
 //! - [`openapi`]  — `OpenAPI` specification generation.
 //! - [`usage`]    — In-memory request/token usage tracking.
 
-pub mod dump;
 pub mod error;
 pub mod handler;
+pub mod middleware;
 #[allow(clippy::needless_for_each)]
 pub mod openapi;
 pub mod router;
 pub mod usage;
+pub(crate) mod util;
 
 pub use error::ApiError;
 pub use handler::amp::threads::AmpThreadIndex;
 pub use openapi::ApiDoc;
-pub use router::make_router;
+pub use router::{make_amp_router, make_router};
 pub use usage::{UsageRecorder, UsageStats};
 
 use arc_swap::ArcSwap;
 use byokey_auth::AuthManager;
 use byokey_provider::DeviceProfileCache;
-use byokey_types::{AmpQuotaStore, RateLimitStore, UsageStore};
+use byokey_types::{RateLimitStore, UsageStore};
 use std::sync::Arc;
 
 /// Shared application state passed to all route handlers.
@@ -43,8 +44,6 @@ pub struct AppState {
     pub ratelimits: Arc<RateLimitStore>,
     /// Per-auth device fingerprint cache for Claude API headers.
     pub device_profiles: Arc<DeviceProfileCache>,
-    /// Cached `AmpCode` quota data (free-tier status + balance).
-    pub amp_quota: Arc<AmpQuotaStore>,
     /// Pre-built, file-watched index of local Amp CLI thread summaries.
     pub amp_threads: Arc<AmpThreadIndex>,
 }
@@ -82,7 +81,6 @@ impl AppState {
             usage: Arc::new(UsageRecorder::new(usage_store)),
             ratelimits: Arc::new(RateLimitStore::new()),
             device_profiles: Arc::new(DeviceProfileCache::new()),
-            amp_quota: Arc::new(AmpQuotaStore::new()),
             amp_threads,
         })
     }

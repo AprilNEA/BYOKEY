@@ -17,36 +17,9 @@ use tracing::{Span, info_span};
 use crate::handler::{amp, chat, management, messages, models};
 use crate::{AppState, openapi};
 
-/// Build the full axum router.
-///
-/// Top-level routes:
-/// - POST /v1/chat/completions                          OpenAI-compatible
-/// - POST /v1/messages                                  Anthropic native passthrough
-/// - POST /copilot/v1/messages                          Anthropic via Copilot
-/// - POST /copilot/v1/chat/completions                  `OpenAI` via Copilot
-/// - GET  /v1/models
-///
-/// Sub-routers:
-/// - [`amp::router`]        — Amp CLI / `AmpCode` compatibility (`/amp/*`, `/api/*`).
-/// - [`management::router`] — BYOKEY management API, nested at `/v0/management`.
-pub fn make_router(state: Arc<AppState>) -> Router {
-    Router::new()
-        .route("/v1/chat/completions", post(chat::chat_completions))
-        .route("/v1/messages", post(messages::anthropic_messages))
-        .route(
-            "/copilot/v1/messages",
-            post(messages::copilot_anthropic_messages),
-        )
-        .route(
-            "/copilot/v1/chat/completions",
-            post(chat::copilot_chat_completions),
-        )
-        .route("/v1/models", get(models::list_models))
-        .merge(amp::router())
-        .nest("/v0/management", management::router())
-        .route("/openapi.json", get(openapi::openapi_json))
-        .with_state(state)
-        .layer(DefaultBodyLimit::max(200 * 1024 * 1024)) // 200 MB for image uploads
+fn common_layers(router: Router) -> Router {
+    router
+        .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|req: &http::Request<_>| {
@@ -82,7 +55,44 @@ pub fn make_router(state: Arc<AppState>) -> Router {
         )
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
-        .layer(middleware::from_fn(crate::dump::dump_middleware))
+        .layer(middleware::from_fn(
+            crate::middleware::dump::dump_middleware,
+        ))
+}
+
+/// Build the main byokey router (`OpenAI` / Anthropic / Copilot compatible).
+pub fn make_router(state: Arc<AppState>) -> Router {
+    let router = Router::new()
+        .route("/v1/chat/completions", post(chat::chat_completions))
+        .route("/v1/messages", post(messages::anthropic_messages))
+        .route(
+            "/copilot/v1/messages",
+            post(messages::copilot_anthropic_messages),
+        )
+        .route(
+            "/copilot/v1/chat/completions",
+            post(chat::copilot_chat_completions),
+        )
+        .route("/v1/models", get(models::list_models))
+        .nest("/v0/management", management::router())
+        .route("/openapi.json", get(openapi::openapi_json))
+        .with_state(state);
+    common_layers(router)
+}
+
+/// Build the Amp CLI router (served on a separate port via `amp.port`).
+///
+/// Includes the [`forward_headers_middleware`] which prepares upstream headers
+/// (filtering + amp auth injection) and stores them as [`ForwardedHeaders`] in
+/// request extensions for proxy handlers.
+pub fn make_amp_router(state: Arc<AppState>) -> Router {
+    let router = amp::router()
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::forward::forward_headers_middleware,
+        ))
+        .with_state(state);
+    common_layers(router)
 }
 
 #[cfg(test)]
@@ -132,11 +142,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_amp_login_redirect() {
-        let app = make_router(make_state());
+        let app = make_amp_router(make_state());
         let resp = app
             .oneshot(
                 Request::builder()
-                    .uri("/amp/v1/login")
+                    .uri("/v1/login")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -152,11 +162,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_amp_cli_login_redirect() {
-        let app = make_router(make_state());
+        let app = make_amp_router(make_state());
         let resp = app
             .oneshot(
                 Request::builder()
-                    .uri("/amp/auth/cli-login?authToken=abc123&callbackPort=35789")
+                    .uri("/auth/cli-login?authToken=abc123&callbackPort=35789")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -218,27 +228,5 @@ mod tests {
 
         // Missing required `model` field → axum JSON rejection → 422
         assert_eq!(resp.status(), axum::http::StatusCode::UNPROCESSABLE_ENTITY);
-    }
-
-    #[tokio::test]
-    async fn test_amp_chat_route_exists() {
-        use serde_json::json;
-
-        let app = make_router(make_state());
-        let body = json!({"model": "nonexistent", "messages": []});
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/amp/v1/chat/completions")
-                    .header("content-type", "application/json")
-                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        // Route exists (not 404), even though model is invalid
-        assert_ne!(resp.status(), axum::http::StatusCode::NOT_FOUND);
     }
 }

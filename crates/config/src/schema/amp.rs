@@ -1,18 +1,22 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-/// `AmpCode` 管理代理配置。
+/// Proxy-side configuration for `AmpCode` integration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AmpConfig {
-    /// 设置后，byokey 进入"共享代理"模式：
-    /// 客户端的 Authorization / X-Api-Key 头会被剥离，
-    /// 改为注入此 key（同时设置 `Authorization: Bearer {key}` 和 `X-Api-Key: {key}`）。
-    /// 不设置则保持 BYOK 透传行为（默认）。
+    /// Separate listen port for the Amp-compatible router.
+    #[serde(default)]
+    pub port: Option<u16>,
+
+    /// Enables shared-proxy mode: when set, byokey strips the client's
+    /// `Authorization` and `X-Api-Key` headers and injects this key upstream.
     #[serde(default)]
     pub upstream_key: Option<String>,
-    /// 拦截 `getUserFreeTierStatus` 响应，将 `canUseAmpFree` 和
-    /// `isDailyGrantEnabled` 改为 `false`，隐藏免费层提示（默认关闭）。
+
+    /// AMP CLI settings merged into `~/.config/amp/settings.json` by
+    /// `byokey amp inject`.
     #[serde(default)]
-    pub hide_free_tier: bool,
+    pub settings: HashMap<String, serde_json::Value>,
 }
 
 #[cfg(test)]
@@ -39,5 +43,36 @@ amp:
     fn test_from_yaml_amp_defaults_when_omitted() {
         let c = Config::from_yaml("port: 1234").unwrap();
         assert!(c.amp.upstream_key.is_none());
+        assert!(c.amp.settings.is_empty());
+    }
+
+    #[test]
+    fn test_from_yaml_amp_settings() {
+        let yaml = r#"
+amp:
+  settings:
+    "amp.url": "https://byokey.example.com/amp"
+    "amp.anthropic.effort": "high"
+    "amp.tools.disable":
+      - "builtin:edit_file"
+    "amp.network.timeout": 60
+"#;
+        let c = Config::from_yaml(yaml).unwrap();
+        assert_eq!(
+            c.amp.settings.get("amp.url"),
+            Some(&serde_json::json!("https://byokey.example.com/amp")),
+        );
+        assert_eq!(
+            c.amp.settings.get("amp.anthropic.effort"),
+            Some(&serde_json::json!("high")),
+        );
+        assert_eq!(
+            c.amp.settings.get("amp.tools.disable"),
+            Some(&serde_json::json!(["builtin:edit_file"])),
+        );
+        assert_eq!(
+            c.amp.settings.get("amp.network.timeout"),
+            Some(&serde_json::json!(60)),
+        );
     }
 }

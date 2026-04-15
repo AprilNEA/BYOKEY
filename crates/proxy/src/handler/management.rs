@@ -21,11 +21,6 @@ use crate::AppState;
 use crate::handler::amp;
 
 /// Build the BYOKEY management sub-router (nested at `/v0/management`).
-///
-/// Exposes daemon status, account management, rate-limits, and usage stats,
-/// plus BYOKEY-served amp inspection endpoints (cached quota snapshot and
-/// local thread files) — distinct from amp's own management API, which is
-/// proxied through `/amp/v0/management/*` in [`crate::handler::amp::router`].
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/status", get(status::status_handler))
@@ -41,7 +36,6 @@ pub fn router() -> Router<Arc<AppState>> {
             post(accounts::activate_account_handler),
         )
         .route("/ratelimits", get(ratelimits::ratelimits_handler))
-        .route("/amp/quota", get(amp::quota::amp_quota_handler))
         .route("/amp/threads", get(amp::threads::list_threads))
         .route("/amp/threads/{id}", get(amp::threads::get_thread))
 }

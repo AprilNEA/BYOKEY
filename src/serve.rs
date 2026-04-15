@@ -106,7 +106,31 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
             );
         }
     }
-    let app = byokey_proxy::make_router(state);
+    let app = byokey_proxy::make_router(Arc::clone(&state));
+
+    // Spawn the Amp-dedicated listener when amp.port is configured.
+    let config_snapshot = config_arc.load();
+    if let Some(amp_port) = config_snapshot.amp.port {
+        let amp_addr = format!("{effective_host}:{amp_port}");
+        let amp_app = byokey_proxy::make_amp_router(Arc::clone(&state));
+        let parsed: std::net::SocketAddr = amp_addr
+            .parse()
+            .map_err(|e| anyhow::anyhow!("invalid amp address {amp_addr}: {e}"))?;
+        let std_listener = std::net::TcpListener::bind(parsed)
+            .map_err(|e| anyhow::anyhow!("bind amp {amp_addr}: {e}"))?;
+        std_listener
+            .set_nonblocking(true)
+            .map_err(|e| anyhow::anyhow!("set_nonblocking: {e}"))?;
+        let amp_listener = tokio::net::TcpListener::from_std(std_listener)
+            .map_err(|e| anyhow::anyhow!("from_std: {e}"))?;
+        tracing::info!(addr = %amp_addr, "amp listener ready");
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(amp_listener, amp_app).await {
+                tracing::error!(error = %e, "amp listener failed");
+            }
+        });
+    }
+    drop(config_snapshot);
 
     // Acquire the HTTP listener. Prefer a pre-opened fd from systemfd /
     // systemd / launchd socket activation (no rebind on restart, no
@@ -172,7 +196,7 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
 
     ctl_handle.cleanup();
 
-    // Aux tokio tasks (config watcher, amp threads watcher, control listener)
+    // Aux tokio tasks (config watcher, thread index watcher, control listener)
     // keep the runtime alive after axum::serve returns. Since the HTTP side has
     // already drained via graceful_shutdown and the socket is cleaned up, exit
     // the process explicitly to avoid a hang on shutdown.

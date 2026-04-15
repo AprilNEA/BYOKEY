@@ -1,18 +1,18 @@
-//! Control socket server: accepts status/shutdown/reload requests from the CLI.
+//! Control socket server: tarpc service over a Unix domain socket.
 //!
-//! Bound to `~/.byokey/control.sock` at server startup. Acts as the authoritative
-//! liveness signal — if you can connect, the server is up. Shutdown is triggered
+//! Bound to `~/.byokey/control.sock` at server startup. Shutdown is triggered
 //! via a shared `Notify`; the HTTP server awaits that same `Notify` for graceful
 //! shutdown.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
 use byokey_config::ConfigWatcher;
-use byokey_daemon::control::{Request, Response, StatusData};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
+use byokey_daemon::control::{Control, StatusData};
+use futures_util::stream::StreamExt as _;
+use tarpc::server::{BaseChannel, Channel as _};
+use tokio::net::UnixListener;
 use tokio::sync::Notify;
 
 pub struct ControlState {
@@ -33,6 +33,39 @@ impl ControlHandle {
     }
 }
 
+#[derive(Clone)]
+struct ControlServer(Arc<ControlState>);
+
+impl Control for ControlServer {
+    async fn status(self, _: tarpc::context::Context) -> StatusData {
+        StatusData {
+            pid: std::process::id(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            host: self.0.host.clone(),
+            port: self.0.port,
+            uptime_secs: self.0.start.elapsed().as_secs(),
+        }
+    }
+
+    async fn shutdown(self, _: tarpc::context::Context) {
+        tracing::info!("control: shutdown requested");
+        self.0.shutdown.notify_waiters();
+    }
+
+    async fn reload(self, _: tarpc::context::Context) -> Result<(), String> {
+        match &self.0.watcher {
+            Some(w) => match w.reload() {
+                Ok(()) => {
+                    tracing::info!("control: config reloaded");
+                    Ok(())
+                }
+                Err(e) => Err(e.to_string()),
+            },
+            None => Err("no config file (server started without --config)".to_owned()),
+        }
+    }
+}
+
 pub fn bind_and_serve(
     sock_path: PathBuf,
     state: Arc<ControlState>,
@@ -40,8 +73,6 @@ pub fn bind_and_serve(
     if let Some(parent) = sock_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    // A lingering socket file from an unclean exit blocks bind — remove it.
-    // `control::is_alive()` has already proven no live server is answering.
     let _ = std::fs::remove_file(&sock_path);
 
     let listener = UnixListener::bind(&sock_path)?;
@@ -56,17 +87,27 @@ pub fn bind_and_serve(
     let handle = ControlHandle {
         sock_path: sock_path.clone(),
     };
+    let server = ControlServer(state);
 
     tokio::spawn(async move {
         loop {
             match listener.accept().await {
                 Ok((stream, _)) => {
-                    let state = Arc::clone(&state);
-                    tokio::spawn(async move {
-                        if let Err(e) = handle_connection(stream, state).await {
-                            tracing::debug!(error = %e, "control connection error");
-                        }
-                    });
+                    let transport = tarpc::serde_transport::new(
+                        tokio_util::codec::Framed::new(
+                            stream,
+                            tokio_util::codec::LengthDelimitedCodec::new(),
+                        ),
+                        tarpc::tokio_serde::formats::Json::default(),
+                    );
+                    let s = server.clone();
+                    tokio::spawn(
+                        BaseChannel::with_defaults(transport)
+                            .execute(s.serve())
+                            .for_each(|resp| async {
+                                tokio::spawn(resp);
+                            }),
+                    );
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "control accept failed, exiting listener");
@@ -77,79 +118,4 @@ pub fn bind_and_serve(
     });
 
     Ok(handle)
-}
-
-async fn handle_connection(stream: UnixStream, state: Arc<ControlState>) -> std::io::Result<()> {
-    let (r, mut w) = stream.into_split();
-    let mut reader = BufReader::new(r);
-    let mut line = String::new();
-    reader.read_line(&mut line).await?;
-
-    let resp = match serde_json::from_str::<Request>(line.trim()) {
-        Ok(req) => dispatch(req, &state),
-        Err(e) => Response {
-            ok: false,
-            data: None,
-            error: Some(format!("parse error: {e}")),
-        },
-    };
-
-    let mut buf = serde_json::to_vec(&resp).map_err(std::io::Error::other)?;
-    buf.push(b'\n');
-    w.write_all(&buf).await?;
-    w.flush().await?;
-    Ok(())
-}
-
-fn dispatch(req: Request, state: &ControlState) -> Response {
-    match req {
-        Request::Status => Response {
-            ok: true,
-            data: Some(StatusData {
-                pid: std::process::id(),
-                version: env!("CARGO_PKG_VERSION").to_owned(),
-                host: state.host.clone(),
-                port: state.port,
-                uptime_secs: state.start.elapsed().as_secs(),
-            }),
-            error: None,
-        },
-        Request::Shutdown => {
-            tracing::info!("control: shutdown requested");
-            state.shutdown.notify_waiters();
-            Response {
-                ok: true,
-                data: None,
-                error: None,
-            }
-        }
-        Request::Reload => match &state.watcher {
-            Some(w) => match w.reload() {
-                Ok(()) => {
-                    tracing::info!("control: config reloaded");
-                    Response {
-                        ok: true,
-                        data: None,
-                        error: None,
-                    }
-                }
-                Err(e) => Response {
-                    ok: false,
-                    data: None,
-                    error: Some(e.to_string()),
-                },
-            },
-            None => Response {
-                ok: false,
-                data: None,
-                error: Some("no config file (server started without --config)".to_owned()),
-            },
-        },
-    }
-}
-
-/// Best-effort: test whether a control socket at `path` is answering.
-#[allow(dead_code)]
-pub fn socket_reachable(_path: &Path) -> bool {
-    byokey_daemon::control::is_alive()
 }

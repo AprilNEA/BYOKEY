@@ -12,7 +12,6 @@
 
 use aigw::anthropic::{AuthMode, Transport, TransportConfig};
 use axum::{
-    body::Body,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -21,7 +20,7 @@ use byokey_provider::CopilotExecutor;
 use byokey_provider::claude_headers::{ANTHROPIC_BETA, ANTHROPIC_VERSION};
 use byokey_provider::cloak::inject_billing_header;
 use byokey_types::{ByokError, ProviderId, ThinkingCapability};
-use futures_util::{StreamExt as _, TryStreamExt as _, stream::try_unfold};
+use futures_util::TryStreamExt as _;
 use secrecy::SecretString;
 use serde_json::Value;
 use std::sync::Arc;
@@ -527,101 +526,8 @@ async fn copilot_messages(
         .unwrap_or_else(|| ApiError(ByokError::Auth("no copilot accounts available".into()))))
 }
 
-/// Extract token counts from an Anthropic non-streaming response.
-fn extract_anthropic_usage(json: &Value) -> (u64, u64) {
-    let usage = json.get("usage");
-    let input = usage
-        .and_then(|u| u.get("input_tokens"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let output = usage
-        .and_then(|u| u.get("output_tokens"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    (input, output)
-}
-
-/// Wraps a raw byte stream to extract token usage from Anthropic SSE events.
-///
-/// Scans for `message_start` (input tokens) and `message_delta` (output tokens)
-/// events, forwards all bytes unchanged, and records usage when the stream ends.
-fn tap_anthropic_stream_usage(
-    resp: rquest::Response,
-    usage: Arc<UsageRecorder>,
-    model: String,
-    provider: String,
-) -> byokey_types::traits::ByteStream {
-    use byokey_types::ByokError as BE;
-
-    struct State {
-        inner: byokey_types::traits::ByteStream,
-        buf: Vec<u8>,
-        usage: Arc<UsageRecorder>,
-        model: String,
-        provider: String,
-        input_tokens: u64,
-        output_tokens: u64,
-    }
-
-    let inner: byokey_types::traits::ByteStream =
-        Box::pin(resp.bytes_stream().map(|r| r.map_err(BE::from)));
-
-    Box::pin(try_unfold(
-        State {
-            inner,
-            buf: Vec::new(),
-            usage,
-            model,
-            provider,
-            input_tokens: 0,
-            output_tokens: 0,
-        },
-        |mut s| async move {
-            match s.inner.next().await {
-                Some(Ok(bytes)) => {
-                    s.buf.extend_from_slice(&bytes);
-                    while let Some(nl) = s.buf.iter().position(|&b| b == b'\n') {
-                        let line: Vec<u8> = s.buf.drain(..=nl).collect();
-                        let line = String::from_utf8_lossy(&line);
-                        let line = line.trim();
-                        if let Some(data) = line.strip_prefix("data: ")
-                            && let Ok(ev) = serde_json::from_str::<Value>(data)
-                        {
-                            match ev.get("type").and_then(Value::as_str) {
-                                Some("message_start") => {
-                                    if let Some(v) = ev
-                                        .pointer("/message/usage/input_tokens")
-                                        .and_then(Value::as_u64)
-                                    {
-                                        s.input_tokens = v;
-                                    }
-                                }
-                                Some("message_delta") => {
-                                    if let Some(v) =
-                                        ev.pointer("/usage/output_tokens").and_then(Value::as_u64)
-                                    {
-                                        s.output_tokens = v;
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    Ok(Some((bytes, s)))
-                }
-                Some(Err(e)) => {
-                    s.usage.record_failure(&s.model, &s.provider);
-                    Err(e)
-                }
-                None => {
-                    s.usage
-                        .record_success(&s.model, &s.provider, s.input_tokens, s.output_tokens);
-                    Ok(None)
-                }
-            }
-        },
-    ))
-}
+use crate::util::stream::{AnthropicParser, response_to_stream, tap_usage_stream};
+use crate::util::{extract_usage, sse_response};
 
 /// Forward an upstream response back to the client, recording token usage.
 async fn forward_response(
@@ -650,27 +556,21 @@ async fn forward_response(
     let upstream_status = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK);
 
     if stream {
-        let tapped = tap_anthropic_stream_usage(
-            resp,
+        let tapped = tap_usage_stream(
+            response_to_stream(resp),
             usage.clone(),
             model.to_string(),
             provider.to_string(),
+            AnthropicParser::new(),
         );
         let mapped = tapped.map_err(|e| std::io::Error::other(e.to_string()));
-        let out_body = Body::from_stream(mapped);
-        Ok(Response::builder()
-            .status(upstream_status)
-            .header("content-type", "text/event-stream")
-            .header("cache-control", "no-cache")
-            .header("x-accel-buffering", "no")
-            .body(out_body)
-            .expect("valid response"))
+        Ok(sse_response(upstream_status, mapped))
     } else {
         let json: Value = resp
             .json()
             .await
             .map_err(|e| ApiError(ByokError::from(e)))?;
-        let (input, output) = extract_anthropic_usage(&json);
+        let (input, output) = extract_usage(&json, "/usage/input_tokens", "/usage/output_tokens");
         usage.record_success(model, provider, input, output);
         Ok((upstream_status, axum::Json(json)).into_response())
     }

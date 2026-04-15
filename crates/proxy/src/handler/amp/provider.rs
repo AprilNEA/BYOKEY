@@ -14,218 +14,27 @@
 //! `ampcode.com` verbatim via [`amp_management_proxy`].
 
 use axum::{
-    body::Body,
     extract::{Path, Query, RawQuery, State},
-    http::{HeaderMap, Method, StatusCode},
+    http::{Method, StatusCode},
     response::{IntoResponse, Response},
 };
 use byokey_types::{ByokError, ProviderId};
 use bytes::Bytes;
-use futures_util::{StreamExt as _, TryStreamExt as _, stream::try_unfold};
+use futures_util::TryStreamExt as _;
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
-use crate::{AppState, UsageRecorder, error::ApiError};
+use crate::middleware::forward::ForwardedHeaders;
+use crate::util::stream::{CodexParser, GeminiParser, response_to_stream, tap_usage_stream};
+use crate::util::{bad_gateway, extract_usage, sse_response, upstream_error};
+use crate::{AppState, error::ApiError};
 
-/// Codex OAuth Responses endpoint (`ChatGPT` subscription).
 const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
-/// `OpenAI` public Responses API endpoint (API key).
 const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
-/// Codex CLI version header value.
 const CODEX_VERSION: &str = "0.101.0";
-/// Codex CLI `User-Agent` header value.
 const CODEX_USER_AGENT: &str = "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464";
-
-/// Google Generative Language API models base URL.
 const GEMINI_MODELS_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models";
-
-/// `ampcode.com` backend base URL for management route proxying.
 const AMP_BACKEND: &str = "https://ampcode.com";
-
-use crate::handler::{CLIENT_AUTH_HEADERS, FINGERPRINT_HEADERS, HOP_BY_HOP};
-
-// ── Usage extraction helpers ────────────────────────────────────────────
-
-/// Extract token counts from a Codex Responses API non-streaming response.
-fn extract_codex_usage(json: &Value) -> (u64, u64) {
-    let usage = json.get("usage");
-    let input = usage
-        .and_then(|u| u.get("input_tokens"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let output = usage
-        .and_then(|u| u.get("output_tokens"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    (input, output)
-}
-
-/// Wraps a raw byte stream to extract token usage from Codex Responses SSE events.
-///
-/// Scans for `response.completed` events containing `response.usage.input_tokens`
-/// and `response.usage.output_tokens`, forwards all bytes unchanged.
-fn tap_codex_stream_usage(
-    resp: rquest::Response,
-    usage: Arc<UsageRecorder>,
-    model: String,
-    provider: String,
-) -> byokey_types::traits::ByteStream {
-    use byokey_types::ByokError as BE;
-
-    struct State {
-        inner: byokey_types::traits::ByteStream,
-        buf: Vec<u8>,
-        usage: Arc<UsageRecorder>,
-        model: String,
-        provider: String,
-        input_tokens: u64,
-        output_tokens: u64,
-    }
-
-    let inner: byokey_types::traits::ByteStream =
-        Box::pin(resp.bytes_stream().map(|r| r.map_err(BE::from)));
-
-    Box::pin(try_unfold(
-        State {
-            inner,
-            buf: Vec::new(),
-            usage,
-            model,
-            provider,
-            input_tokens: 0,
-            output_tokens: 0,
-        },
-        |mut s| async move {
-            match s.inner.next().await {
-                Some(Ok(bytes)) => {
-                    s.buf.extend_from_slice(&bytes);
-                    while let Some(nl) = s.buf.iter().position(|&b| b == b'\n') {
-                        let line: Vec<u8> = s.buf.drain(..=nl).collect();
-                        let line = String::from_utf8_lossy(&line);
-                        let line = line.trim();
-                        if let Some(data) = line.strip_prefix("data: ")
-                            && let Ok(ev) = serde_json::from_str::<Value>(data)
-                            && ev.get("type").and_then(Value::as_str) == Some("response.completed")
-                        {
-                            if let Some(v) = ev
-                                .pointer("/response/usage/input_tokens")
-                                .and_then(Value::as_u64)
-                            {
-                                s.input_tokens = v;
-                            }
-                            if let Some(v) = ev
-                                .pointer("/response/usage/output_tokens")
-                                .and_then(Value::as_u64)
-                            {
-                                s.output_tokens = v;
-                            }
-                        }
-                    }
-                    Ok(Some((bytes, s)))
-                }
-                Some(Err(e)) => {
-                    s.usage.record_failure(&s.model, &s.provider);
-                    Err(e)
-                }
-                None => {
-                    s.usage
-                        .record_success(&s.model, &s.provider, s.input_tokens, s.output_tokens);
-                    Ok(None)
-                }
-            }
-        },
-    ))
-}
-
-/// Extract token counts from a Gemini native non-streaming response.
-fn extract_gemini_usage(json: &Value) -> (u64, u64) {
-    let meta = json.get("usageMetadata");
-    let input = meta
-        .and_then(|u| u.get("promptTokenCount"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let output = meta
-        .and_then(|u| u.get("candidatesTokenCount"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    (input, output)
-}
-
-/// Wraps a raw byte stream to extract token usage from Gemini native SSE events.
-///
-/// Scans each SSE data line for `usageMetadata` (last occurrence wins).
-fn tap_gemini_stream_usage(
-    resp: rquest::Response,
-    usage: Arc<UsageRecorder>,
-    model: String,
-    provider: String,
-) -> byokey_types::traits::ByteStream {
-    use byokey_types::ByokError as BE;
-
-    struct State {
-        inner: byokey_types::traits::ByteStream,
-        buf: Vec<u8>,
-        usage: Arc<UsageRecorder>,
-        model: String,
-        provider: String,
-        input_tokens: u64,
-        output_tokens: u64,
-    }
-
-    let inner: byokey_types::traits::ByteStream =
-        Box::pin(resp.bytes_stream().map(|r| r.map_err(BE::from)));
-
-    Box::pin(try_unfold(
-        State {
-            inner,
-            buf: Vec::new(),
-            usage,
-            model,
-            provider,
-            input_tokens: 0,
-            output_tokens: 0,
-        },
-        |mut s| async move {
-            match s.inner.next().await {
-                Some(Ok(bytes)) => {
-                    s.buf.extend_from_slice(&bytes);
-                    while let Some(nl) = s.buf.iter().position(|&b| b == b'\n') {
-                        let line: Vec<u8> = s.buf.drain(..=nl).collect();
-                        let line = String::from_utf8_lossy(&line);
-                        let line = line.trim();
-                        if let Some(data) = line.strip_prefix("data: ")
-                            && let Ok(ev) = serde_json::from_str::<Value>(data)
-                            && ev.get("usageMetadata").is_some()
-                        {
-                            if let Some(v) = ev
-                                .pointer("/usageMetadata/promptTokenCount")
-                                .and_then(Value::as_u64)
-                            {
-                                s.input_tokens = v;
-                            }
-                            if let Some(v) = ev
-                                .pointer("/usageMetadata/candidatesTokenCount")
-                                .and_then(Value::as_u64)
-                            {
-                                s.output_tokens = v;
-                            }
-                        }
-                    }
-                    Ok(Some((bytes, s)))
-                }
-                Some(Err(e)) => {
-                    s.usage.record_failure(&s.model, &s.provider);
-                    Err(e)
-                }
-                None => {
-                    s.usage
-                        .record_success(&s.model, &s.provider, s.input_tokens, s.output_tokens);
-                    Ok(None)
-                }
-            }
-        },
-    ))
-}
 
 /// Handles `POST /api/provider/openai/v1/responses`.
 ///
@@ -309,12 +118,13 @@ pub async fn codex_responses_passthrough(
     let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        state.usage.record_failure(&model_name, provider);
-        return Err(ApiError::from(ByokError::Upstream {
-            status: status.as_u16(),
-            body: text,
-            retry_after: None,
-        }));
+        return Err(upstream_error(
+            status,
+            text,
+            &state.usage,
+            &model_name,
+            provider,
+        ));
     }
 
     let is_sse = resp
@@ -324,22 +134,21 @@ pub async fn codex_responses_passthrough(
         .is_some_and(|ct| ct.contains("text/event-stream"));
 
     if is_sse {
-        let tapped =
-            tap_codex_stream_usage(resp, state.usage.clone(), model_name, provider.to_string());
+        let tapped = tap_usage_stream(
+            response_to_stream(resp),
+            state.usage.clone(),
+            model_name,
+            provider.to_string(),
+            CodexParser::new(),
+        );
         let mapped = tapped.map_err(|e| std::io::Error::other(e.to_string()));
-        Ok(Response::builder()
-            .status(status)
-            .header("content-type", "text/event-stream")
-            .header("cache-control", "no-cache")
-            .header("x-accel-buffering", "no")
-            .body(Body::from_stream(mapped))
-            .expect("valid response"))
+        Ok(sse_response(status, mapped))
     } else {
         let json: Value = resp
             .json()
             .await
             .map_err(|e| ApiError(ByokError::from(e)))?;
-        let (input, output) = extract_codex_usage(&json);
+        let (input, output) = extract_usage(&json, "/usage/input_tokens", "/usage/output_tokens");
         state
             .usage
             .record_success(&model_name, provider, input, output);
@@ -443,42 +252,41 @@ pub async fn gemini_native_passthrough(
     let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        state.usage.record_failure(model_name, provider);
-        return Err(ApiError::from(ByokError::Upstream {
-            status: status.as_u16(),
-            body: text,
-            retry_after: None,
-        }));
+        return Err(upstream_error(
+            status,
+            text,
+            &state.usage,
+            model_name,
+            provider,
+        ));
     }
 
-    let content_type = resp
+    let is_sse = resp
         .headers()
         .get("content-type")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/json")
-        .to_string();
+        .is_some_and(|ct| ct.contains("text/event-stream"));
 
-    if content_type.contains("text/event-stream") {
-        let tapped = tap_gemini_stream_usage(
-            resp,
+    if is_sse {
+        let tapped = tap_usage_stream(
+            response_to_stream(resp),
             state.usage.clone(),
             model_name.to_string(),
             provider.to_string(),
+            GeminiParser::new(),
         );
         let mapped = tapped.map_err(|e| std::io::Error::other(e.to_string()));
-        Ok(Response::builder()
-            .status(status)
-            .header("content-type", content_type)
-            .header("cache-control", "no-cache")
-            .header("x-accel-buffering", "no")
-            .body(Body::from_stream(mapped))
-            .expect("valid response"))
+        Ok(sse_response(status, mapped))
     } else {
         let json: Value = resp
             .json()
             .await
             .map_err(|e| ApiError(ByokError::from(e)))?;
-        let (input, output) = extract_gemini_usage(&json);
+        let (input, output) = extract_usage(
+            &json,
+            "/usageMetadata/promptTokenCount",
+            "/usageMetadata/candidatesTokenCount",
+        );
         state
             .usage
             .record_success(model_name, provider, input, output);
@@ -574,22 +382,17 @@ async fn gemini_native_via_backend(
         }
         byokey_types::traits::ProviderResponse::Stream(byte_stream) => {
             // Tap the OpenAI stream for usage before translating to Gemini SSE.
-            let tapped = crate::handler::chat::tap_stream_usage(
+            let tapped = tap_usage_stream(
                 byte_stream,
                 state.usage.clone(),
                 model.to_string(),
                 provider_name,
+                GeminiParser::new(),
             );
             let model_owned = model.to_string();
             let translated = byte_stream_to_gemini_sse(tapped, model_owned);
             let mapped = translated.map_err(|e| std::io::Error::other(e.to_string()));
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("content-type", "text/event-stream")
-                .header("cache-control", "no-cache")
-                .header("x-accel-buffering", "no")
-                .body(Body::from_stream(mapped))
-                .expect("valid response"))
+            Ok(sse_response(StatusCode::OK, mapped))
         }
     }
 }
@@ -642,7 +445,7 @@ pub async fn amp_management_proxy(
     method: Method,
     Path(path): Path<String>,
     RawQuery(query): RawQuery,
-    headers: HeaderMap,
+    axum::extract::Extension(forwarded): axum::extract::Extension<ForwardedHeaders>,
     body: Bytes,
 ) -> Response {
     let url = match query.as_deref() {
@@ -663,41 +466,7 @@ pub async fn amp_management_proxy(
         tracing::debug!(%method, %url, body = %req_body, "amp proxy request");
     }
 
-    let config = state.config.load();
-
-    // Resolve AMP auth: stored BYOKEY token > upstream_key > client passthrough.
-    let amp_token = state.auth.get_token(&ProviderId::Amp).await.ok();
-    let strip_client_auth = amp_token.is_some() || config.amp.upstream_key.is_some();
-
-    let mut upstream_headers = rquest::header::HeaderMap::new();
-    for (name, value) in &headers {
-        let name_str = name.as_str();
-        if HOP_BY_HOP.contains(&name_str) || name_str == "host" {
-            continue;
-        }
-        if strip_client_auth && CLIENT_AUTH_HEADERS.contains(&name_str) {
-            continue;
-        }
-        if FINGERPRINT_HEADERS.contains(&name_str)
-            || name_str.starts_with("sec-ch-ua-")
-            || name_str.starts_with("sec-fetch-")
-        {
-            continue;
-        }
-        if let (Ok(n), Ok(v)) = (
-            rquest::header::HeaderName::from_bytes(name.as_ref()),
-            rquest::header::HeaderValue::from_bytes(value.as_bytes()),
-        ) {
-            upstream_headers.insert(n, v);
-        }
-    }
-
-    // Inject auth: stored token takes priority over upstream_key.
-    if let Some(token) = &amp_token {
-        inject_amp_auth(&mut upstream_headers, &token.access_token);
-    } else if let Some(key) = &config.amp.upstream_key {
-        inject_amp_auth(&mut upstream_headers, key);
-    }
+    let upstream_headers = forwarded.headers;
 
     let resp = match state
         .http
@@ -708,13 +477,7 @@ pub async fn amp_management_proxy(
         .await
     {
         Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                axum::Json(serde_json::json!({"error": {"message": e.to_string()}})),
-            )
-                .into_response();
-        }
+        Err(e) => return bad_gateway(e),
     };
 
     let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
@@ -729,49 +492,7 @@ pub async fn amp_management_proxy(
         }
     }
 
-    let mut body_bytes = resp.bytes().await.unwrap_or_default();
-
-    // Cache AmpCode quota data from intercepted responses (before any rewriting).
-    if status.is_success()
-        && let Some(q) = query.as_deref()
-    {
-        if q.contains("getUserFreeTierStatus")
-            && let Ok(json) = serde_json::from_slice::<Value>(&body_bytes)
-            && let Some(result) = json.get("result")
-        {
-            let can_use = result
-                .get("canUseAmpFree")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let daily_grant = result
-                .get("isDailyGrantEnabled")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            state.amp_quota.update_free_tier(can_use, daily_grant);
-        } else if q.contains("userDisplayBalanceInfo")
-            && let Ok(json) = serde_json::from_slice::<Value>(&body_bytes)
-            && let Some(display_text) = json.pointer("/result/displayText").cloned()
-        {
-            state.amp_quota.update_balance(display_text);
-        }
-    }
-
-    // Hide free-tier ads: rewrite getUserFreeTierStatus response when enabled.
-    if config.amp.hide_free_tier
-        && query
-            .as_deref()
-            .is_some_and(|q| q.contains("getUserFreeTierStatus"))
-        && let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(&body_bytes)
-    {
-        if let Some(result) = json.get_mut("result").and_then(|r| r.as_object_mut()) {
-            result.insert("canUseAmpFree".into(), serde_json::Value::Bool(false));
-            result.insert("isDailyGrantEnabled".into(), serde_json::Value::Bool(false));
-        }
-        if let Ok(rewritten) = serde_json::to_vec(&json) {
-            body_bytes = Bytes::from(rewritten);
-            resp_headers.remove(axum::http::header::CONTENT_LENGTH);
-        }
-    }
+    let body_bytes = resp.bytes().await.unwrap_or_default();
 
     if debug {
         let resp_body = std::str::from_utf8(&body_bytes)
@@ -787,28 +508,8 @@ pub async fn amp_management_proxy(
     (status, resp_headers, body_bytes).into_response()
 }
 
-/// Set `Authorization` and `X-Api-Key` headers on an outgoing request.
-fn inject_amp_auth(headers: &mut rquest::header::HeaderMap, token: &str) {
-    if let (Ok(n_auth), Ok(v_auth), Ok(n_apikey), Ok(v_apikey)) = (
-        rquest::header::HeaderName::from_bytes(b"authorization"),
-        rquest::header::HeaderValue::from_str(&format!("Bearer {token}")),
-        rquest::header::HeaderName::from_bytes(b"x-api-key"),
-        rquest::header::HeaderValue::from_str(token),
-    ) {
-        headers.insert(n_auth, v_auth);
-        headers.insert(n_apikey, v_apikey);
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn test_hop_by_hop_list() {
-        assert!(super::HOP_BY_HOP.contains(&"connection"));
-        assert!(super::HOP_BY_HOP.contains(&"transfer-encoding"));
-        assert!(!super::HOP_BY_HOP.contains(&"authorization"));
-    }
-
     #[test]
     fn test_urls_are_https() {
         assert!(super::CODEX_RESPONSES_URL.starts_with("https://"));

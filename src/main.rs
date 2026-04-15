@@ -124,7 +124,7 @@ enum Commands {
         #[command(flatten)]
         store: StoreArgs,
     },
-    /// Amp-related utilities.
+    /// Amp proxy injection.
     Amp {
         #[command(subcommand)]
         action: amp::AmpAction,
@@ -182,7 +182,7 @@ async fn main() {
     };
 
     // Skip tokio runtime drop to avoid hanging on spawn_blocking tasks that
-    // can't exit (config watcher, amp threads watcher). All real work is done
+    // can't exit (config watcher, thread index watcher). All real work is done
     // by this point; nothing is lost by exiting immediately.
     match result {
         Ok(()) => std::process::exit(0),
