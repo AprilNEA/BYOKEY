@@ -43,13 +43,13 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       <img src="https://assets.byokey.io/icons/providers/anthropic.svg" width="36" alt="Anthropic"><br>
       <b>Claude</b><br>
       <sup>PKCE</sup><br>
-      <sub>opus-4-6 · sonnet-4-5 · haiku-4-5</sub>
+      <sub>opus-4-6 · opus-4-5 · sonnet-4-5 · haiku-4-5</sub>
     </td>
     <td align="center" width="120">
       <img src="https://assets.byokey.io/icons/providers/openai.svg" width="36" alt="OpenAI"><br>
       <b>Codex</b><br>
       <sup>PKCE</sup><br>
-      <sub>o4-mini · o3</sub>
+      <sub>gpt-5.x · gpt-5.x-codex · o3 · o4-mini</sub>
     </td>
     <td align="center" width="120">
       <img src="https://assets.byokey.io/icons/providers/githubcopilot.svg" width="36" alt="GitHub Copilot"><br>
@@ -70,10 +70,34 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       <sub>kiro-default</sub>
     </td>
   </tr>
+  <tr>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/googlegemini.svg" width="36" alt="Antigravity"><br>
+      <b>Antigravity</b><br>
+      <sup>PKCE</sup><br>
+      <sub>gemini-2.5-pro · gemini-2.5-flash · claude-sonnet-4-5</sub>
+    </td>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/alibabacloud.svg" width="36" alt="Qwen"><br>
+      <b>Qwen</b><br>
+      <sup>设备码</sup><br>
+      <sub>qwen3-coder-plus · qwen3-max · qwen-plus</sub>
+    </td>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/moonshot.svg" width="36" alt="Kimi"><br>
+      <b>Kimi</b><br>
+      <sup>设备码</sup><br>
+      <sub>kimi-k2</sub>
+    </td>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/iflow.svg" width="36" alt="iFlow"><br>
+      <b>iFlow</b><br>
+      <sup>授权码</sup><br>
+      <sub>glm-4.5 · glm-z1-flash · kimi-k2</sub>
+    </td>
+    <td></td>
+  </tr>
 </table>
-
-> **即将到来** — 认证已实现，执行器开发中：<br>
-> Antigravity (Google) · Qwen (Alibaba) · Kimi (Moonshot) · iFlow (Z.ai)
 
 ## 安装
 
@@ -93,7 +117,7 @@ cargo install byokey
 
 ```sh
 git clone https://github.com/AprilNEA/BYOKEY
-cd BYOK
+cd BYOKEY
 cargo install --path .
 ```
 
@@ -117,12 +141,17 @@ export OPENAI_API_KEY=any          # byokey 忽略 key 的值
 
 **对于 Amp：**
 
+`byokey serve` 会额外监听一个端口 `18018`（可通过 `amp.port` 配置），
+专用于 Amp 兼容路由。将 Amp CLI 指向该端口：
+
 ```jsonc
 // ~/.config/amp/settings.json
 {
-  "amp.url": "http://localhost:8018/amp"
+  "amp.url": "http://localhost:18018"
 }
 ```
+
+或者让 byokey 自动写入：`byokey amp inject`。
 
 ## CLI 参考
 
@@ -134,7 +163,8 @@ Commands:
   start         在后台启动代理服务器
   stop          停止后台代理服务器
   restart       重启后台代理服务器
-  autostart     管理开机自启
+  reload        热重载运行中服务器的配置，无需重启
+  service       管理系统级服务注册（launchd / systemd / Windows SCM）
   login         向 Provider 认证
   logout        删除指定 Provider 的已存储凭据
   status        显示所有 Provider 的认证状态
@@ -158,9 +188,19 @@ Options:
   -p, --port <PORT>     监听端口     [默认: 8018]
       --host <HOST>     监听地址     [默认: 127.0.0.1]
       --db <PATH>       SQLite 数据库路径 [默认: ~/.byokey/tokens.db]
+      --log-file <PATH> 日志文件路径，按天轮转（默认输出到 stdout）
 ```
 
-**`byokey start`** — 与 `serve` 选项相同，额外支持 `--log-file`（默认: `~/.byokey/server.log`）。
+`serve` 还会在 `amp.port`（默认 `18018`）上启动第二个 HTTP 监听器用于 Amp
+兼容路由，并在 `~/.byokey/control.sock` 绑定一个 Unix 控制套接字，供
+`stop` / `reload` 使用。若进程通过 `systemfd`、`systemd` 或 `launchd`
+以预打开套接字的方式启动，将直接复用继承的 fd 而不重新绑定。
+
+**`byokey start`** — 与 `serve` 选项相同。在后台运行服务器，
+日志默认写入 `~/.byokey/server.log`。
+
+**`byokey reload`** — 通过控制套接字触发运行中服务器的配置热重载。
+无需进程重启，不中断现有连接。
 
 **`byokey login <PROVIDER>`**
 
@@ -170,7 +210,8 @@ Options:
 
 ```
 Options:
-      --db <PATH>   SQLite 数据库路径 [默认: ~/.byokey/tokens.db]
+      --account <NAME>  账户标识（默认：`default`）
+      --db <PATH>       SQLite 数据库路径 [默认: ~/.byokey/tokens.db]
 ```
 
 **`byokey logout <PROVIDER>`** — 删除指定 Provider 的已存储 Token。
@@ -179,11 +220,14 @@ Options:
 
 **`byokey accounts <PROVIDER>`** — 列出某个 Provider 的所有账户。
 
-**`byokey switch <PROVIDER>`** — 切换某个 Provider 的活动账户。
+**`byokey switch <PROVIDER> <ACCOUNT>`** — 切换某个 Provider 的活动账户。
 
-**`byokey autostart <enable|disable|status>`** — 管理开机自启服务注册。
+**`byokey service <install|uninstall|start|stop|status>`** — 将 byokey
+注册为系统托管服务。macOS 上使用 `launchd`、Linux 上使用 `systemd`、
+Windows 上使用 SCM。
 
-**`byokey amp <inject|disable-ads>`** — Amp 工具：注入代理 URL 到 Amp 配置，或隐藏 Amp 广告。
+**`byokey amp inject`** — 将 `amp.url`（以及 byokey 配置中 `amp.settings`
+的额外字段）写入 `~/.config/amp/settings.json`。
 
 </details>
 

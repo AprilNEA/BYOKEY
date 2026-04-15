@@ -43,13 +43,13 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       <img src="https://assets.byokey.io/icons/providers/anthropic.svg" width="36" alt="Anthropic"><br>
       <b>Claude</b><br>
       <sup>PKCE</sup><br>
-      <sub>opus-4-6 · sonnet-4-5 · haiku-4-5</sub>
+      <sub>opus-4-6 · opus-4-5 · sonnet-4-5 · haiku-4-5</sub>
     </td>
     <td align="center" width="120">
       <img src="https://assets.byokey.io/icons/providers/openai.svg" width="36" alt="OpenAI"><br>
       <b>Codex</b><br>
       <sup>PKCE</sup><br>
-      <sub>o4-mini · o3</sub>
+      <sub>gpt-5.x · gpt-5.x-codex · o3 · o4-mini</sub>
     </td>
     <td align="center" width="120">
       <img src="https://assets.byokey.io/icons/providers/githubcopilot.svg" width="36" alt="GitHub Copilot"><br>
@@ -70,10 +70,34 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       <sub>kiro-default</sub>
     </td>
   </tr>
+  <tr>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/googlegemini.svg" width="36" alt="Antigravity"><br>
+      <b>Antigravity</b><br>
+      <sup>PKCE</sup><br>
+      <sub>gemini-2.5-pro · gemini-2.5-flash · claude-sonnet-4-5</sub>
+    </td>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/alibabacloud.svg" width="36" alt="Qwen"><br>
+      <b>Qwen</b><br>
+      <sup>Device code</sup><br>
+      <sub>qwen3-coder-plus · qwen3-max · qwen-plus</sub>
+    </td>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/moonshot.svg" width="36" alt="Kimi"><br>
+      <b>Kimi</b><br>
+      <sup>Device code</sup><br>
+      <sub>kimi-k2</sub>
+    </td>
+    <td align="center" width="120">
+      <img src="https://assets.byokey.io/icons/providers/iflow.svg" width="36" alt="iFlow"><br>
+      <b>iFlow</b><br>
+      <sup>Auth code</sup><br>
+      <sub>glm-4.5 · glm-z1-flash · kimi-k2</sub>
+    </td>
+    <td></td>
+  </tr>
 </table>
-
-> **Coming soon** — auth implemented, executor in progress:<br>
-> Antigravity (Google) · Qwen (Alibaba) · Kimi (Moonshot) · iFlow (Z.ai)
 
 ## Installation
 
@@ -93,7 +117,7 @@ cargo install byokey
 
 ```sh
 git clone https://github.com/AprilNEA/BYOKEY
-cd BYOK
+cd BYOKEY
 cargo install --path .
 ```
 
@@ -117,12 +141,17 @@ export OPENAI_API_KEY=any          # byokey ignores the key value
 
 **For Amp:**
 
+`byokey serve` spins up a second listener on port `18018` (configurable via
+`amp.port`) dedicated to the Amp-compatible router. Point the Amp CLI at it:
+
 ```jsonc
 // ~/.config/amp/settings.json
 {
-  "amp.url": "http://localhost:8018/amp"
+  "amp.url": "http://localhost:18018"
 }
 ```
+
+Or let byokey write it for you: `byokey amp inject`.
 
 ## CLI Reference
 
@@ -134,7 +163,8 @@ Commands:
   start         Start the proxy server in the background
   stop          Stop the background proxy server
   restart       Restart the background proxy server
-  autostart     Manage auto-start on system boot
+  reload        Reload the running server's configuration without restarting
+  service       Manage OS-level service registration (launchd / systemd / Windows SCM)
   login         Authenticate with a provider
   logout        Remove stored credentials for a provider
   status        Show authentication status for all providers
@@ -158,9 +188,20 @@ Options:
   -p, --port <PORT>     Listen port     [default: 8018]
       --host <HOST>     Listen address  [default: 127.0.0.1]
       --db <PATH>       SQLite DB path  [default: ~/.byokey/tokens.db]
+      --log-file <PATH> Log file with daily rotation (default: stdout)
 ```
 
-**`byokey start`** — Same options as `serve`, plus `--log-file` (default: `~/.byokey/server.log`).
+`serve` also opens a second HTTP listener on `amp.port` (default `18018`) for
+the Amp-compatible router, and binds a Unix control socket at
+`~/.byokey/control.sock` used by `stop` / `reload`. If the process is launched
+with a pre-opened socket via `systemfd`, `systemd`, or `launchd`, the inherited
+fd is adopted in place of a fresh bind.
+
+**`byokey start`** — Same options as `serve`. Runs the server in the background
+and writes logs to `~/.byokey/server.log` by default.
+
+**`byokey reload`** — Triggers a hot config reload on the running server via
+the control socket. No process restart, no dropped connections.
 
 **`byokey login <PROVIDER>`**
 
@@ -170,7 +211,8 @@ Supported names: `claude`, `codex`, `copilot`, `gemini`, `kiro`,
 
 ```
 Options:
-      --db <PATH>   SQLite DB path [default: ~/.byokey/tokens.db]
+      --account <NAME>  Account identifier (default: `default`)
+      --db <PATH>       SQLite DB path [default: ~/.byokey/tokens.db]
 ```
 
 **`byokey logout <PROVIDER>`** — Deletes the stored token for the given provider.
@@ -179,11 +221,14 @@ Options:
 
 **`byokey accounts <PROVIDER>`** — Lists all accounts for a provider.
 
-**`byokey switch <PROVIDER>`** — Switches the active account for a provider.
+**`byokey switch <PROVIDER> <ACCOUNT>`** — Switches the active account for a provider.
 
-**`byokey autostart <enable|disable|status>`** — Manages boot-time service registration.
+**`byokey service <install|uninstall|start|stop|status>`** — Registers byokey
+as an OS-managed service. Uses `launchd` on macOS, `systemd` on Linux, and
+Windows SCM on Windows.
 
-**`byokey amp <inject|disable-ads>`** — Amp utilities: inject proxy URL into Amp config, or patch Amp to hide ads.
+**`byokey amp inject`** — Writes `amp.url` (and any extras from
+`amp.settings` in your byokey config) into `~/.config/amp/settings.json`.
 
 </details>
 

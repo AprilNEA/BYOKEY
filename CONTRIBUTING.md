@@ -34,13 +34,13 @@ cargo run -- serve                        # Start proxy (default :8018)
 Client request
     │
     ▼
-byok-proxy  (axum HTTP server)
+byokey-proxy  (axum HTTP server)
     │  resolve model → provider
     ▼
-byok-provider  (executor per provider)
+byokey-provider  (executor per provider)
     │  get OAuth token (or api_key)
     ▼
-byok-auth  (AuthManager + OAuth flows)
+byokey-auth  (AuthManager + OAuth flows)
     │
     ▼
 Upstream API  (Anthropic / OpenAI / Google / …)
@@ -57,25 +57,58 @@ Strict layered DAG — no reverse cross-layer dependencies:
 |-------|:-----:|-------------|
 | `byokey-types` | 0 | Core types, traits, errors (zero intra-workspace deps) |
 | `byokey-config` | 1 | YAML configuration (figment) + file watching |
-| `byokey-store` | 1 | SQLite token persistence (sqlx) |
+| `byokey-store` | 1 | SQLite token/usage persistence (sea-orm v2 + sea-orm-migration) |
 | `byokey-auth` | 2 | OAuth flows (does not depend on translate / provider) |
 | `byokey-translate` | 2 | Format conversion — pure functions (does not depend on auth) |
-| `byokey-provider` | 3 | Provider Executor + model registry |
+| `byokey-provider` | 3 | Provider Executor + model registry + `VersionStore` |
 | `byokey-proxy` | 4 | axum HTTP server, routing, SSE passthrough |
+| `byokey-daemon` | — | Process/service management, PID file, Unix control socket (separate from the layered DAG — used by the CLI binary only) |
 
 CLI entry point: `src/main.rs` (package = `byokey`, bin = `byokey`).
 
-### API Endpoints (default `:8018`)
+### API Endpoints
+
+`byokey serve` binds two HTTP listeners:
+
+**Main listener (default `:8018`)**
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/v1/chat/completions` | OpenAI-compatible chat (streaming supported) |
+| `POST` | `/v1/messages` | Anthropic-compatible messages |
+| `POST` | `/v1/responses` | Codex Responses API passthrough |
 | `GET` | `/v1/models` | List enabled models |
-| `GET` | `/amp/v1/login` | Amp login redirect |
-| `ANY` | `/amp/v0/management/{*path}` | Amp management API proxy |
-| `POST` | `/amp/v1/chat/completions` | Amp-compatible chat |
+| `ANY` | `/v0/management/*` | Accounts / usage / ratelimits management API |
+| `GET` | `/openapi.json` | OpenAPI 3.1 spec for the management API |
+
+**Amp listener (default `:18018`, set via `amp.port`)** — shaped to match what
+the Amp CLI sends on the wire; `new URL(path, ampUrl)` in Amp's JS drops any
+base path, so there is no `/amp` prefix.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/auth/cli-login` | Amp CLI login redirect |
+| `GET` | `/v1/login` | Amp web login redirect |
+| `ANY` | `/v0/management/{*path}` | Amp management API proxy |
+| `POST` | `/api/provider/anthropic/v1/messages` | Anthropic-compatible chat via byokey |
+| `POST` | `/api/provider/openai/v1/chat/completions` | OpenAI-compatible chat via byokey |
+| `POST` | `/api/provider/openai/v1/responses` | Codex Responses API via byokey |
+| `POST` | `/api/provider/google/v1beta/models/{action}` | Gemini native passthrough |
+| `ANY` | `/api/{*path}` | Catch-all: forward remaining `/api/*` to ampcode.com |
 
 The `model` field in the request body determines which provider is used.
+
+### Daemon and control socket
+
+`serve` also binds a Unix control socket at `~/.byokey/control.sock`. The
+`stop`, `restart`, and `reload` CLI subcommands talk to the running server
+over this socket via tarpc. `start` forks a detached child and monitors its
+PID file. At startup, `serve` adopts an inherited listener fd if one is passed
+in by `systemfd` / `systemd` / `launchd` socket activation; otherwise it binds
+`host:port` fresh. An in-process background loop refreshes OAuth tokens every
+60s with a 5min lead, and a `VersionStore` fetches runtime User-Agent /
+fingerprint strings from `https://assets.byokey.io/versions/{provider}.json`
+at startup (falling back to compile-time defaults on network failure).
 
 ## Commit Convention
 
