@@ -42,8 +42,16 @@ amp:
     #[test]
     fn test_from_yaml_amp_defaults_when_omitted() {
         let c = Config::from_yaml("port: 1234").unwrap();
+        assert!(c.amp.port.is_none());
         assert!(c.amp.upstream_key.is_none());
         assert!(c.amp.settings.is_empty());
+    }
+
+    #[test]
+    fn test_from_yaml_amp_port() {
+        let yaml = "amp:\n  port: 18018";
+        let c = Config::from_yaml(yaml).unwrap();
+        assert_eq!(c.amp.port, Some(18018));
     }
 
     #[test]

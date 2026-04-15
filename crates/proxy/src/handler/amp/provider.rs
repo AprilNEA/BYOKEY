@@ -11,7 +11,7 @@
 //! | `POST /api/provider/google/v1beta/models/{action}` | [`gemini_native_passthrough`] |
 //!
 //! Management routes (`/api/auth`, `/api/threads`, etc.) are forwarded to
-//! `ampcode.com` verbatim via [`amp_management_proxy`].
+//! `ampcode.com` verbatim via [`ampcode_proxy`].
 
 use axum::{
     extract::{Path, Query, State},

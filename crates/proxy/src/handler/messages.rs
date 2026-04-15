@@ -2,11 +2,8 @@
 //!
 //! Accepts requests in native Anthropic format and forwards them to
 //! either `api.anthropic.com/v1/messages` (default) or
-//! `api.githubcopilot.com/v1/messages` (Copilot backend).
-//!
-//! Copilot routing is triggered by:
-//! 1. `POST /copilot/v1/messages` — dedicated route, always goes through Copilot.
-//! 2. `claude.backend: copilot` config — global override on `/v1/messages`.
+//! `api.githubcopilot.com/v1/messages` when `claude.backend: copilot`
+//! is configured.
 //!
 //! The response (streaming SSE or complete JSON) is returned as-is.
 
@@ -25,6 +22,8 @@ use secrecy::SecretString;
 use serde_json::Value;
 use std::sync::Arc;
 
+use crate::util::stream::{AnthropicParser, response_to_stream, tap_usage_stream};
+use crate::util::{extract_usage, sse_response};
 use crate::{AppState, UsageRecorder, error::ApiError};
 
 // Copilot identification headers (matching VS Code Copilot Chat extension).
@@ -511,9 +510,6 @@ async fn copilot_messages(
     Err(last_err
         .unwrap_or_else(|| ApiError(ByokError::Auth("no copilot accounts available".into()))))
 }
-
-use crate::util::stream::{AnthropicParser, response_to_stream, tap_usage_stream};
-use crate::util::{extract_usage, sse_response};
 
 /// Forward an upstream response back to the client, recording token usage.
 async fn forward_response(
