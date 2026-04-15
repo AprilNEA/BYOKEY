@@ -22,12 +22,15 @@ use std::sync::Arc;
 /// Default Qwen API base URL (`/v1` suffix; aigw appends `/chat/completions`).
 const DEFAULT_BASE_URL: &str = "https://portal.qwen.ai/v1";
 
+const DEFAULT_USER_AGENT: &str = "QwenCode/0.10.3 (darwin; arm64)";
+
 /// Executor for the Alibaba Qwen API.
 pub struct QwenExecutor {
     ph: ProviderHttp,
     api_key: Option<String>,
     base_url: String,
     auth: Arc<AuthManager>,
+    user_agent: String,
 }
 
 #[bon::bon]
@@ -41,6 +44,7 @@ impl QwenExecutor {
         api_key: Option<String>,
         base_url: Option<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
+        user_agent: Option<String>,
     ) -> Self {
         let mut ph = ProviderHttp::new(http);
         if let Some(store) = ratelimit {
@@ -56,6 +60,7 @@ impl QwenExecutor {
             api_key,
             base_url,
             auth,
+            user_agent: user_agent.unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()),
         }
     }
 
@@ -72,18 +77,12 @@ impl QwenExecutor {
     /// Builds an [`OpenAICompatProvider`] for a single request.
     fn build_provider(&self, token: String) -> Result<OpenAICompatProvider> {
         let mut default_headers = BTreeMap::new();
-        default_headers.insert(
-            "user-agent".to_owned(),
-            "QwenCode/0.10.3 (darwin; arm64)".to_owned(),
-        );
-        default_headers.insert(
-            "x-dashscope-useragent".to_owned(),
-            "QwenCode/0.10.3 (darwin; arm64)".to_owned(),
-        );
+        default_headers.insert("user-agent".to_owned(), self.user_agent.clone());
+        default_headers.insert("x-dashscope-useragent".to_owned(), self.user_agent.clone());
         default_headers.insert("x-dashscope-authtype".to_owned(), "qwen-oauth".to_owned());
         default_headers.insert(
             "x-stainless-runtime-version".to_owned(),
-            "v22.17.0".to_owned(),
+            "v24.14.1".to_owned(),
         );
         default_headers.insert("x-stainless-lang".to_owned(), "js".to_owned());
         default_headers.insert("x-stainless-arch".to_owned(), "arm64".to_owned());

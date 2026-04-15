@@ -18,6 +18,7 @@ pub mod registry;
 pub mod retry;
 pub mod routing;
 pub mod stream_bridge;
+pub mod versions;
 
 pub use device_profile::DeviceProfileCache;
 pub use executor::{
@@ -32,6 +33,7 @@ pub use registry::{
     thinking_support,
 };
 pub use routing::{CredentialRouter, RoutingStrategy};
+pub use versions::VersionStore;
 
 /// Claude fingerprint constants shared with the proxy crate's `/v1/messages` handler.
 pub mod claude_headers {

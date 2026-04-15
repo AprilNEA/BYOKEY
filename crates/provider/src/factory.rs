@@ -21,6 +21,7 @@ use crate::executor::{
     AntigravityExecutor, ClaudeExecutor, CodexExecutor, CodexWsExecutor, CopilotExecutor,
     GeminiExecutor, IFlowExecutor, KimiExecutor, KiroExecutor, QwenExecutor,
 };
+use crate::versions::VersionStore;
 use crate::{registry, retry};
 
 /// Wraps a primary executor with a fallback: if the primary fails, the fallback is tried.
@@ -56,13 +57,17 @@ pub fn make_executor(
     auth: Arc<AuthManager>,
     http: Client,
     ratelimit: Option<Arc<RateLimitStore>>,
+    versions: &VersionStore,
 ) -> Option<Box<dyn ProviderExecutor>> {
-    make_executor_with_cache(provider, api_key, base_url, auth, http, ratelimit, None)
+    make_executor_with_cache(
+        provider, api_key, base_url, auth, http, ratelimit, None, versions,
+    )
 }
 
 /// Like [`make_executor`] but accepts an optional [`DeviceProfileCache`]
 /// that is forwarded to providers supporting fingerprint stabilisation
 /// (currently only Claude).
+#[allow(clippy::too_many_arguments)]
 pub fn make_executor_with_cache(
     provider: &ProviderId,
     api_key: Option<String>,
@@ -71,7 +76,9 @@ pub fn make_executor_with_cache(
     http: Client,
     ratelimit: Option<Arc<RateLimitStore>>,
     profile_cache: Option<Arc<DeviceProfileCache>>,
+    versions: &VersionStore,
 ) -> Option<Box<dyn ProviderExecutor>> {
+    let ua = versions.get(provider).and_then(|v| v.user_agent.clone());
     match provider {
         ProviderId::Claude => Some(Box::new(
             ClaudeExecutor::builder()
@@ -90,6 +97,7 @@ pub fn make_executor_with_cache(
                 .maybe_api_key(api_key)
                 .maybe_base_url(base_url)
                 .maybe_ratelimit(ratelimit)
+                .maybe_user_agent(ua)
                 .build(),
         )),
         ProviderId::Gemini => Some(Box::new(
@@ -110,15 +118,21 @@ pub fn make_executor_with_cache(
                 .maybe_ratelimit(ratelimit)
                 .build(),
         )),
-        ProviderId::Copilot => Some(Box::new(
-            CopilotExecutor::builder()
-                .http(http)
-                .auth(auth)
-                .maybe_api_key(api_key)
-                .maybe_base_url(base_url)
-                .maybe_ratelimit(ratelimit)
-                .build(),
-        )),
+        ProviderId::Copilot => {
+            let cv = versions.get(provider);
+            Some(Box::new(
+                CopilotExecutor::builder()
+                    .http(http)
+                    .auth(auth)
+                    .maybe_api_key(api_key)
+                    .maybe_base_url(base_url)
+                    .maybe_ratelimit(ratelimit)
+                    .maybe_user_agent(ua)
+                    .maybe_editor_version(cv.and_then(|v| v.editor_version.clone()))
+                    .maybe_plugin_version(cv.and_then(|v| v.plugin_version.clone()))
+                    .build(),
+            ))
+        }
         ProviderId::Antigravity => Some(Box::new(
             AntigravityExecutor::builder()
                 .http(http)
@@ -126,6 +140,7 @@ pub fn make_executor_with_cache(
                 .maybe_api_key(api_key)
                 .maybe_base_url(base_url)
                 .maybe_ratelimit(ratelimit)
+                .maybe_user_agent(ua)
                 .build(),
         )),
         ProviderId::Qwen => Some(Box::new(
@@ -135,6 +150,7 @@ pub fn make_executor_with_cache(
                 .maybe_api_key(api_key)
                 .maybe_base_url(base_url)
                 .maybe_ratelimit(ratelimit)
+                .maybe_user_agent(ua)
                 .build(),
         )),
         ProviderId::IFlow => Some(Box::new(
@@ -144,6 +160,7 @@ pub fn make_executor_with_cache(
                 .maybe_api_key(api_key)
                 .maybe_base_url(base_url)
                 .maybe_ratelimit(ratelimit)
+                .maybe_user_agent(ua)
                 .build(),
         )),
         ProviderId::Kimi => Some(Box::new(
@@ -153,6 +170,7 @@ pub fn make_executor_with_cache(
                 .maybe_api_key(api_key)
                 .maybe_base_url(base_url)
                 .maybe_ratelimit(ratelimit)
+                .maybe_user_agent(ua)
                 .build(),
         )),
         ProviderId::Amp => None, // Amp is not a model provider
@@ -169,6 +187,7 @@ pub fn make_executor_with_cache(
 ///
 /// Returns [`ByokError::UnsupportedModel`] if the model string is not recognised
 /// or if the resolved provider does not have an executor implemented yet.
+#[allow(clippy::too_many_arguments)]
 pub fn make_executor_for_model<S: BuildHasher>(
     model: &str,
     config_fn: impl Fn(&ProviderId) -> Option<ProviderConfig>,
@@ -177,6 +196,7 @@ pub fn make_executor_for_model<S: BuildHasher>(
     auth: Arc<AuthManager>,
     http: Client,
     ratelimit: Option<Arc<RateLimitStore>>,
+    versions: &VersionStore,
 ) -> Result<Box<dyn ProviderExecutor>, ByokError> {
     let provider = if let Some(p) = provider_hint {
         p.clone()
@@ -203,6 +223,7 @@ pub fn make_executor_for_model<S: BuildHasher>(
             auth,
             http,
             ratelimit,
+            versions,
         )
         .ok_or_else(|| ByokError::UnsupportedModel(model.to_string()));
     }
@@ -222,6 +243,7 @@ pub fn make_executor_for_model<S: BuildHasher>(
             Arc::clone(&auth),
             http.clone(),
             None,
+            versions,
         )
         .map(|e| e.supported_models())
         .unwrap_or_default();
@@ -233,6 +255,7 @@ pub fn make_executor_for_model<S: BuildHasher>(
             http.clone(),
             models,
             ratelimit.clone(),
+            versions.clone(),
         ));
 
         // Wrap with fallback if configured.
@@ -245,6 +268,7 @@ pub fn make_executor_for_model<S: BuildHasher>(
                 auth,
                 http,
                 ratelimit,
+                versions,
             ) {
                 return Ok(Box::new(FallbackExecutor { primary, fallback }));
             }
@@ -265,6 +289,7 @@ pub fn make_executor_for_model<S: BuildHasher>(
                 Arc::clone(&auth),
                 http.clone(),
                 ratelimit.clone(),
+                versions,
             )
             .ok_or_else(|| ByokError::UnsupportedModel(model.to_string()))?
         };
@@ -279,6 +304,7 @@ pub fn make_executor_for_model<S: BuildHasher>(
             auth,
             http,
             ratelimit,
+            versions,
         ) {
             return Ok(Box::new(FallbackExecutor { primary, fallback }));
         }
@@ -307,10 +333,22 @@ mod tests {
         HashSet::new()
     }
 
+    fn ev() -> VersionStore {
+        VersionStore::empty()
+    }
+
     #[test]
     fn test_make_executor_claude() {
         let auth = make_auth();
-        let ex = make_executor(&ProviderId::Claude, None, None, auth, make_http(), None);
+        let ex = make_executor(
+            &ProviderId::Claude,
+            None,
+            None,
+            auth,
+            make_http(),
+            None,
+            &ev(),
+        );
         assert!(ex.is_some());
         assert!(
             ex.unwrap()
@@ -330,6 +368,7 @@ mod tests {
             auth,
             make_http(),
             None,
+            &ev(),
         );
         assert!(ex.is_some());
     }
@@ -337,14 +376,30 @@ mod tests {
     #[test]
     fn test_make_executor_gemini() {
         let auth = make_auth();
-        let ex = make_executor(&ProviderId::Gemini, None, None, auth, make_http(), None);
+        let ex = make_executor(
+            &ProviderId::Gemini,
+            None,
+            None,
+            auth,
+            make_http(),
+            None,
+            &ev(),
+        );
         assert!(ex.is_some());
     }
 
     #[test]
     fn test_make_executor_copilot() {
         let auth = make_auth();
-        let ex = make_executor(&ProviderId::Copilot, None, None, auth, make_http(), None);
+        let ex = make_executor(
+            &ProviderId::Copilot,
+            None,
+            None,
+            auth,
+            make_http(),
+            None,
+            &ev(),
+        );
         assert!(ex.is_some());
     }
 
@@ -358,6 +413,7 @@ mod tests {
             auth,
             make_http(),
             None,
+            &ev(),
         );
         assert!(ex.is_some());
         assert!(
@@ -371,7 +427,15 @@ mod tests {
     #[test]
     fn test_make_executor_kimi() {
         let auth = make_auth();
-        let ex = make_executor(&ProviderId::Kimi, None, None, auth, make_http(), None);
+        let ex = make_executor(
+            &ProviderId::Kimi,
+            None,
+            None,
+            auth,
+            make_http(),
+            None,
+            &ev(),
+        );
         assert!(ex.is_some());
         assert!(
             ex.unwrap()
@@ -392,6 +456,7 @@ mod tests {
             auth,
             make_http(),
             None,
+            &ev(),
         );
         assert!(ex.is_ok());
     }
@@ -407,6 +472,7 @@ mod tests {
             auth,
             make_http(),
             None,
+            &ev(),
         );
         assert!(matches!(result, Err(ByokError::UnsupportedModel(_))));
     }
@@ -428,6 +494,7 @@ mod tests {
             auth,
             make_http(),
             None,
+            &ev(),
         );
         assert!(ex.is_ok());
     }
@@ -450,6 +517,7 @@ mod tests {
             auth,
             make_http(),
             None,
+            &ev(),
         );
         assert!(ex.is_ok());
     }
@@ -472,6 +540,7 @@ mod tests {
             auth,
             make_http(),
             None,
+            &ev(),
         );
         assert!(ex.is_ok());
         // FallbackExecutor delegates supported_models to primary (Gemini)
@@ -509,6 +578,7 @@ mod tests {
             auth,
             make_http(),
             None,
+            &ev(),
         );
         assert!(ex.is_ok());
         // RetryExecutor delegates supported_models from the provider
@@ -534,6 +604,7 @@ mod tests {
             auth,
             make_http(),
             None,
+            &ev(),
         );
         assert!(ex.is_ok());
     }

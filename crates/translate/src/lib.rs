@@ -29,5 +29,5 @@ pub use openai_to_gemini_native::{OpenAIResponseToGemini, OpenAISseChunk};
 pub use thinking::ThinkingExtractor;
 pub use thinking::{
     DEFAULT_AUTO_BUDGET, ModelSuffix, ThinkingConfig, ThinkingLevel, apply_thinking,
-    parse_model_suffix,
+    has_valid_claude_signature, parse_model_suffix, strip_invalid_thinking_signatures,
 };

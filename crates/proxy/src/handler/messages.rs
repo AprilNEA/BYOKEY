@@ -16,10 +16,12 @@ use axum::{
 use byokey_provider::CopilotExecutor;
 use byokey_provider::claude_headers::{ANTHROPIC_BETA, ANTHROPIC_VERSION};
 use byokey_provider::cloak::inject_billing_header;
-use byokey_types::{ByokError, ProviderId, ThinkingCapability};
-use futures_util::TryStreamExt as _;
+use byokey_types::{ByokError, ProviderId, ThinkingCapability, traits::ByteStream};
+use bytes::Bytes;
+use futures_util::{StreamExt as _, TryStreamExt as _};
 use secrecy::SecretString;
 use serde_json::Value;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::util::stream::{AnthropicParser, response_to_stream, tap_usage_stream};
@@ -241,6 +243,7 @@ pub async fn anthropic_messages(
     let mut body = body.0;
     sanitize_system(&mut body);
     sanitize_thinking(&mut body);
+    byokey_translate::strip_invalid_thinking_signatures(&mut body);
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let beta = build_beta_header(&mut body, &headers);
 
@@ -264,7 +267,7 @@ pub async fn anthropic_messages(
     // Resolve stable device fingerprint from the profile cache.
     let profile = state.device_profiles.resolve("global");
 
-    // OAuth tokens require the billing header to access Sonnet/Opus models.
+    // OAuth tokens require the billing header and tool name remapping.
     if is_oauth {
         let account_uuid = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, b"global").to_string();
         inject_billing_header(
@@ -273,6 +276,7 @@ pub async fn anthropic_messages(
             Some(&account_uuid),
             Some(&profile.session_id),
         );
+        byokey_provider::cloak::remap_tool_names_request(&mut body);
     }
 
     // Resolve auth credential + mode.
@@ -343,7 +347,7 @@ pub async fn anthropic_messages(
         .await
         .map_err(|e| ApiError(ByokError::from(e)))?;
 
-    forward_response(resp, stream, &state.usage, &model_name, "claude").await
+    forward_response(resp, stream, &state.usage, &model_name, "claude", is_oauth).await
 }
 
 /// Build a Copilot Messages API request with standard headers.
@@ -469,7 +473,8 @@ async fn copilot_messages(
 
         match resp {
             Ok(r) if r.status().is_success() => {
-                return forward_response(r, stream, &state.usage, &model_name, "copilot").await;
+                return forward_response(r, stream, &state.usage, &model_name, "copilot", false)
+                    .await;
             }
             Ok(r) => {
                 let status = r.status().as_u16();
@@ -518,6 +523,7 @@ async fn forward_response(
     usage: &Arc<UsageRecorder>,
     model: &str,
     provider: &str,
+    reverse_remap_tools: bool,
 ) -> Result<Response, ApiError> {
     let status = resp.status();
     if !status.is_success() {
@@ -538,8 +544,29 @@ async fn forward_response(
     let upstream_status = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK);
 
     if stream {
+        let raw = response_to_stream(resp);
+        let remapped: ByteStream = if reverse_remap_tools {
+            Box::pin(raw.map(move |chunk| {
+                let bytes = chunk?;
+                let text = String::from_utf8_lossy(&bytes);
+                let mut output = String::new();
+                for line in text.split_inclusive('\n') {
+                    if let Some(data) = line.trim().strip_prefix("data: ")
+                        && let Ok(mut ev) = serde_json::from_str::<Value>(data)
+                    {
+                        byokey_provider::cloak::reverse_remap_tool_name_sse(&mut ev);
+                        let _ = writeln!(output, "data: {ev}");
+                        continue;
+                    }
+                    output.push_str(line);
+                }
+                Ok(Bytes::from(output))
+            }))
+        } else {
+            raw
+        };
         let tapped = tap_usage_stream(
-            response_to_stream(resp),
+            remapped,
             usage.clone(),
             model.to_string(),
             provider.to_string(),
@@ -548,10 +575,13 @@ async fn forward_response(
         let mapped = tapped.map_err(|e| std::io::Error::other(e.to_string()));
         Ok(sse_response(upstream_status, mapped))
     } else {
-        let json: Value = resp
+        let mut json: Value = resp
             .json()
             .await
             .map_err(|e| ApiError(ByokError::from(e)))?;
+        if reverse_remap_tools {
+            byokey_provider::cloak::reverse_remap_tool_names_response(&mut json);
+        }
         let (input, output) = extract_usage(&json, "/usage/input_tokens", "/usage/output_tokens");
         usage.record_success(model, provider, input, output);
         Ok((upstream_status, axum::Json(json)).into_response())

@@ -60,6 +60,7 @@ pub async fn chat_completions(
         state.auth.clone(),
         state.http.clone(),
         Some(state.ratelimits.clone()),
+        &state.versions,
     )
     .map_err(ApiError::from)?;
 

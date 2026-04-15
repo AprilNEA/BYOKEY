@@ -27,12 +27,16 @@ const DEFAULT_PRIMARY_URL: &str = "https://daily-cloudcode-pa.googleapis.com";
 /// Fallback Antigravity API base URL.
 const FALLBACK_URL: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com";
 
+/// Default user-agent (compile-time fallback).
+const DEFAULT_USER_AGENT: &str = "antigravity/1.20.5 darwin/arm64";
+
 /// Executor for the Antigravity (Cloud Code) API.
 pub struct AntigravityExecutor {
     ph: ProviderHttp,
     api_key: Option<String>,
     primary_url: String,
     auth: Arc<AuthManager>,
+    user_agent: String,
 }
 
 #[bon::bon]
@@ -46,6 +50,7 @@ impl AntigravityExecutor {
         api_key: Option<String>,
         base_url: Option<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
+        user_agent: Option<String>,
     ) -> Self {
         let mut ph = ProviderHttp::new(http);
         if let Some(store) = ratelimit {
@@ -61,6 +66,7 @@ impl AntigravityExecutor {
             api_key,
             primary_url,
             auth,
+            user_agent: user_agent.unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()),
         }
     }
 
@@ -74,7 +80,10 @@ impl AntigravityExecutor {
         .await
     }
 
-    /// Sends the request to the primary URL, falling back to the sandbox on failure or 429.
+    /// Sends the request to the primary URL, falling back to the sandbox on 429 or error.
+    ///
+    /// Routes through [`ProviderHttp::send`] so that rate-limit headers and
+    /// retry-after body parsing (Google `RetryInfo` / `ErrorInfo`) are handled.
     async fn send_request(
         &self,
         path: &str,
@@ -91,20 +100,19 @@ impl AntigravityExecutor {
                 .client()
                 .post(url)
                 .header("authorization", &auth_value)
-                .header("user-agent", "antigravity/1.104.0 darwin/arm64")
+                .header("user-agent", self.user_agent.as_str())
                 .header("content-type", "application/json")
                 .header("accept", accept)
                 .json(body)
         };
 
-        let result = build_request(&self.primary_url).send().await;
-
-        match result {
-            Ok(r) if r.status().as_u16() != 429 => Ok(r),
-            _ => build_request(FALLBACK_URL)
-                .send()
-                .await
-                .map_err(ByokError::from),
+        match self.ph.send(build_request(&self.primary_url)).await {
+            Ok(r) => Ok(r),
+            Err(e) if e.is_retryable() => {
+                // Fallback to sandbox URL on transient errors.
+                self.ph.send(build_request(FALLBACK_URL)).await
+            }
+            Err(e) => Err(e),
         }
     }
 }
@@ -270,16 +278,6 @@ impl ProviderExecutor for AntigravityExecutor {
         };
 
         let resp = self.send_request(path, &token, &body, stream).await?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(ByokError::Upstream {
-                status: status.as_u16(),
-                body: text,
-                retry_after: None,
-            });
-        }
 
         if stream {
             let model_owned = model;

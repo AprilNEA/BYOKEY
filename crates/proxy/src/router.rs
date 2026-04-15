@@ -64,6 +64,10 @@ fn common_layers(router: Router) -> Router {
 pub fn make_router(state: Arc<AppState>) -> Router {
     let router = Router::new()
         .route("/v1/chat/completions", post(chat::chat_completions))
+        .route(
+            "/v1/responses",
+            post(amp::provider::codex_responses_passthrough),
+        )
         .route("/v1/messages", post(messages::anthropic_messages))
         .route("/v1/models", get(models::list_models))
         .nest("/v0/management", management::router())
@@ -103,7 +107,13 @@ mod tests {
         let config = Arc::new(arc_swap::ArcSwap::from_pointee(
             byokey_config::Config::default(),
         ));
-        AppState::with_thread_index(config, auth, None, Arc::new(crate::AmpThreadIndex::empty()))
+        AppState::with_thread_index(
+            config,
+            auth,
+            None,
+            byokey_provider::VersionStore::empty(),
+            Arc::new(crate::AmpThreadIndex::empty()),
+        )
     }
 
     async fn body_json(resp: axum::response::Response) -> Value {

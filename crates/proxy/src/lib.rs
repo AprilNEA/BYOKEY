@@ -17,6 +17,7 @@ pub mod router;
 pub mod usage;
 pub(crate) mod util;
 
+pub use byokey_provider::VersionStore;
 pub use error::ApiError;
 pub use handler::amp::threads::AmpThreadIndex;
 pub use openapi::ApiDoc;
@@ -46,6 +47,8 @@ pub struct AppState {
     pub device_profiles: Arc<DeviceProfileCache>,
     /// Pre-built, file-watched index of local Amp CLI thread summaries.
     pub amp_threads: Arc<AmpThreadIndex>,
+    /// Remote version/fingerprint info fetched from assets.byokey.io at startup.
+    pub versions: VersionStore,
 }
 
 impl AppState {
@@ -57,8 +60,9 @@ impl AppState {
         config: Arc<ArcSwap<byokey_config::Config>>,
         auth: Arc<AuthManager>,
         usage_store: Option<Arc<dyn UsageStore>>,
+        versions: VersionStore,
     ) -> Arc<Self> {
-        Self::with_thread_index(config, auth, usage_store, {
+        Self::with_thread_index(config, auth, usage_store, versions, {
             let idx = Arc::new(AmpThreadIndex::build());
             idx.watch();
             idx
@@ -70,6 +74,7 @@ impl AppState {
         config: Arc<ArcSwap<byokey_config::Config>>,
         auth: Arc<AuthManager>,
         usage_store: Option<Arc<dyn UsageStore>>,
+        versions: VersionStore,
         amp_threads: Arc<AmpThreadIndex>,
     ) -> Arc<Self> {
         let snapshot = config.load();
@@ -82,6 +87,7 @@ impl AppState {
             ratelimits: Arc::new(RateLimitStore::new()),
             device_profiles: Arc::new(DeviceProfileCache::new()),
             amp_threads,
+            versions,
         })
     }
 }

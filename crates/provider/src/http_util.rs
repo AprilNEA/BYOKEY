@@ -156,35 +156,76 @@ fn parse_retry_after_header(headers: &rquest::header::HeaderMap) -> Option<std::
     Some(std::time::Duration::from_secs(secs))
 }
 
-/// Parse retry delay from a 429 response body (Codex `usage_limit_reached` format).
+/// Parse retry delay from a 429 response body.
 ///
-/// Checks `error.type == "usage_limit_reached"`, then extracts either
-/// `error.resets_in_seconds` or `error.resets_at` (unix timestamp).
+/// Supports multiple provider formats:
+/// - **Codex**: `error.type == "usage_limit_reached"` with `error.resets_in_seconds`
+///   or `error.resets_at` (unix timestamp).
+/// - **Google/Antigravity**: `error.details[]` with `retryDelay` (from `RetryInfo`)
+///   or `metadata.quotaResetDelay` (from `ErrorInfo`).
 fn parse_retry_after_body(body: &str, status: u16) -> Option<std::time::Duration> {
     if status != 429 {
         return None;
     }
     let json: serde_json::Value = serde_json::from_str(body).ok()?;
-    let error = json.get("error")?;
-    if error.get("type").and_then(serde_json::Value::as_str) != Some("usage_limit_reached") {
-        return None;
-    }
-    // Try resets_in_seconds first (direct duration).
-    if let Some(secs) = error
-        .get("resets_in_seconds")
-        .and_then(serde_json::Value::as_u64)
+
+    // Codex format: error.type == "usage_limit_reached"
+    if let Some(error) = json.get("error")
+        && error.get("type").and_then(serde_json::Value::as_str) == Some("usage_limit_reached")
     {
-        return Some(std::time::Duration::from_secs(secs));
-    }
-    // Fallback: resets_at as unix timestamp.
-    if let Some(ts) = error.get("resets_at").and_then(serde_json::Value::as_u64) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        if ts > now {
-            return Some(std::time::Duration::from_secs(ts - now));
+        if let Some(secs) = error
+            .get("resets_in_seconds")
+            .and_then(serde_json::Value::as_u64)
+        {
+            return Some(std::time::Duration::from_secs(secs));
         }
+        if let Some(ts) = error.get("resets_at").and_then(serde_json::Value::as_u64) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if ts > now {
+                return Some(std::time::Duration::from_secs(ts - now));
+            }
+        }
+    }
+
+    // Google/Antigravity format: error.details[] with `RetryInfo` or `ErrorInfo`
+    if let Some(details) = json.pointer("/error/details").and_then(Value::as_array) {
+        for detail in details {
+            if detail.get("@type").and_then(Value::as_str)
+                == Some("type.googleapis.com/google.rpc.RetryInfo")
+                && let Some(delay_str) = detail.get("retryDelay").and_then(Value::as_str)
+                && let Some(d) = parse_google_duration(delay_str)
+            {
+                return Some(d);
+            }
+        }
+        for detail in details {
+            if detail.get("@type").and_then(Value::as_str)
+                == Some("type.googleapis.com/google.rpc.ErrorInfo")
+                && let Some(delay_str) = detail
+                    .pointer("/metadata/quotaResetDelay")
+                    .and_then(Value::as_str)
+                && let Some(d) = parse_google_duration(delay_str)
+            {
+                return Some(d);
+            }
+        }
+    }
+
+    None
+}
+
+/// Parse a Google-style duration string like `"0.847655010s"` or `"373.801628ms"`.
+fn parse_google_duration(s: &str) -> Option<std::time::Duration> {
+    if let Some(ms_str) = s.strip_suffix("ms") {
+        let ms: f64 = ms_str.parse().ok()?;
+        return Some(std::time::Duration::from_secs_f64(ms / 1000.0));
+    }
+    if let Some(secs_str) = s.strip_suffix('s') {
+        let secs: f64 = secs_str.parse().ok()?;
+        return Some(std::time::Duration::from_secs_f64(secs));
     }
     None
 }
@@ -257,5 +298,56 @@ mod tests {
         let store = Arc::new(RateLimitStore::new());
         let http = ProviderHttp::new(Client::new()).with_ratelimit(store, ProviderId::Claude);
         assert!(http.rl_ctx.is_some());
+    }
+
+    #[test]
+    fn test_parse_google_duration_seconds() {
+        let d = parse_google_duration("0.847655010s").unwrap();
+        assert!(d.as_micros() > 847_000 && d.as_micros() < 848_000);
+    }
+
+    #[test]
+    fn test_parse_google_duration_millis() {
+        let d = parse_google_duration("373.801628ms").unwrap();
+        assert!(d.as_micros() > 373_000 && d.as_micros() < 374_000);
+    }
+
+    #[test]
+    fn test_parse_google_duration_whole_seconds() {
+        let d = parse_google_duration("5s").unwrap();
+        assert_eq!(d.as_secs(), 5);
+    }
+
+    #[test]
+    fn test_parse_google_duration_invalid() {
+        assert!(parse_google_duration("abc").is_none());
+        assert!(parse_google_duration("").is_none());
+    }
+
+    #[test]
+    fn test_parse_retry_after_body_codex() {
+        let body = r#"{"error":{"type":"usage_limit_reached","resets_in_seconds":300}}"#;
+        let d = parse_retry_after_body(body, 429).unwrap();
+        assert_eq!(d.as_secs(), 300);
+    }
+
+    #[test]
+    fn test_parse_retry_after_body_google_retry_info() {
+        let body = r#"{"error":{"code":429,"details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"1.5s"}]}}"#;
+        let d = parse_retry_after_body(body, 429).unwrap();
+        assert_eq!(d.as_millis(), 1500);
+    }
+
+    #[test]
+    fn test_parse_retry_after_body_google_error_info() {
+        let body = r#"{"error":{"code":429,"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","metadata":{"quotaResetDelay":"373.8ms"}}]}}"#;
+        let d = parse_retry_after_body(body, 429).unwrap();
+        assert!(d.as_micros() > 373_000 && d.as_micros() < 374_000);
+    }
+
+    #[test]
+    fn test_parse_retry_after_body_non_429() {
+        let body = r#"{"error":{"type":"usage_limit_reached","resets_in_seconds":300}}"#;
+        assert!(parse_retry_after_body(body, 400).is_none());
     }
 }

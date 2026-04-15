@@ -218,6 +218,69 @@ impl AuthManager {
         self.store.load_all_tokens(provider).await
     }
 
+    // ── Background refresh ────────────────────────────────────────────────
+
+    /// Spawns a background loop that periodically checks all providers and
+    /// proactively refreshes tokens approaching expiry.
+    ///
+    /// The loop runs every `interval` and refreshes any token that would
+    /// expire within `lead_time`. Tokens without a `refresh_token`, or for
+    /// providers that don't support refresh (Copilot, Kiro), are skipped.
+    ///
+    /// Returns a [`tokio::task::JoinHandle`] that can be used to abort the loop.
+    pub fn spawn_refresh_loop(
+        self: &Arc<Self>,
+        interval: Duration,
+        lead_time: Duration,
+    ) -> tokio::task::JoinHandle<()> {
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(interval).await;
+                this.refresh_due_tokens(lead_time).await;
+            }
+        })
+    }
+
+    /// Scans all providers and refreshes tokens expiring within `lead_time`.
+    async fn refresh_due_tokens(self: &Arc<Self>, lead_time: Duration) {
+        for provider in ProviderId::all() {
+            // Skip providers that don't support refresh.
+            if matches!(provider, ProviderId::Copilot | ProviderId::Kiro) {
+                continue;
+            }
+
+            let Ok(Some(token)) = self.store.load(provider).await else {
+                continue;
+            };
+
+            // Skip tokens without a refresh_token.
+            if token.refresh_token.is_none() {
+                continue;
+            }
+
+            // Check if token expires within lead_time.
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let expires_at = token.expires_at.unwrap_or(u64::MAX);
+            if expires_at > now + lead_time.as_secs() {
+                // Not yet due for refresh.
+                continue;
+            }
+            if token.is_expired() {
+                // Already expired — on-demand refresh handles this.
+                continue;
+            }
+
+            tracing::debug!(%provider, "auto-refresh: token nearing expiry, refreshing");
+            if let Err(e) = self.refresh_token(provider, &token).await {
+                tracing::debug!(%provider, %e, "auto-refresh failed");
+            }
+        }
+    }
+
     // ── Private helpers ──────────────────────────────────────────────────
 
     /// Check whether a proactive (background) refresh should be spawned.

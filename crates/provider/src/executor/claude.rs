@@ -45,13 +45,13 @@ pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const ANTHROPIC_BETA: &str = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advanced-tool-use-2025-11-20,effort-2025-11-24,structured-outputs-2025-12-15,fast-mode-2026-02-01,token-efficient-tools-2026-03-28";
 
 /// User-Agent matching the Claude CLI version.
-pub const USER_AGENT: &str = "claude-cli/2.1.88 (external, cli)";
+pub const USER_AGENT: &str = "claude-cli/2.1.109 (external, cli)";
 
-/// Anthropic SDK package version (matches @anthropic-ai/sdk bundled with CLI 2.1.88).
+/// Anthropic SDK package version (matches @anthropic-ai/sdk bundled with CLI 2.1.109).
 pub const SDK_PACKAGE_VERSION: &str = "0.74.0";
 
 /// Node.js runtime version for X-Stainless-Runtime-Version.
-pub const RUNTIME_VERSION: &str = "v22.13.0";
+pub const RUNTIME_VERSION: &str = "v24.14.1";
 
 /// Credential resolved at request time.
 enum Credential {

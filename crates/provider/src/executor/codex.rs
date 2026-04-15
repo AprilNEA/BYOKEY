@@ -35,8 +35,8 @@ const OPENAI_API_PATH: &str = "/v1/chat/completions";
 /// Codex CLI Responses endpoint (used with OAuth tokens).
 const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 
-/// User-Agent matching the Codex CLI binary.
-const CODEX_USER_AGENT: &str = "codex_cli_rs/0.116.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464";
+/// Default User-Agent (compile-time fallback).
+const DEFAULT_USER_AGENT: &str = "codex-tui/0.120.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464";
 
 /// Executor for the `OpenAI` (Codex) API.
 pub struct CodexExecutor {
@@ -44,6 +44,7 @@ pub struct CodexExecutor {
     api_key: Option<String>,
     openai_api_url: String,
     auth: Arc<AuthManager>,
+    user_agent: String,
 }
 
 #[bon::bon]
@@ -57,6 +58,7 @@ impl CodexExecutor {
         api_key: Option<String>,
         base_url: Option<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
+        user_agent: Option<String>,
     ) -> Self {
         let mut ph = ProviderHttp::new(http);
         if let Some(store) = ratelimit {
@@ -75,6 +77,7 @@ impl CodexExecutor {
             api_key,
             openai_api_url,
             auth,
+            user_agent: user_agent.unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()),
         }
     }
 
@@ -101,7 +104,7 @@ impl CodexExecutor {
             .header("content-type", "application/json")
             .header("authorization", format!("Bearer {token}"))
             .header("Session_id", session_id)
-            .header("User-Agent", CODEX_USER_AGENT)
+            .header("User-Agent", self.user_agent.as_str())
             .header("Originator", "codex_cli_rs")
             .header("Accept", "text/event-stream")
             .header("Connection", "Keep-Alive")
@@ -177,6 +180,11 @@ pub(crate) fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStrea
         model: String,
         done: bool,
         tool_call_index: i64,
+        /// Buffered `encrypted_content` from `response.output_item.added`
+        /// (reasoning type). Emitted when the thinking block finalizes.
+        thinking_signature: Option<String>,
+        /// True while a reasoning output item is open (between added and done).
+        thinking_block_open: bool,
     }
 
     Box::pin(try_unfold(
@@ -186,6 +194,8 @@ pub(crate) fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStrea
             model,
             done: false,
             tool_call_index: 0,
+            thinking_signature: None,
+            thinking_block_open: false,
         },
         |mut s| async move {
             loop {
@@ -199,6 +209,39 @@ pub(crate) fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStrea
                         && let Ok(ev) = serde_json::from_str::<Value>(data)
                     {
                         match ev["type"].as_str().unwrap_or("") {
+                            // Capture encrypted_content when a reasoning item starts.
+                            "response.output_item.added"
+                                if ev.pointer("/item/type").and_then(Value::as_str)
+                                    == Some("reasoning") =>
+                            {
+                                s.thinking_block_open = true;
+                                s.thinking_signature = ev
+                                    .pointer("/item/encrypted_content")
+                                    .and_then(Value::as_str)
+                                    .map(String::from);
+                                continue;
+                            }
+                            // Finalize reasoning block — emit buffered signature.
+                            "response.output_item.done"
+                                if ev.pointer("/item/type").and_then(Value::as_str)
+                                    == Some("reasoning") =>
+                            {
+                                s.thinking_block_open = false;
+                                if let Some(sig) = s.thinking_signature.take() {
+                                    let chunk = serde_json::json!({
+                                        "object": "chat.completion.chunk",
+                                        "model": &s.model,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {"reasoning_signature": sig},
+                                            "finish_reason": null
+                                        }]
+                                    });
+                                    let line = format!("data: {chunk}\n\n");
+                                    return Ok(Some((Bytes::from(line), s)));
+                                }
+                                continue;
+                            }
                             "response.reasoning_summary_text.delta" => {
                                 let delta = ev["delta"].as_str().unwrap_or("").to_string();
                                 let chunk = serde_json::json!({
@@ -231,6 +274,21 @@ pub(crate) fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStrea
                                 if ev.pointer("/item/type").and_then(Value::as_str)
                                     == Some("function_call") =>
                             {
+                                // Flush pending thinking signature before starting tool calls.
+                                let mut prefix = String::new();
+                                if let Some(sig) = s.thinking_signature.take() {
+                                    s.thinking_block_open = false;
+                                    let sig_chunk = serde_json::json!({
+                                        "object": "chat.completion.chunk",
+                                        "model": &s.model,
+                                        "choices": [{
+                                            "index": 0,
+                                            "delta": {"reasoning_signature": sig},
+                                            "finish_reason": null
+                                        }]
+                                    });
+                                    prefix = format!("data: {sig_chunk}\n\n");
+                                }
                                 let id = ev
                                     .pointer("/item/call_id")
                                     .and_then(Value::as_str)
@@ -250,7 +308,7 @@ pub(crate) fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStrea
                                         "tool_calls": [{"index": idx, "id": id, "type": "function", "function": {"name": name, "arguments": ""}}]
                                     }, "finish_reason": null}]
                                 });
-                                let line = format!("data: {chunk}\n\n");
+                                let line = format!("{prefix}data: {chunk}\n\n");
                                 return Ok(Some((Bytes::from(line), s)));
                             }
                             "response.function_call_arguments.delta" => {
