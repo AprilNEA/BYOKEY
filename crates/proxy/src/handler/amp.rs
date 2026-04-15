@@ -4,10 +4,22 @@
 //! - `GET  /amp/v1/login`              -> 302 redirect to ampcode.com/login.
 //! - `ANY  /amp/v0/management/{*path}` -> proxy to ampcode.com/v0/management/*.
 //! - `POST /amp/v1/chat/completions`   -> handled by `chat::chat_completions`.
+//!
+//! Submodules:
+//! - [`provider`] — `AmpCode` provider-namespaced AI endpoints.
+//! - [`quota`]    — cached `AmpCode` quota snapshot endpoint.
+//! - [`threads`]  — local Amp CLI thread listing / detail endpoints.
+
+pub mod provider;
+pub mod quota;
+pub mod threads;
+
 use axum::{
+    Router,
     extract::{Path, RawQuery, State},
     http::{HeaderMap, HeaderValue, Method, StatusCode},
     response::{IntoResponse, Response},
+    routing::{any, get, post},
 };
 use bytes::Bytes;
 use serde_json::json;
@@ -17,7 +29,40 @@ use byokey_types::ProviderId;
 
 use crate::AppState;
 
-use super::{CLIENT_AUTH_HEADERS, FINGERPRINT_HEADERS, HOP_BY_HOP};
+use super::{CLIENT_AUTH_HEADERS, FINGERPRINT_HEADERS, HOP_BY_HOP, chat, messages};
+
+/// Build the Amp CLI / `AmpCode` sub-router.
+///
+/// Spans two URL prefixes:
+/// - `/amp/*`  — Amp CLI OAuth and chat endpoints.
+/// - `/api/*`  — `AmpCode` provider-namespaced endpoints and catch-all proxy.
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        // Amp CLI routes
+        .route("/amp/auth/cli-login", get(cli_login_redirect))
+        .route("/amp/v1/login", get(login_redirect))
+        .route("/amp/v0/management/{*path}", any(management_proxy))
+        .route("/amp/v1/chat/completions", post(chat::chat_completions))
+        // AmpCode provider-specific routes (must be registered before the catch-all)
+        .route(
+            "/api/provider/anthropic/v1/messages",
+            post(messages::anthropic_messages),
+        )
+        .route(
+            "/api/provider/openai/v1/chat/completions",
+            post(chat::chat_completions),
+        )
+        .route(
+            "/api/provider/openai/v1/responses",
+            post(provider::codex_responses_passthrough),
+        )
+        .route(
+            "/api/provider/google/v1beta/models/{action}",
+            post(provider::gemini_native_passthrough),
+        )
+        // Catch-all: forward remaining /api/* routes to ampcode.com
+        .route("/api/{*path}", any(provider::amp_management_proxy))
+}
 
 /// Amp backend base URL.
 const AMP_BACKEND: &str = "https://ampcode.com";

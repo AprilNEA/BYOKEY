@@ -3,37 +3,28 @@
 use axum::extract::DefaultBodyLimit;
 use axum::{
     Router,
-    routing::{any, delete, get, post},
+    routing::{get, post},
 };
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
-use crate::handler::{
-    accounts, amp, amp_provider, amp_quota, amp_threads, chat, messages, models, ratelimits,
-    status, usage,
-};
+use crate::handler::{amp, chat, management, messages, models};
 use crate::{AppState, openapi};
 
 /// Build the full axum router.
 ///
-/// Routes:
+/// Top-level routes:
 /// - POST /v1/chat/completions                          OpenAI-compatible
 /// - POST /v1/messages                                  Anthropic native passthrough
 /// - POST /copilot/v1/messages                          Anthropic via Copilot
+/// - POST /copilot/v1/chat/completions                  `OpenAI` via Copilot
 /// - GET  /v1/models
-/// - GET  /amp/v1/login
-/// - ANY  /amp/v0/management/{*path}
-/// - POST /amp/v1/chat/completions
 ///
-/// `AmpCode` provider routes:
-/// - POST /api/provider/anthropic/v1/messages           Anthropic native (`AmpCode`)
-/// - POST /api/provider/openai/v1/chat/completions      `OpenAI`-compatible (`AmpCode`)
-/// - POST /api/provider/openai/v1/responses             Codex Responses API (`AmpCode`)
-/// - POST /api/provider/google/v1beta/models/{action}   Gemini native (`AmpCode`)
-/// - ANY  /api/{*path}                                  `ampcode.com` management proxy
+/// Sub-routers:
+/// - [`amp::router`]        — Amp CLI / `AmpCode` compatibility (`/amp/*`, `/api/*`).
+/// - [`management::router`] — BYOKEY management API, nested at `/v0/management`.
 pub fn make_router(state: Arc<AppState>) -> Router {
     Router::new()
-        // Standard routes
         .route("/v1/chat/completions", post(chat::chat_completions))
         .route("/v1/messages", post(messages::anthropic_messages))
         .route(
@@ -45,59 +36,8 @@ pub fn make_router(state: Arc<AppState>) -> Router {
             post(chat::copilot_chat_completions),
         )
         .route("/v1/models", get(models::list_models))
-        // Amp CLI routes
-        .route("/amp/auth/cli-login", get(amp::cli_login_redirect))
-        .route("/amp/v1/login", get(amp::login_redirect))
-        .route("/amp/v0/management/{*path}", any(amp::management_proxy))
-        .route("/amp/v1/chat/completions", post(chat::chat_completions))
-        // AmpCode provider-specific routes (must be registered before the catch-all)
-        .route(
-            "/api/provider/anthropic/v1/messages",
-            post(messages::anthropic_messages),
-        )
-        .route(
-            "/api/provider/openai/v1/chat/completions",
-            post(chat::chat_completions),
-        )
-        .route(
-            "/api/provider/openai/v1/responses",
-            post(amp_provider::codex_responses_passthrough),
-        )
-        .route(
-            "/api/provider/google/v1beta/models/{action}",
-            post(amp_provider::gemini_native_passthrough),
-        )
-        // Catch-all: forward remaining /api/* routes to ampcode.com
-        .route("/api/{*path}", any(amp_provider::amp_management_proxy))
-        // Management API
-        .route("/v0/management/status", get(status::status_handler))
-        .route("/v0/management/usage", get(usage::usage_handler))
-        .route(
-            "/v0/management/usage/history",
-            get(usage::usage_history_handler),
-        )
-        .route("/v0/management/accounts", get(accounts::accounts_handler))
-        .route(
-            "/v0/management/accounts/{provider}/{account_id}",
-            delete(accounts::remove_account_handler),
-        )
-        .route(
-            "/v0/management/accounts/{provider}/{account_id}/activate",
-            post(accounts::activate_account_handler),
-        )
-        .route(
-            "/v0/management/ratelimits",
-            get(ratelimits::ratelimits_handler),
-        )
-        .route(
-            "/v0/management/amp/quota",
-            get(amp_quota::amp_quota_handler),
-        )
-        .route("/v0/management/amp/threads", get(amp_threads::list_threads))
-        .route(
-            "/v0/management/amp/threads/{id}",
-            get(amp_threads::get_thread),
-        )
+        .merge(amp::router())
+        .nest("/v0/management", management::router())
         .route("/openapi.json", get(openapi::openapi_json))
         .with_state(state)
         .layer(DefaultBodyLimit::max(200 * 1024 * 1024)) // 200 MB for image uploads

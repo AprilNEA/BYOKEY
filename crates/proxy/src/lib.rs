@@ -16,7 +16,7 @@ pub mod router;
 pub mod usage;
 
 pub use error::ApiError;
-pub use handler::amp_threads::AmpThreadIndex;
+pub use handler::amp::threads::AmpThreadIndex;
 pub use openapi::ApiDoc;
 pub use router::make_router;
 pub use usage::{UsageRecorder, UsageStats};

@@ -1,20 +1,14 @@
 //! HTTP route handlers for all proxy endpoints.
 //!
 //! - [`chat`] / [`messages`] / [`models`] — `OpenAI`-compatible API.
-//! - [`amp`] / [`amp_provider`]           — Amp CLI / `AmpCode` compatibility.
-//! - [`accounts`] / [`status`] / [`ratelimits`] — Management API.
+//! - [`amp`]                              — Amp CLI / `AmpCode` compatibility.
+//! - [`management`]                       — BYOKEY management API (`/v0/management/*`).
 
-pub mod accounts;
-pub(crate) mod amp;
-pub(crate) mod amp_provider;
-pub mod amp_quota;
-pub mod amp_threads;
+pub mod amp;
 pub(crate) mod chat;
+pub mod management;
 pub(crate) mod messages;
 pub(crate) mod models;
-pub mod ratelimits;
-pub mod status;
-pub mod usage;
 
 // ── Shared header-filtering constants for proxy handlers ────────────
 

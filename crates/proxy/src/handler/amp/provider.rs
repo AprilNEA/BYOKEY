@@ -42,7 +42,7 @@ const GEMINI_MODELS_BASE: &str = "https://generativelanguage.googleapis.com/v1be
 /// `ampcode.com` backend base URL for management route proxying.
 const AMP_BACKEND: &str = "https://ampcode.com";
 
-use super::{CLIENT_AUTH_HEADERS, FINGERPRINT_HEADERS, HOP_BY_HOP};
+use crate::handler::{CLIENT_AUTH_HEADERS, FINGERPRINT_HEADERS, HOP_BY_HOP};
 
 // ── Usage extraction helpers ────────────────────────────────────────────
 
@@ -235,6 +235,16 @@ fn tap_gemini_stream_usage(
 /// Routing:
 /// - **OAuth token** → `chatgpt.com/backend-api/codex/responses` (Codex CLI endpoint)
 /// - **API key** → `api.openai.com/v1/responses` (public `OpenAI` Responses API)
+///
+/// # Errors
+///
+/// Returns [`ApiError`] if Codex auth fails, the upstream returns a non-2xx
+/// status, or the upstream JSON cannot be parsed.
+///
+/// # Panics
+///
+/// Panics if `axum::Response::builder` somehow fails to build a valid SSE
+/// response (only possible if the constant headers above are malformed).
 pub async fn codex_responses_passthrough(
     State(state): State<Arc<AppState>>,
     axum::extract::Json(body): axum::extract::Json<Value>,
@@ -350,6 +360,17 @@ pub async fn codex_responses_passthrough(
 /// When the Gemini provider has `backend` configured (e.g. `backend: copilot`),
 /// the request is translated from Google native format to `OpenAI` format,
 /// sent to the backend provider, and the response is translated back.
+///
+/// # Errors
+///
+/// Returns [`ApiError`] if Gemini auth fails, the upstream returns a non-2xx
+/// status, the upstream JSON cannot be parsed, or backend translation fails.
+///
+/// # Panics
+///
+/// Panics if `axum::Response::builder` somehow fails to build a valid SSE
+/// response (only possible if the constant headers above are malformed).
+#[allow(clippy::implicit_hasher)] // Axum extractors fix the HashMap hasher.
 pub async fn gemini_native_passthrough(
     State(state): State<Arc<AppState>>,
     Path(action): Path<String>,
@@ -553,7 +574,7 @@ async fn gemini_native_via_backend(
         }
         byokey_types::traits::ProviderResponse::Stream(byte_stream) => {
             // Tap the OpenAI stream for usage before translating to Gemini SSE.
-            let tapped = super::chat::tap_stream_usage(
+            let tapped = crate::handler::chat::tap_stream_usage(
                 byte_stream,
                 state.usage.clone(),
                 model.to_string(),
