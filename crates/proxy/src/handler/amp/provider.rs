@@ -31,8 +31,8 @@ use crate::{AppState, error::ApiError};
 
 const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
 const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
-const CODEX_VERSION: &str = "0.101.0";
-const CODEX_USER_AGENT: &str = "codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464";
+const CODEX_VERSION: &str = "0.120.0";
+const CODEX_USER_AGENT: &str = "codex-tui/0.120.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464";
 const GEMINI_MODELS_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 const AMP_BACKEND: &str = "https://ampcode.com";
 
@@ -54,6 +54,7 @@ const AMP_BACKEND: &str = "https://ampcode.com";
 ///
 /// Panics if `axum::Response::builder` somehow fails to build a valid SSE
 /// response (only possible if the constant headers above are malformed).
+#[allow(clippy::too_many_lines)]
 pub async fn codex_responses_passthrough(
     State(state): State<Arc<AppState>>,
     axum::extract::Json(body): axum::extract::Json<Value>,
@@ -89,6 +90,22 @@ pub async fn codex_responses_passthrough(
         (true, tok.access_token)
     };
 
+    let upstream_url = if is_oauth {
+        CODEX_RESPONSES_URL
+    } else {
+        OPENAI_RESPONSES_URL
+    };
+    let auth_mode = if is_oauth { "oauth" } else { "api_key" };
+
+    tracing::info!(
+        model = %model_name,
+        auth_mode,
+        upstream_url,
+        "codex responses: sending request to upstream"
+    );
+
+    let start = std::time::Instant::now();
+
     let resp = if is_oauth {
         state
             .http
@@ -111,13 +128,39 @@ pub async fn codex_responses_passthrough(
             .json(&body)
             .send()
             .await
-    }
-    .map_err(|e| ApiError(ByokError::from(e)))?;
+    };
+
+    let elapsed = start.elapsed();
+
+    let resp = resp.map_err(|e| {
+        tracing::error!(
+            model = %model_name,
+            auth_mode,
+            upstream_url,
+            ?elapsed,
+            error = %e,
+            "codex responses: transport error (DNS/TLS/connection)"
+        );
+        ApiError(ByokError::from(e))
+    })?;
 
     let provider = "codex";
-    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let upstream_status = resp.status().as_u16();
+    let status = StatusCode::from_u16(upstream_status).unwrap_or(StatusCode::BAD_GATEWAY);
+
     if !status.is_success() {
+        let headers_dbg = format!("{:?}", resp.headers());
         let text = resp.text().await.unwrap_or_default();
+        tracing::error!(
+            model = %model_name,
+            auth_mode,
+            upstream_url,
+            upstream_status,
+            ?elapsed,
+            response_headers = %headers_dbg,
+            response_body = %text,
+            "codex responses: upstream returned non-2xx"
+        );
         return Err(upstream_error(
             status,
             text,
@@ -127,21 +170,44 @@ pub async fn codex_responses_passthrough(
         ));
     }
 
-    let is_sse = resp
+    let content_type = resp
         .headers()
         .get("content-type")
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|ct| ct.contains("text/event-stream"));
+        .unwrap_or("")
+        .to_string();
+
+    tracing::info!(
+        model = %model_name,
+        upstream_status,
+        ?elapsed,
+        content_type = %content_type,
+        "codex responses: upstream returned success"
+    );
+
+    // chatgpt.com may omit Content-Type entirely for SSE responses;
+    // default to streaming when the header is absent or unrecognised.
+    let is_sse = content_type.is_empty()
+        || content_type.contains("text/event-stream")
+        || content_type.contains("application/x-ndjson");
 
     if is_sse {
         let tapped = tap_usage_stream(
             response_to_stream(resp),
             state.usage.clone(),
-            model_name,
+            model_name.clone(),
             provider.to_string(),
             CodexParser::new(),
         );
-        let mapped = tapped.map_err(|e| std::io::Error::other(e.to_string()));
+        let stream_model = model_name;
+        let mapped = tapped.map_err(move |e| {
+            tracing::error!(
+                model = %stream_model,
+                error = %e,
+                "codex responses: SSE stream error mid-transfer"
+            );
+            std::io::Error::other(e.to_string())
+        });
         Ok(sse_response(status, mapped))
     } else {
         let json: Value = resp

@@ -61,6 +61,12 @@ pub(crate) fn tap_usage_stream<P: UsageParser>(
                     Ok(Some((bytes, s)))
                 }
                 Some(Err(e)) => {
+                    tracing::error!(
+                        model = %s.model,
+                        provider = %s.provider,
+                        error = %e,
+                        "tap_usage_stream: upstream SSE stream yielded error"
+                    );
                     s.usage.record_failure(&s.model, &s.provider);
                     Err(e)
                 }
@@ -76,7 +82,12 @@ pub(crate) fn tap_usage_stream<P: UsageParser>(
 
 /// Converts an `rquest::Response` into a [`ByteStream`].
 pub(crate) fn response_to_stream(resp: rquest::Response) -> ByteStream {
-    Box::pin(resp.bytes_stream().map(|r| r.map_err(ByokError::from)))
+    Box::pin(resp.bytes_stream().map(|r| {
+        r.map_err(|e| {
+            tracing::error!(error = %e, "response_to_stream: rquest byte stream error");
+            ByokError::from(e)
+        })
+    }))
 }
 
 // ── Parser implementations ──────────────────────────────────────────

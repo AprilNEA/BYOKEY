@@ -49,6 +49,14 @@ pub(crate) fn upstream_error(
     model: &str,
     provider: &str,
 ) -> ApiError {
+    tracing::warn!(
+        %provider,
+        %model,
+        upstream_status = status.as_u16(),
+        body_len = body.len(),
+        body_preview = %body.chars().take(512).collect::<String>(),
+        "upstream_error: recording failure"
+    );
     usage.record_failure(model, provider);
     ApiError::from(ByokError::Upstream {
         status: status.as_u16(),
