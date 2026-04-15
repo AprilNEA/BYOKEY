@@ -90,6 +90,14 @@ pub async fn codex_responses_passthrough(
         (true, tok.access_token)
     };
 
+    // chatgpt.com/backend-api/codex/responses rejects sampling and limit
+    // parameters that the public OpenAI Responses API accepts.
+    if is_oauth && let Some(obj) = body.as_object_mut() {
+        obj.remove("max_output_tokens");
+        obj.remove("temperature");
+        obj.remove("top_p");
+    }
+
     let upstream_url = if is_oauth {
         CODEX_RESPONSES_URL
     } else {

@@ -34,7 +34,7 @@ byokey-translate = { version = "0.11.0", path = "crates/translate" }
 byokey-provider = { version = "0.11.0", path = "crates/provider" }
 byokey-proxy = { version = "0.11.0", path = "crates/proxy" }
 byokey-daemon = { version = "0.11.0", path = "crates/daemon" }
-aigw = { version = "0.2.0", default-features = false, features = ["anthropic", "anthropic-claude-code"] }
+aigw = { version = "0.2.0", default-features = false, features = ["anthropic", "anthropic-claude-code", "openai", "openai-compat"] }
 aigw-core = "0.2.0"
 reqwest = { version = "0.12", default-features = false }
 secrecy = "0.10"
