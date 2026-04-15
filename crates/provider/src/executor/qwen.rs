@@ -1,28 +1,32 @@
 //! Qwen executor — Alibaba Qwen (Tongyi Qianwen) API.
 //!
-//! Uses Qwen's OpenAI-compatible endpoint with direct passthrough.
+//! Uses Qwen's OpenAI-compatible endpoint via `aigw::openai_compat`.
 //! Auth: `Authorization: Bearer {token}` for both OAuth and API key.
 use crate::http_util::ProviderHttp;
 use crate::registry;
+use aigw::openai::translate::OpenAIResponseTranslator;
+use aigw::openai::{HttpTransportConfig, OpenAIAuthConfig};
+use aigw::openai_compat::translate::OpenAICompatRequestTranslator;
+use aigw::openai_compat::{OpenAICompatConfig, OpenAICompatProvider, Quirks};
+use aigw_core::translate::{RequestTranslator as _, ResponseTranslator as _};
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
 use byokey_types::{
-    ChatRequest, ProviderId, RateLimitStore,
-    traits::{ProviderExecutor, ProviderResponse, Result},
+    ByokError, ChatRequest, ProviderId, RateLimitStore,
+    traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
 };
-use rquest::Client;
+use secrecy::SecretString;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// Default Qwen API base URL.
-const DEFAULT_BASE_URL: &str = "https://portal.qwen.ai";
-/// Chat completions API path.
-const API_PATH: &str = "/v1/chat/completions";
+/// Default Qwen API base URL (`/v1` suffix; aigw appends `/chat/completions`).
+const DEFAULT_BASE_URL: &str = "https://portal.qwen.ai/v1";
 
 /// Executor for the Alibaba Qwen API.
 pub struct QwenExecutor {
     ph: ProviderHttp,
     api_key: Option<String>,
-    api_url: String,
+    base_url: String,
     auth: Arc<AuthManager>,
 }
 
@@ -32,7 +36,7 @@ impl QwenExecutor {
     #[builder]
     #[allow(clippy::needless_pass_by_value)]
     pub fn new(
-        http: Client,
+        http: rquest::Client,
         auth: Arc<AuthManager>,
         api_key: Option<String>,
         base_url: Option<String>,
@@ -42,18 +46,15 @@ impl QwenExecutor {
         if let Some(store) = ratelimit {
             ph = ph.with_ratelimit(store, ProviderId::Qwen);
         }
-        let api_url = format!(
-            "{}{}",
-            base_url
-                .as_deref()
-                .unwrap_or(DEFAULT_BASE_URL)
-                .trim_end_matches('/'),
-            API_PATH
-        );
+        let base_url = base_url
+            .as_deref()
+            .unwrap_or(DEFAULT_BASE_URL)
+            .trim_end_matches('/')
+            .to_owned();
         Self {
             ph,
             api_key,
-            api_url,
+            base_url,
             auth,
         }
     }
@@ -67,39 +68,102 @@ impl QwenExecutor {
         )
         .await
     }
+
+    /// Builds an [`OpenAICompatProvider`] for a single request.
+    fn build_provider(&self, token: String) -> Result<OpenAICompatProvider> {
+        let mut default_headers = BTreeMap::new();
+        default_headers.insert(
+            "user-agent".to_owned(),
+            "QwenCode/0.10.3 (darwin; arm64)".to_owned(),
+        );
+        default_headers.insert(
+            "x-dashscope-useragent".to_owned(),
+            "QwenCode/0.10.3 (darwin; arm64)".to_owned(),
+        );
+        default_headers.insert("x-dashscope-authtype".to_owned(), "qwen-oauth".to_owned());
+        default_headers.insert(
+            "x-stainless-runtime-version".to_owned(),
+            "v22.17.0".to_owned(),
+        );
+        default_headers.insert("x-stainless-lang".to_owned(), "js".to_owned());
+        default_headers.insert("x-stainless-arch".to_owned(), "arm64".to_owned());
+        default_headers.insert(
+            "x-stainless-package-version".to_owned(),
+            "5.11.0".to_owned(),
+        );
+        default_headers.insert("x-dashscope-cachecontrol".to_owned(), "enable".to_owned());
+        default_headers.insert("x-stainless-retry-count".to_owned(), "0".to_owned());
+        default_headers.insert("x-stainless-os".to_owned(), "MacOS".to_owned());
+        default_headers.insert("x-stainless-runtime".to_owned(), "node".to_owned());
+
+        OpenAICompatProvider::new(OpenAICompatConfig {
+            name: "qwen".to_owned(),
+            http: HttpTransportConfig {
+                base_url: self.base_url.clone(),
+                timeout_seconds: 600,
+                default_headers,
+            },
+            auth: OpenAIAuthConfig {
+                api_key: SecretString::from(token),
+                organization: None,
+                project: None,
+            },
+            quirks: Quirks::default(),
+        })
+        .map_err(|e| ByokError::Config(e.to_string()))
+    }
 }
 
 #[async_trait]
 impl ProviderExecutor for QwenExecutor {
     async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
         let stream = request.stream;
-        let mut body = request.into_body();
-
-        crate::http_util::ensure_stream_options(&mut body, stream);
 
         let token = self.bearer_token().await?;
-        let accept = crate::http_util::accept_for_stream(stream);
+        let provider = self.build_provider(token)?;
+        let translator = OpenAICompatRequestTranslator::new(&provider)
+            .map_err(|e| ByokError::Config(e.to_string()))?;
 
-        let builder = self
-            .ph
-            .client()
-            .post(&self.api_url)
-            .header("content-type", "application/json")
-            .header("authorization", format!("Bearer {token}"))
-            .header("user-agent", "QwenCode/0.10.3 (darwin; arm64)")
-            .header("x-dashscope-useragent", "QwenCode/0.10.3 (darwin; arm64)")
-            .header("x-dashscope-authtype", "qwen-oauth")
-            .header("x-stainless-runtime-version", "v22.17.0")
-            .header("x-stainless-lang", "js")
-            .header("x-stainless-arch", "arm64")
-            .header("x-stainless-package-version", "5.11.0")
-            .header("x-dashscope-cachecontrol", "enable")
-            .header("x-stainless-retry-count", "0")
-            .header("x-stainless-os", "MacOS")
-            .header("x-stainless-runtime", "node")
-            .header("accept", accept);
+        // Translate byokey ChatRequest → aigw ChatRequest → OpenAI body.
+        let aigw_request: aigw_core::model::ChatRequest =
+            serde_json::from_value(request.into_body())
+                .map_err(|e| ByokError::Translation(e.to_string()))?;
 
-        self.ph.send_passthrough(builder.json(&body), stream).await
+        let translated = if stream {
+            translator
+                .translate_stream_request(&aigw_request)
+                .map_err(|e| ByokError::Translation(e.to_string()))?
+        } else {
+            translator
+                .translate_request(&aigw_request)
+                .map_err(|e| ByokError::Translation(e.to_string()))?
+        };
+
+        // Build rquest from TranslatedRequest URL/headers + body.
+        let mut builder = self.ph.client().post(&translated.url);
+        for (name, value) in &translated.headers {
+            if let Ok(v) = value.to_str() {
+                builder = builder.header(name.as_str(), v);
+            }
+        }
+        let builder = builder
+            .header("accept-encoding", "identity")
+            .body(translated.body.to_vec());
+
+        let resp = self.ph.send(builder).await?;
+
+        if stream {
+            let byte_stream: ByteStream = ProviderHttp::byte_stream(resp);
+            Ok(ProviderResponse::Stream(byte_stream))
+        } else {
+            let resp_bytes = resp.bytes().await.map_err(ByokError::from)?;
+            let aigw_response = OpenAIResponseTranslator
+                .translate_response(http::StatusCode::OK, &resp_bytes)
+                .map_err(|e| ByokError::Translation(e.to_string()))?;
+            let value = serde_json::to_value(aigw_response)
+                .map_err(|e| ByokError::Translation(e.to_string()))?;
+            Ok(ProviderResponse::Complete(value))
+        }
     }
 
     fn supported_models(&self) -> Vec<String> {

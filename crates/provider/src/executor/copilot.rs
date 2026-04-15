@@ -1,19 +1,26 @@
 //! GitHub Copilot executor — OpenAI-compatible API.
 //!
 //! Auth: device code flow → GitHub token → exchange for short-lived Copilot API token.
-//! Format: `OpenAI` passthrough (no translation needed).
+//! Format: `OpenAI` passthrough via `aigw::openai_compat` for URL/header/request building.
+//!         Streaming: raw byte passthrough (Option P). Non-streaming: aigw response translator.
 use crate::http_util::ProviderHttp;
 use crate::registry;
+use aigw::openai::translate::OpenAIResponseTranslator;
+use aigw::openai::{HttpTransportConfig, OpenAIAuthConfig};
+use aigw::openai_compat::translate::OpenAICompatRequestTranslator;
+use aigw::openai_compat::{OpenAICompatConfig, OpenAICompatProvider, Quirks};
+use aigw_core::translate::{RequestTranslator as _, ResponseTranslator as _};
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
 use byokey_types::{
     AccountInfo, ByokError, ChatRequest, ProviderId, RateLimitStore,
     traits::{ProviderExecutor, ProviderResponse, Result},
 };
+use secrecy::SecretString;
 use serde_json::Value;
 use std::{
     cmp::Ordering as CmpOrdering,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
 };
@@ -395,10 +402,51 @@ impl CopilotExecutor {
         self.exchange_and_cache(&github_token).await
     }
 
-    /// Obtains the Copilot API token and chat completions URL.
+    /// Obtains the Copilot API token and base endpoint URL.
     async fn copilot_creds(&self) -> Result<(String, String)> {
-        let (token, endpoint) = self.copilot_token().await?;
-        Ok((token, format!("{endpoint}/chat/completions")))
+        self.copilot_token().await
+    }
+
+    /// Builds an [`OpenAICompatProvider`] for a single request, given the resolved
+    /// Copilot API token and base endpoint URL.
+    ///
+    /// Static Copilot-specific headers are placed in `default_headers` so aigw
+    /// includes them in every request it builds. The `x-initiator` header is
+    /// **per-request** and must be added separately after translation.
+    fn build_provider(token: &str, base_url: &str) -> Result<OpenAICompatProvider> {
+        let mut default_headers = BTreeMap::new();
+        default_headers.insert("user-agent".to_owned(), USER_AGENT.to_owned());
+        default_headers.insert("editor-version".to_owned(), EDITOR_VERSION.to_owned());
+        default_headers.insert(
+            "editor-plugin-version".to_owned(),
+            PLUGIN_VERSION.to_owned(),
+        );
+        default_headers.insert("openai-intent".to_owned(), OPENAI_INTENT.to_owned());
+        default_headers.insert(
+            "copilot-integration-id".to_owned(),
+            INTEGRATION_ID.to_owned(),
+        );
+        default_headers.insert(
+            "x-github-api-version".to_owned(),
+            GITHUB_API_VERSION.to_owned(),
+        );
+        default_headers.insert("content-type".to_owned(), "application/json".to_owned());
+
+        OpenAICompatProvider::new(OpenAICompatConfig {
+            name: "copilot".to_owned(),
+            http: HttpTransportConfig {
+                base_url: base_url.to_owned(),
+                timeout_seconds: 600,
+                default_headers,
+            },
+            auth: OpenAIAuthConfig {
+                api_key: SecretString::from(token.to_owned()),
+                organization: None,
+                project: None,
+            },
+            quirks: Quirks::default(),
+        })
+        .map_err(|e| ByokError::Config(e.to_string()))
     }
 
     /// Returns `true` if any cached Copilot token belongs to a Pro/Business/Enterprise plan.
@@ -472,9 +520,13 @@ impl CopilotExecutor {
 impl ProviderExecutor for CopilotExecutor {
     async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
         let stream = request.stream;
+        // `x-initiator` is derived from the request message roles before consuming it.
         let initiator = Self::initiator(&request);
-        let mut body = request.into_body();
-        crate::http_util::ensure_stream_options(&mut body, stream);
+
+        // Translate: BYOKEY ChatRequest → aigw ChatRequest.
+        let aigw_request: aigw_core::model::ChatRequest =
+            serde_json::from_value(request.into_body())
+                .map_err(|e| ByokError::Translation(e.to_string()))?;
 
         let accounts = self
             .auth
@@ -490,7 +542,7 @@ impl ProviderExecutor for CopilotExecutor {
         let mut last_err = None;
         for attempt in 0..max_attempts {
             let creds = self.copilot_creds().await;
-            let (token, url) = match creds {
+            let (token, endpoint) = match creds {
                 Ok(c) => c,
                 Err(e) => {
                     if max_attempts > 1 {
@@ -503,31 +555,76 @@ impl ProviderExecutor for CopilotExecutor {
                 }
             };
 
-            let builder = self
-                .ph
-                .client()
-                .post(&url)
-                .header("authorization", format!("Bearer {token}"))
-                .header("user-agent", USER_AGENT)
-                .header("editor-version", EDITOR_VERSION)
-                .header("editor-plugin-version", PLUGIN_VERSION)
-                .header("openai-intent", OPENAI_INTENT)
-                .header("copilot-integration-id", INTEGRATION_ID)
-                .header("x-github-api-version", GITHUB_API_VERSION)
-                .header("x-initiator", initiator)
-                .header("content-type", "application/json")
-                .json(&body);
+            // Build aigw provider + translator for this token/endpoint combination.
+            let provider = match Self::build_provider(&token, &endpoint) {
+                Ok(p) => p,
+                Err(e) => return Err(e),
+            };
+            let translator = OpenAICompatRequestTranslator::new(&provider)
+                .map_err(|e| ByokError::Config(e.to_string()))?;
 
-            match self.ph.send_passthrough(builder, stream).await {
-                Ok(resp) => return Ok(resp),
-                Err(e) => {
-                    if !e.is_retryable() || attempt + 1 >= max_attempts {
-                        return Err(e);
-                    }
-                    tracing::warn!(attempt, error = %e, "copilot request failed, trying next account");
-                    Self::invalidate_current_account();
-                    last_err = Some(e);
+            // Translate the canonical request to a Copilot HTTP request.
+            // aigw handles: URL (`{endpoint}/chat/completions`), static headers,
+            // `Authorization: Bearer <token>`, content-type, and body serialization.
+            let translated = if stream {
+                translator.translate_stream_request(&aigw_request)
+            } else {
+                translator.translate_request(&aigw_request)
+            }
+            .map_err(|e| ByokError::Translation(e.to_string()))?;
+
+            // Build rquest from aigw's translated URL and headers.
+            let mut builder = self.ph.client().post(&translated.url);
+            for (name, value) in &translated.headers {
+                if let Ok(v) = value.to_str() {
+                    builder = builder.header(name.as_str(), v);
                 }
+            }
+            // x-initiator is per-request (depends on message roles) so aigw can't
+            // include it in default_headers. Append it manually after translation.
+            builder = builder.header("x-initiator", initiator);
+            // Prevent compressed SSE streams from breaking the line scanner.
+            builder = builder.header("accept-encoding", "identity");
+            // Attach the translated body (already serialized JSON bytes by aigw).
+            let builder = builder.body(translated.body.to_vec());
+
+            if stream {
+                // Option P: raw byte passthrough — stream Copilot SSE bytes to caller
+                // unchanged. aigw is used only for URL/header/body building.
+                match self.ph.send_passthrough(builder, true).await {
+                    Ok(resp) => return Ok(resp),
+                    Err(e) => {
+                        if !e.is_retryable() || attempt + 1 >= max_attempts {
+                            return Err(e);
+                        }
+                        tracing::warn!(attempt, error = %e, "copilot stream request failed, trying next account");
+                        Self::invalidate_current_account();
+                        last_err = Some(e);
+                    }
+                }
+            } else {
+                // Non-streaming: use aigw's OpenAICompatResponseTranslator.
+                let resp = match self.ph.send(builder).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        if !e.is_retryable() || attempt + 1 >= max_attempts {
+                            return Err(e);
+                        }
+                        tracing::warn!(attempt, error = %e, "copilot request failed, trying next account");
+                        Self::invalidate_current_account();
+                        last_err = Some(e);
+                        continue;
+                    }
+                };
+                let resp_bytes = resp.bytes().await.map_err(ByokError::from)?;
+                let aigw_response = OpenAIResponseTranslator
+                    .translate_response(http::StatusCode::OK, &resp_bytes)
+                    .map_err(|e: aigw_core::error::TranslateError| {
+                        ByokError::Translation(e.to_string())
+                    })?;
+                let value = serde_json::to_value(aigw_response)
+                    .map_err(|e| ByokError::Translation(e.to_string()))?;
+                return Ok(ProviderResponse::Complete(value));
             }
         }
 

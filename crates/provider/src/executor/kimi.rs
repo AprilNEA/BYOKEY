@@ -1,31 +1,39 @@
 //! Kimi executor — Moonshot AI (Kimi) OpenAI-compatible API.
 //!
-//! Uses Kimi's OpenAI-compatible chat completions endpoint with direct passthrough.
+//! Uses Kimi's OpenAI-compatible chat completions endpoint via `aigw::openai_compat`.
 //! Auth: `Authorization: Bearer {token}` for both OAuth and API key.
 //! Model names are prefixed with `kimi-` locally and stripped before upstream dispatch.
+//!
+//! Kimi uses a non-standard path (`/coding/v1/chat/completions`). This is handled
+//! by setting `base_url` to `https://api.kimi.com/coding/v1`; aigw appends
+//! `/chat/completions` to produce the correct full URL.
 
 use crate::http_util::ProviderHttp;
 use crate::registry;
+use aigw::openai::translate::OpenAIResponseTranslator;
+use aigw::openai::{HttpTransportConfig, OpenAIAuthConfig};
+use aigw::openai_compat::translate::OpenAICompatRequestTranslator;
+use aigw::openai_compat::{OpenAICompatConfig, OpenAICompatProvider, Quirks};
+use aigw_core::translate::{RequestTranslator as _, ResponseTranslator as _};
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
 use byokey_types::{
-    ChatRequest, ProviderId, RateLimitStore,
-    traits::{ProviderExecutor, ProviderResponse, Result},
+    ByokError, ChatRequest, ProviderId, RateLimitStore,
+    traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
 };
-use rquest::Client;
+use secrecy::SecretString;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// Default Kimi API base URL.
-const DEFAULT_BASE_URL: &str = "https://api.kimi.com";
-/// Chat completions API path.
-const API_PATH: &str = "/coding/v1/chat/completions";
+/// Default Kimi API base URL (includes `/coding/v1`; aigw appends `/chat/completions`).
+const DEFAULT_BASE_URL: &str = "https://api.kimi.com/coding/v1";
 
 /// Executor for the Moonshot AI (Kimi) API.
 pub struct KimiExecutor {
     ph: ProviderHttp,
     api_key: Option<String>,
-    api_url: String,
+    base_url: String,
     auth: Arc<AuthManager>,
     device_id: String,
 }
@@ -36,7 +44,7 @@ impl KimiExecutor {
     #[builder]
     #[allow(clippy::needless_pass_by_value)]
     pub fn new(
-        http: Client,
+        http: rquest::Client,
         auth: Arc<AuthManager>,
         api_key: Option<String>,
         base_url: Option<String>,
@@ -46,18 +54,15 @@ impl KimiExecutor {
         if let Some(store) = ratelimit {
             ph = ph.with_ratelimit(store, ProviderId::Kimi);
         }
-        let api_url = format!(
-            "{}{}",
-            base_url
-                .as_deref()
-                .unwrap_or(DEFAULT_BASE_URL)
-                .trim_end_matches('/'),
-            API_PATH
-        );
+        let base_url = base_url
+            .as_deref()
+            .unwrap_or(DEFAULT_BASE_URL)
+            .trim_end_matches('/')
+            .to_owned();
         Self {
             ph,
             api_key,
-            api_url,
+            base_url,
             auth,
             device_id: byokey_auth::provider::kimi::device_id(),
         }
@@ -72,6 +77,42 @@ impl KimiExecutor {
         )
         .await
     }
+
+    /// Builds an [`OpenAICompatProvider`] for a single request.
+    ///
+    /// Static Kimi-specific headers are placed in `default_headers` so aigw
+    /// includes them in every request it builds.
+    fn build_provider(&self, token: String) -> Result<OpenAICompatProvider> {
+        let mut default_headers = BTreeMap::new();
+        default_headers.insert("user-agent".to_owned(), "KimiCLI/1.10.6".to_owned());
+        default_headers.insert("x-msh-platform".to_owned(), "kimi_cli".to_owned());
+        default_headers.insert("x-msh-version".to_owned(), "1.10.6".to_owned());
+        default_headers.insert(
+            "x-msh-device-name".to_owned(),
+            byokey_auth::provider::kimi::device_name().clone(),
+        );
+        default_headers.insert(
+            "x-msh-device-model".to_owned(),
+            byokey_auth::provider::kimi::DEVICE_MODEL.to_owned(),
+        );
+        default_headers.insert("x-msh-device-id".to_owned(), self.device_id.clone());
+
+        OpenAICompatProvider::new(OpenAICompatConfig {
+            name: "kimi".to_owned(),
+            http: HttpTransportConfig {
+                base_url: self.base_url.clone(),
+                timeout_seconds: 600,
+                default_headers,
+            },
+            auth: OpenAIAuthConfig {
+                api_key: SecretString::from(token),
+                organization: None,
+                project: None,
+            },
+            quirks: Quirks::default(),
+        })
+        .map_err(|e| ByokError::Config(e.to_string()))
+    }
 }
 
 /// Strip the `kimi-` prefix from a model name for the upstream API.
@@ -85,38 +126,55 @@ impl ProviderExecutor for KimiExecutor {
         let stream = request.stream;
         let mut body = request.into_body();
 
-        crate::http_util::ensure_stream_options(&mut body, stream);
-
-        // Strip kimi- prefix for upstream API
+        // Strip kimi- prefix for upstream API before translation.
         if let Some(model) = body.get("model").and_then(Value::as_str).map(String::from) {
             body["model"] = Value::String(strip_kimi_prefix(&model).to_string());
         }
 
         let token = self.bearer_token().await?;
-        let accept = crate::http_util::accept_for_stream(stream);
+        let provider = self.build_provider(token)?;
+        let translator = OpenAICompatRequestTranslator::new(&provider)
+            .map_err(|e| ByokError::Config(e.to_string()))?;
 
-        let builder = self
-            .ph
-            .client()
-            .post(&self.api_url)
-            .header("content-type", "application/json")
-            .header("authorization", format!("Bearer {token}"))
-            .header("user-agent", "KimiCLI/1.10.6")
-            .header("x-msh-platform", "kimi_cli")
-            .header("x-msh-version", "1.10.6")
-            .header(
-                "x-msh-device-name",
-                byokey_auth::provider::kimi::device_name(),
-            )
-            .header(
-                "x-msh-device-model",
-                byokey_auth::provider::kimi::DEVICE_MODEL,
-            )
-            .header("x-msh-device-id", &self.device_id)
-            .header("accept", accept)
-            .json(&body);
+        // Translate byokey ChatRequest → aigw ChatRequest → OpenAI body.
+        let aigw_request: aigw_core::model::ChatRequest =
+            serde_json::from_value(body).map_err(|e| ByokError::Translation(e.to_string()))?;
 
-        self.ph.send_passthrough(builder, stream).await
+        let translated = if stream {
+            translator
+                .translate_stream_request(&aigw_request)
+                .map_err(|e| ByokError::Translation(e.to_string()))?
+        } else {
+            translator
+                .translate_request(&aigw_request)
+                .map_err(|e| ByokError::Translation(e.to_string()))?
+        };
+
+        // Build rquest from TranslatedRequest URL/headers + body.
+        let mut builder = self.ph.client().post(&translated.url);
+        for (name, value) in &translated.headers {
+            if let Ok(v) = value.to_str() {
+                builder = builder.header(name.as_str(), v);
+            }
+        }
+        let builder = builder
+            .header("accept-encoding", "identity")
+            .body(translated.body.to_vec());
+
+        let resp = self.ph.send(builder).await?;
+
+        if stream {
+            let byte_stream: ByteStream = ProviderHttp::byte_stream(resp);
+            Ok(ProviderResponse::Stream(byte_stream))
+        } else {
+            let resp_bytes = resp.bytes().await.map_err(ByokError::from)?;
+            let aigw_response = OpenAIResponseTranslator
+                .translate_response(http::StatusCode::OK, &resp_bytes)
+                .map_err(|e| ByokError::Translation(e.to_string()))?;
+            let value = serde_json::to_value(aigw_response)
+                .map_err(|e| ByokError::Translation(e.to_string()))?;
+            Ok(ProviderResponse::Complete(value))
+        }
     }
 
     fn supported_models(&self) -> Vec<String> {
