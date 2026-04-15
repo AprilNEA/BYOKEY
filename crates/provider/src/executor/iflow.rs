@@ -31,12 +31,15 @@ use std::sync::Arc;
 /// Default iFlow API base URL (`/v1` suffix; aigw appends `/chat/completions`).
 const DEFAULT_BASE_URL: &str = "https://apis.iflow.cn/v1";
 
+const DEFAULT_USER_AGENT: &str = "iFlow-Cli";
+
 /// Executor for the iFlow (Z.ai / GLM) API.
 pub struct IFlowExecutor {
     ph: ProviderHttp,
     api_key: Option<String>,
     base_url: String,
     auth: Arc<AuthManager>,
+    user_agent: String,
 }
 
 #[bon::bon]
@@ -50,6 +53,7 @@ impl IFlowExecutor {
         api_key: Option<String>,
         base_url: Option<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
+        user_agent: Option<String>,
     ) -> Self {
         let mut ph = ProviderHttp::new(http);
         if let Some(store) = ratelimit {
@@ -65,6 +69,7 @@ impl IFlowExecutor {
             api_key,
             base_url,
             auth,
+            user_agent: user_agent.unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()),
         }
     }
 
@@ -84,7 +89,7 @@ impl IFlowExecutor {
     /// The HMAC signing headers are dynamic and are added post-translation.
     fn build_provider(&self, token: String) -> Result<OpenAICompatProvider> {
         let mut default_headers = BTreeMap::new();
-        default_headers.insert("user-agent".to_owned(), "iFlow-Cli".to_owned());
+        default_headers.insert("user-agent".to_owned(), self.user_agent.clone());
 
         OpenAICompatProvider::new(OpenAICompatConfig {
             name: "iflow".to_owned(),

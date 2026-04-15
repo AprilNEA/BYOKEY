@@ -27,7 +27,7 @@ const WS_URL: &str = "wss://chatgpt.com/backend-api/codex/ws";
 const WS_BETA: &str = "responses_websockets=2026-02-06";
 
 /// User-Agent matching the Codex CLI binary.
-const CODEX_USER_AGENT: &str = "codex_cli_rs/0.116.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464";
+const CODEX_USER_AGENT: &str = "codex-tui/0.120.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464";
 
 /// WebSocket-based executor for the Codex API.
 ///

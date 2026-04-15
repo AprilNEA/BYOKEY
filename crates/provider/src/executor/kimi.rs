@@ -29,6 +29,8 @@ use std::sync::Arc;
 /// Default Kimi API base URL (includes `/coding/v1`; aigw appends `/chat/completions`).
 const DEFAULT_BASE_URL: &str = "https://api.kimi.com/coding/v1";
 
+const DEFAULT_USER_AGENT: &str = "KimiCLI/1.10.6";
+
 /// Executor for the Moonshot AI (Kimi) API.
 pub struct KimiExecutor {
     ph: ProviderHttp,
@@ -36,6 +38,7 @@ pub struct KimiExecutor {
     base_url: String,
     auth: Arc<AuthManager>,
     device_id: String,
+    user_agent: String,
 }
 
 #[bon::bon]
@@ -49,6 +52,7 @@ impl KimiExecutor {
         api_key: Option<String>,
         base_url: Option<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
+        user_agent: Option<String>,
     ) -> Self {
         let mut ph = ProviderHttp::new(http);
         if let Some(store) = ratelimit {
@@ -65,6 +69,7 @@ impl KimiExecutor {
             base_url,
             auth,
             device_id: byokey_auth::provider::kimi::device_id(),
+            user_agent: user_agent.unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()),
         }
     }
 
@@ -84,7 +89,7 @@ impl KimiExecutor {
     /// includes them in every request it builds.
     fn build_provider(&self, token: String) -> Result<OpenAICompatProvider> {
         let mut default_headers = BTreeMap::new();
-        default_headers.insert("user-agent".to_owned(), "KimiCLI/1.10.6".to_owned());
+        default_headers.insert("user-agent".to_owned(), self.user_agent.clone());
         default_headers.insert("x-msh-platform".to_owned(), "kimi_cli".to_owned());
         default_headers.insert("x-msh-version".to_owned(), "1.10.6".to_owned());
         default_headers.insert(

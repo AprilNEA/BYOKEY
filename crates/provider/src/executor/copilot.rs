@@ -102,6 +102,9 @@ pub struct CopilotExecutor {
     auth: Arc<AuthManager>,
     /// Cache: GitHub token → short-lived Copilot API token.
     cache: Mutex<HashMap<String, CachedToken>>,
+    user_agent: String,
+    editor_version: String,
+    plugin_version: String,
 }
 
 #[bon::bon]
@@ -114,6 +117,9 @@ impl CopilotExecutor {
         api_key: Option<String>,
         base_url: Option<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
+        user_agent: Option<String>,
+        editor_version: Option<String>,
+        plugin_version: Option<String>,
     ) -> Self {
         let mut ph = ProviderHttp::new(http);
         if let Some(store) = ratelimit {
@@ -125,6 +131,9 @@ impl CopilotExecutor {
             base_url,
             auth,
             cache: Mutex::new(HashMap::new()),
+            user_agent: user_agent.unwrap_or_else(|| USER_AGENT.to_string()),
+            editor_version: editor_version.unwrap_or_else(|| EDITOR_VERSION.to_string()),
+            plugin_version: plugin_version.unwrap_or_else(|| PLUGIN_VERSION.to_string()),
         }
     }
 
@@ -149,9 +158,9 @@ impl CopilotExecutor {
             .get(COPILOT_TOKEN_URL)
             .header("authorization", format!("token {github_token}"))
             .header("accept", "application/json")
-            .header("user-agent", USER_AGENT)
-            .header("editor-version", EDITOR_VERSION)
-            .header("editor-plugin-version", PLUGIN_VERSION)
+            .header("user-agent", self.user_agent.as_str())
+            .header("editor-version", self.editor_version.as_str())
+            .header("editor-plugin-version", self.plugin_version.as_str())
             .send()
             .await?;
 
@@ -236,7 +245,7 @@ impl CopilotExecutor {
             .get(COPILOT_USER_URL)
             .header("authorization", format!("token {github_token}"))
             .header("accept", "application/json")
-            .header("user-agent", USER_AGENT)
+            .header("user-agent", self.user_agent.as_str())
             .send()
             .await
             .ok()?;
@@ -413,13 +422,13 @@ impl CopilotExecutor {
     /// Static Copilot-specific headers are placed in `default_headers` so aigw
     /// includes them in every request it builds. The `x-initiator` header is
     /// **per-request** and must be added separately after translation.
-    fn build_provider(token: &str, base_url: &str) -> Result<OpenAICompatProvider> {
+    fn build_provider(&self, token: &str, base_url: &str) -> Result<OpenAICompatProvider> {
         let mut default_headers = BTreeMap::new();
-        default_headers.insert("user-agent".to_owned(), USER_AGENT.to_owned());
-        default_headers.insert("editor-version".to_owned(), EDITOR_VERSION.to_owned());
+        default_headers.insert("user-agent".to_owned(), self.user_agent.clone());
+        default_headers.insert("editor-version".to_owned(), self.editor_version.clone());
         default_headers.insert(
             "editor-plugin-version".to_owned(),
-            PLUGIN_VERSION.to_owned(),
+            self.plugin_version.clone(),
         );
         default_headers.insert("openai-intent".to_owned(), OPENAI_INTENT.to_owned());
         default_headers.insert(
@@ -556,7 +565,7 @@ impl ProviderExecutor for CopilotExecutor {
             };
 
             // Build aigw provider + translator for this token/endpoint combination.
-            let provider = match Self::build_provider(&token, &endpoint) {
+            let provider = match self.build_provider(&token, &endpoint) {
                 Ok(p) => p,
                 Err(e) => return Err(e),
             };

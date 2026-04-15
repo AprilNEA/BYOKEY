@@ -91,8 +91,23 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
 
     let store = Arc::new(crate::open_store(db).await?);
     let auth = Arc::new(AuthManager::new(store.clone(), rquest::Client::new()));
+
+    // Background token refresh: check every 60s, refresh tokens within 5 min of expiry.
+    let _refresh_handle = auth.spawn_refresh_loop(
+        std::time::Duration::from_secs(60),
+        std::time::Duration::from_secs(300),
+    );
+
+    // Fetch remote version/fingerprint info (falls back to compile-time defaults).
+    let versions = byokey_proxy::VersionStore::fetch(&rquest::Client::new()).await;
+
     let usage_store: Arc<dyn byokey_types::UsageStore> = store;
-    let state = AppState::new(Arc::clone(&config_arc), auth, Some(usage_store.clone()));
+    let state = AppState::new(
+        Arc::clone(&config_arc),
+        auth,
+        Some(usage_store.clone()),
+        versions,
+    );
 
     // Pre-load cumulative usage from persisted records so the in-memory snapshot
     // reflects historical totals even after a restart.

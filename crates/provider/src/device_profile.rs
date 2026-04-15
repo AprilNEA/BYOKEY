@@ -16,16 +16,16 @@ use uuid::Uuid;
 const PROFILE_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
 
 // ── Baseline defaults ───────────────────────────────────────────────
-const DEFAULT_USER_AGENT: &str = "claude-cli/2.1.88 (external, cli)";
+const DEFAULT_USER_AGENT: &str = "claude-cli/2.1.109 (external, cli)";
 const DEFAULT_PACKAGE_VERSION: &str = "0.74.0";
-const DEFAULT_RUNTIME_VERSION: &str = "v22.13.0";
+const DEFAULT_RUNTIME_VERSION: &str = "v24.14.1";
 const DEFAULT_OS: &str = "MacOS";
 const DEFAULT_ARCH: &str = "arm64";
 
 /// Snapshot of a device fingerprint used for Claude API headers.
 #[derive(Clone, Debug)]
 pub struct DeviceProfile {
-    /// Full `User-Agent` string (e.g. `claude-cli/2.1.88 (external, cli)`).
+    /// Full `User-Agent` string (e.g. `claude-cli/2.1.109 (external, cli)`).
     pub user_agent: String,
     /// `x-stainless-package-version` value.
     pub package_version: String,
@@ -210,7 +210,7 @@ mod tests {
         assert_eq!(p.user_agent, DEFAULT_USER_AGENT);
         assert_eq!(p.os, DEFAULT_OS);
         assert_eq!(p.arch, DEFAULT_ARCH);
-        assert_eq!(p.version, Some((2, 1, 88)));
+        assert_eq!(p.version, Some((2, 1, 109)));
         assert!(!p.session_id.is_empty());
         assert_eq!(p.device_id.len(), 64);
     }
@@ -218,8 +218,8 @@ mod tests {
     #[test]
     fn parse_version_happy_path() {
         assert_eq!(
-            parse_version("claude-cli/2.1.88 (external, cli)"),
-            Some((2, 1, 88))
+            parse_version("claude-cli/2.1.109 (external, cli)"),
+            Some((2, 1, 109))
         );
     }
 
@@ -256,7 +256,7 @@ mod tests {
         let _ = cache.resolve("k");
         let after = cache.resolve_or_upgrade("k", Some("claude-cli/1.0.0 (external, cli)"));
         // Should still be baseline 2.1.88
-        assert_eq!(after.version, Some((2, 1, 88)));
+        assert_eq!(after.version, Some((2, 1, 109)));
     }
 
     #[test]
@@ -265,7 +265,7 @@ mod tests {
         let _ = cache.resolve_or_upgrade("a", Some("claude-cli/9.9.9 (external, cli)"));
         let b = cache.resolve("b");
         // "b" should still be baseline
-        assert_eq!(b.version, Some((2, 1, 88)));
+        assert_eq!(b.version, Some((2, 1, 109)));
     }
 
     #[test]

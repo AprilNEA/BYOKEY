@@ -184,6 +184,7 @@ mod tests {
                 config,
                 auth,
                 None,
+                byokey_provider::VersionStore::empty(),
                 Arc::new(crate::AmpThreadIndex::empty()),
             ),
             store,

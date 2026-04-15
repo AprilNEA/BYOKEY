@@ -10,8 +10,11 @@ pub struct AuthCmd {
 
 impl AuthCmd {
     pub async fn new(db: Option<PathBuf>) -> Result<Self> {
+        eprintln!("[auth] opening store...");
         let store = Arc::new(crate::open_store(db).await?);
+        eprintln!("[auth] creating http client...");
         let auth = AuthManager::new(store, rquest::Client::new());
+        eprintln!("[auth] ready");
         Ok(Self { auth })
     }
 

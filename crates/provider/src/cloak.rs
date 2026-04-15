@@ -8,7 +8,7 @@ use byokey_config::CloakConfig;
 use sha2::{Digest as _, Sha256};
 
 /// Default CLI version for billing header and User-Agent.
-const DEFAULT_CLI_VERSION: &str = "2.1.88";
+const DEFAULT_CLI_VERSION: &str = "2.1.109";
 
 /// Salt used by Claude Code's fingerprint.ts — must match the backend validator.
 const FINGERPRINT_SALT: &str = "59cf53e54c78";
@@ -331,6 +331,117 @@ fn obfuscate_string(input: &str, words: &[&str]) -> String {
     result
 }
 
+// ── OAuth tool name remapping ────────────────────────────────────────────────
+
+/// Tool name mapping: lowercase (client-side) → title case (sent to Anthropic).
+///
+/// Remapping tool names avoids third-party fingerprint detection when using
+/// OAuth tokens. Only Claude Code built-in tools are mapped; custom tool names
+/// pass through unchanged.
+const TOOL_RENAME_MAP: &[(&str, &str)] = &[
+    ("bash", "Bash"),
+    ("read", "Read"),
+    ("write", "Write"),
+    ("edit", "Edit"),
+    ("glob", "Glob"),
+    ("grep", "Grep"),
+    ("task", "Task"),
+    ("webfetch", "WebFetch"),
+    ("todowrite", "TodoWrite"),
+    ("todoread", "TodoRead"),
+    ("notebookedit", "NotebookEdit"),
+    ("question", "Question"),
+    ("skill", "Skill"),
+    ("ls", "LS"),
+];
+
+fn forward_rename(name: &str) -> Option<&'static str> {
+    TOOL_RENAME_MAP
+        .iter()
+        .find(|(k, _)| *k == name)
+        .map(|(_, v)| *v)
+}
+
+fn reverse_rename(name: &str) -> Option<&'static str> {
+    TOOL_RENAME_MAP
+        .iter()
+        .find(|(_, v)| *v == name)
+        .map(|(k, _)| *k)
+}
+
+/// Renames known tool names in a Claude request body.
+pub fn remap_tool_names_request(body: &mut serde_json::Value) {
+    rename_in_value(body, forward_rename);
+}
+
+/// Reverses tool name remapping in a Claude response body.
+pub fn reverse_remap_tool_names_response(body: &mut serde_json::Value) {
+    rename_in_value(body, reverse_rename);
+}
+
+/// Applies a name-mapping function to tool names throughout a JSON value.
+///
+/// Covers `tools[].name`, `tool_choice.name`, `messages[].content[].name`
+/// (where `type == "tool_use"`), and `content[].name` (response bodies).
+fn rename_in_value(body: &mut serde_json::Value, map_fn: fn(&str) -> Option<&'static str>) {
+    // tools[].name
+    if let Some(tools) = body.get_mut("tools").and_then(|v| v.as_array_mut()) {
+        for tool in tools {
+            rename_field(tool, "name", map_fn);
+        }
+    }
+
+    // tool_choice.name
+    if let Some(tc) = body.get_mut("tool_choice") {
+        rename_field(tc, "name", map_fn);
+    }
+
+    // messages[].content[] where type == "tool_use"
+    if let Some(messages) = body.get_mut("messages").and_then(|v| v.as_array_mut()) {
+        for msg in messages {
+            rename_tool_use_blocks(msg.get_mut("content"), map_fn);
+        }
+    }
+
+    // response content[] where type == "tool_use"
+    rename_tool_use_blocks(body.get_mut("content"), map_fn);
+}
+
+fn rename_tool_use_blocks(
+    content: Option<&mut serde_json::Value>,
+    map_fn: fn(&str) -> Option<&'static str>,
+) {
+    let Some(arr) = content.and_then(|v| v.as_array_mut()) else {
+        return;
+    };
+    for block in arr {
+        if block.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
+            rename_field(block, "name", map_fn);
+        }
+    }
+}
+
+fn rename_field(
+    obj: &mut serde_json::Value,
+    field: &str,
+    map_fn: fn(&str) -> Option<&'static str>,
+) {
+    if let Some(name) = obj.get(field).and_then(|v| v.as_str())
+        && let Some(mapped) = map_fn(name)
+    {
+        obj[field] = serde_json::Value::String(mapped.to_string());
+    }
+}
+
+/// Reverses tool name remapping in a single SSE event (streaming response).
+///
+/// Looks for `content_block.name` and remaps it back to lowercase.
+pub fn reverse_remap_tool_name_sse(event: &mut serde_json::Value) {
+    if let Some(cb) = event.get_mut("content_block") {
+        rename_field(cb, "name", reverse_rename);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -622,5 +733,47 @@ mod tests {
     fn test_obfuscate_empty_words() {
         let result = obfuscate_string("hello world", &[""]);
         assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn test_remap_tool_names_request() {
+        let mut body = serde_json::json!({
+            "tools": [
+                {"name": "bash", "description": "run bash"},
+                {"name": "read", "description": "read file"},
+                {"name": "custom_tool", "description": "custom"}
+            ],
+            "messages": [
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "name": "bash", "id": "t1", "input": {}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+                ]}
+            ],
+            "tool_choice": {"type": "tool", "name": "read"}
+        });
+        remap_tool_names_request(&mut body);
+        assert_eq!(body["tools"][0]["name"], "Bash");
+        assert_eq!(body["tools"][1]["name"], "Read");
+        assert_eq!(body["tools"][2]["name"], "custom_tool");
+        assert_eq!(body["messages"][0]["content"][0]["name"], "Bash");
+        assert_eq!(body["tool_choice"]["name"], "Read");
+    }
+
+    #[test]
+    fn test_reverse_remap_tool_names() {
+        let mut body = serde_json::json!({
+            "content": [
+                {"type": "tool_use", "name": "Bash", "id": "t1", "input": {}},
+                {"type": "tool_use", "name": "Read", "id": "t2", "input": {}},
+                {"type": "tool_use", "name": "CustomTool", "id": "t3", "input": {}},
+                {"type": "text", "text": "hello"}
+            ]
+        });
+        reverse_remap_tool_names_response(&mut body);
+        assert_eq!(body["content"][0]["name"], "bash");
+        assert_eq!(body["content"][1]["name"], "read");
+        assert_eq!(body["content"][2]["name"], "CustomTool"); // unknown, untouched
     }
 }

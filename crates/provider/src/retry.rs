@@ -5,6 +5,7 @@
 //! a request succeeds or all keys are exhausted / in cooldown.
 
 use crate::routing::{CredentialRouter, RoutingStrategy};
+use crate::versions::VersionStore;
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
 use byokey_config::KeyRoutingStrategy;
@@ -33,6 +34,7 @@ pub struct RetryExecutor {
     http: Client,
     models: Vec<String>,
     ratelimit: Option<Arc<RateLimitStore>>,
+    versions: VersionStore,
 }
 
 impl RetryExecutor {
@@ -48,6 +50,7 @@ impl RetryExecutor {
     /// # Panics
     ///
     /// Panics if `credentials` is empty (propagated from [`CredentialRouter::new`]).
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         provider: ProviderId,
         credentials: Vec<(String, Option<String>)>,
@@ -56,6 +59,7 @@ impl RetryExecutor {
         http: Client,
         models: Vec<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
+        versions: VersionStore,
     ) -> Self {
         let keys: Vec<String> = credentials.iter().map(|(k, _)| k.clone()).collect();
         let base_urls: HashMap<String, Option<String>> = credentials.into_iter().collect();
@@ -73,6 +77,7 @@ impl RetryExecutor {
             http,
             models,
             ratelimit,
+            versions,
         }
     }
 }
@@ -100,6 +105,7 @@ impl ProviderExecutor for RetryExecutor {
                 Arc::clone(&self.auth),
                 self.http.clone(),
                 self.ratelimit.clone(),
+                &self.versions,
             );
 
             let Some(executor) = executor else {
@@ -160,6 +166,7 @@ mod tests {
             Client::new(),
             vec!["claude-opus-4-5".into()],
             None,
+            VersionStore::empty(),
         );
         assert_eq!(exec.supported_models(), vec!["claude-opus-4-5"]);
     }
@@ -178,6 +185,7 @@ mod tests {
             Client::new(),
             vec!["claude-opus-4-5".into()],
             None,
+            VersionStore::empty(),
         );
         assert_eq!(exec.supported_models().len(), 1);
     }

@@ -328,6 +328,56 @@ fn level_to_effort(level: ThinkingLevel) -> &'static str {
     }
 }
 
+// ── Thinking signature validation ───────────────────────────────────────────
+
+/// Returns `true` if a Claude thinking block signature looks valid.
+///
+/// Valid signatures start with `E` or `R` (after stripping an optional
+/// `<prefix>#` cache key). Antigravity/Gemini-generated thinking blocks
+/// produce non-Claude signatures that cause errors when forwarded.
+#[must_use]
+pub fn has_valid_claude_signature(sig: &str) -> bool {
+    let sig = sig.trim();
+    if sig.is_empty() {
+        return false;
+    }
+    // Strip optional "modelGroup#" or "cache#" prefix.
+    let core = if let Some(idx) = sig.find('#') {
+        sig[idx + 1..].trim()
+    } else {
+        sig
+    };
+    if core.is_empty() {
+        return false;
+    }
+    matches!(core.as_bytes()[0], b'E' | b'R')
+}
+
+/// Strips thinking blocks with invalid signatures from `messages[].content[]`.
+///
+/// Blocks with `type != "thinking"` are always kept. Thinking blocks are only
+/// kept if their `signature` field passes [`has_valid_claude_signature`].
+///
+/// This prevents Antigravity/Gemini-generated thinking blocks (which have
+/// non-Claude signatures) from being forwarded back to Claude and causing errors.
+pub fn strip_invalid_thinking_signatures(body: &mut Value) {
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for msg in messages {
+        let Some(content) = msg.get_mut("content").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        content.retain(|block| {
+            if block.get("type").and_then(Value::as_str) != Some("thinking") {
+                return true;
+            }
+            let sig = block.get("signature").and_then(Value::as_str).unwrap_or("");
+            has_valid_claude_signature(sig)
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -750,5 +800,56 @@ mod tests {
             None,
         );
         assert_eq!(out, body);
+    }
+
+    #[test]
+    fn test_valid_claude_signature() {
+        assert!(has_valid_claude_signature("ErWjKl..."));
+        assert!(has_valid_claude_signature("RxYz..."));
+        assert!(has_valid_claude_signature("modelGroup#EaB123"));
+        assert!(has_valid_claude_signature("cache#RzZz"));
+    }
+
+    #[test]
+    fn test_invalid_claude_signature() {
+        assert!(!has_valid_claude_signature(""));
+        assert!(!has_valid_claude_signature("   "));
+        assert!(!has_valid_claude_signature("XyZ123"));
+        assert!(!has_valid_claude_signature("modelGroup#"));
+        assert!(!has_valid_claude_signature("prefix#QzZ"));
+    }
+
+    #[test]
+    fn test_strip_invalid_thinking_signatures() {
+        let mut body = json!({
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "thinking", "thinking": "some text", "signature": "ErWj123"},
+                        {"type": "thinking", "thinking": "bad", "signature": ""},
+                        {"type": "thinking", "thinking": "bad2", "signature": "XyZbad"},
+                        {"type": "text", "text": "hello"}
+                    ]
+                }
+            ]
+        });
+        strip_invalid_thinking_signatures(&mut body);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["signature"], "ErWj123");
+        assert_eq!(content[1]["type"], "text");
+    }
+
+    #[test]
+    fn test_strip_no_thinking_blocks_is_noop() {
+        let mut body = json!({
+            "messages": [
+                {"role": "user", "content": "hello"}
+            ]
+        });
+        strip_invalid_thinking_signatures(&mut body);
+        assert_eq!(body["messages"][0]["content"], "hello");
     }
 }
