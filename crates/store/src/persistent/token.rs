@@ -442,40 +442,36 @@ mod tests {
 
     #[tokio::test]
     async fn test_legacy_migration() {
+        use sea_orm_migration::MigratorTrait as _;
+
         // Simulate a legacy database with a `tokens` table.
         let db = Database::connect("sqlite::memory:").await.unwrap();
-        db.execute(Statement::from_string(
+        let create_tokens = Statement::from_string(
             db.get_database_backend(),
             "CREATE TABLE tokens (
                 provider   TEXT PRIMARY KEY,
                 token_json TEXT NOT NULL
-            )"
-            .to_string(),
-        ))
-        .await
-        .unwrap();
+            )",
+        );
+        db.execute_raw(create_tokens).await.unwrap();
         let tok = OAuthToken::new("legacy-token");
         let json = serde_json::to_string(&tok).unwrap();
-        db.execute(Statement::from_sql_and_values(
+        let insert_token = Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO tokens (provider, token_json) VALUES ('claude', ?)",
             vec![json.into()],
-        ))
-        .await
-        .unwrap();
+        );
+        db.execute_raw(insert_token).await.unwrap();
 
-        // Run migration.
-        SqliteTokenStore::migrate(&db).await.unwrap();
+        // Run migrations (creates accounts, then migrates legacy tokens).
+        crate::migration::Migrator::up(&db, None).await.unwrap();
 
         // Legacy table should be gone.
-        let result = db
-            .query_one(Statement::from_string(
-                db.get_database_backend(),
-                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='tokens')"
-                    .to_string(),
-            ))
-            .await
-            .unwrap();
+        let exists_stmt = Statement::from_string(
+            db.get_database_backend(),
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='tokens')",
+        );
+        let result = db.query_one_raw(exists_stmt).await.unwrap();
         let legacy_exists = result
             .and_then(|r| r.try_get_by_index::<bool>(0).ok())
             .unwrap_or(true);

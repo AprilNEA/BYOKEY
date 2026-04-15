@@ -4,6 +4,7 @@
 
 pub mod entity;
 pub mod memory;
+pub mod migration;
 pub mod persistent;
 
 pub use memory::InMemoryTokenStore;

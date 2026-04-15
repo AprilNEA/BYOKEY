@@ -23,7 +23,7 @@ impl UsageStore for SqliteTokenStore {
                 now_unix().into(),
             ],
         );
-        self.connection().execute(stmt).await?;
+        self.connection().execute_raw(stmt).await?;
         Ok(())
     }
 
@@ -68,7 +68,7 @@ impl UsageStore for SqliteTokenStore {
 
         let stmt =
             Statement::from_sql_and_values(self.connection().get_database_backend(), &sql, values);
-        let rows = self.connection().query_all(stmt).await?;
+        let rows = self.connection().query_all_raw(stmt).await?;
 
         let mut buckets = Vec::with_capacity(rows.len());
         for row in &rows {
@@ -109,7 +109,7 @@ impl UsageStore for SqliteTokenStore {
 
         let stmt =
             Statement::from_sql_and_values(self.connection().get_database_backend(), &sql, values);
-        let rows = self.connection().query_all(stmt).await?;
+        let rows = self.connection().query_all_raw(stmt).await?;
 
         let mut buckets = Vec::with_capacity(rows.len());
         for row in &rows {
