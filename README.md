@@ -43,25 +43,25 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       <img src="https://assets.byokey.io/icons/providers/anthropic.svg" width="36" alt="Anthropic"><br>
       <b>Claude</b><br>
       <sup>PKCE</sup><br>
-      <sub>opus-4-6 · opus-4-5 · sonnet-4-5 · haiku-4-5</sub>
+      <sub>claude-opus-4-6<br>claude-sonnet-4-5<br>claude-haiku-4-5</sub>
     </td>
     <td align="center" width="120">
       <img src="https://assets.byokey.io/icons/providers/openai.svg" width="36" alt="OpenAI"><br>
       <b>Codex</b><br>
       <sup>PKCE</sup><br>
-      <sub>gpt-5.x · gpt-5.x-codex · o3 · o4-mini</sub>
+      <sub>gpt-5.4 · gpt-5.4-mini<br>gpt-5.3-codex<br>gpt-5.1-codex-max<br>o3 · o4-mini</sub>
     </td>
     <td align="center" width="120">
       <img src="https://assets.byokey.io/icons/providers/githubcopilot.svg" width="36" alt="GitHub Copilot"><br>
       <b>Copilot</b><br>
       <sup>Device code</sup><br>
-      <sub>gpt-5.x · claude-sonnet-4.x · gemini-3.x</sub>
+      <sub>gpt-5.4 · gpt-5.1<br>claude-opus-4.6<br>claude-sonnet-4.6<br>gemini-3.1-pro · gemini-3-pro<br>grok-code-fast-1</sub>
     </td>
     <td align="center" width="120">
       <img src="https://assets.byokey.io/icons/providers/googlegemini.svg" width="36" alt="Google Gemini"><br>
       <b>Gemini</b><br>
       <sup>PKCE</sup><br>
-      <sub>2.0-flash · 1.5-pro · 1.5-flash</sub>
+      <sub>gemini-2.0-flash<br>gemini-1.5-pro<br>gemini-1.5-flash</sub>
     </td>
     <td align="center" width="120">
       <img src="https://assets.byokey.io/icons/providers/amazonwebservices.svg" width="36" alt="AWS"><br>
@@ -75,25 +75,25 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       <img src="https://assets.byokey.io/icons/providers/googlegemini.svg" width="36" alt="Antigravity"><br>
       <b>Antigravity</b><br>
       <sup>PKCE</sup><br>
-      <sub>gemini-2.5-pro · gemini-2.5-flash · claude-sonnet-4-5</sub>
+      <sub>ag-gemini-2.5-pro<br>ag-gemini-2.5-flash<br>ag-claude-sonnet-4-5</sub>
     </td>
     <td align="center" width="120">
       <img src="https://assets.byokey.io/icons/providers/alibabacloud.svg" width="36" alt="Qwen"><br>
       <b>Qwen</b><br>
       <sup>Device code</sup><br>
-      <sub>qwen3-coder-plus · qwen3-max · qwen-plus</sub>
+      <sub>qwen3-max<br>qwen3-coder-plus<br>qwen-plus · qwen-turbo</sub>
     </td>
     <td align="center" width="120">
       <img src="https://assets.byokey.io/icons/providers/moonshot.svg" width="36" alt="Kimi"><br>
       <b>Kimi</b><br>
       <sup>Device code</sup><br>
-      <sub>kimi-k2</sub>
+      <sub>kimi-k2-0711</sub>
     </td>
     <td align="center" width="120">
       <img src="https://assets.byokey.io/icons/providers/iflow.svg" width="36" alt="iFlow"><br>
       <b>iFlow</b><br>
       <sup>Auth code</sup><br>
-      <sub>glm-4.5 · glm-z1-flash · kimi-k2</sub>
+      <sub>glm-4.5 · glm-4.5-air<br>glm-z1-flash<br>kimi-k2</sub>
     </td>
     <td></td>
   </tr>
