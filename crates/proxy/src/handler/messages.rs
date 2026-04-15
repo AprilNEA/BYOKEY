@@ -347,20 +347,6 @@ pub async fn anthropic_messages(
     forward_response(resp, stream, &state.usage, &model_name, "claude").await
 }
 
-/// Handles `POST /copilot/v1/messages` — always routes through Copilot.
-pub async fn copilot_anthropic_messages(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    body: axum::extract::Json<Value>,
-) -> Result<Response, ApiError> {
-    let mut body = body.0;
-    sanitize_system(&mut body);
-    sanitize_thinking(&mut body);
-    let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
-    let beta = build_beta_header(&mut body, &headers);
-    copilot_messages(&state, body, stream, &beta).await
-}
-
 /// Build a Copilot Messages API request with standard headers.
 fn build_copilot_messages_request(
     http: &rquest::Client,

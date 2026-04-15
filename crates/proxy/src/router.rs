@@ -65,14 +65,6 @@ pub fn make_router(state: Arc<AppState>) -> Router {
     let router = Router::new()
         .route("/v1/chat/completions", post(chat::chat_completions))
         .route("/v1/messages", post(messages::anthropic_messages))
-        .route(
-            "/copilot/v1/messages",
-            post(messages::copilot_anthropic_messages),
-        )
-        .route(
-            "/copilot/v1/chat/completions",
-            post(chat::copilot_chat_completions),
-        )
         .route("/v1/models", get(models::list_models))
         .nest("/v0/management", management::router())
         .route("/openapi.json", get(openapi::openapi_json))

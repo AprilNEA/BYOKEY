@@ -17,39 +17,19 @@ use crate::util::stream::{OpenAIParser, tap_usage_stream};
 use crate::util::{extract_usage, sse_response};
 use crate::{AppState, error::ApiError};
 
-/// Handles `POST /copilot/v1/chat/completions` — always routes through Copilot.
-pub async fn copilot_chat_completions(
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<ChatRequest>,
-) -> Result<Response, ApiError> {
-    chat_completions_inner(state, request, true).await
-}
-
 /// Handles `POST /v1/chat/completions` requests.
 ///
-/// Resolves the model to a provider, forwards the request, and returns
-/// either a complete JSON response or an SSE stream.
-///
-/// # Errors
-///
-/// Returns [`ApiError`] if the model is unsupported or the upstream call fails.
-pub async fn chat_completions(
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<ChatRequest>,
-) -> Result<Response, ApiError> {
-    chat_completions_inner(state, request, false).await
-}
-
+/// Resolves the model to a provider via config (`provider.backend`),
+/// forwards the request, and returns either a complete JSON response
+/// or an SSE stream.
 #[tracing::instrument(skip_all, fields(
     model = %request.model,
-    force_copilot,
     provider = tracing::field::Empty,
     bare_model = tracing::field::Empty,
 ))]
-async fn chat_completions_inner(
-    state: Arc<AppState>,
-    mut request: ChatRequest,
-    force_copilot: bool,
+pub async fn chat_completions(
+    State(state): State<Arc<AppState>>,
+    Json(mut request): Json<ChatRequest>,
 ) -> Result<Response, ApiError> {
     let config = state.config.load();
 
@@ -70,13 +50,7 @@ async fn chat_completions_inner(
     // Parse thinking suffix from (possibly alias-resolved) model name.
     let suffix = parse_model_suffix(bare_model);
 
-    let config_fn = |p: &ProviderId| {
-        let mut pc = config.providers.get(p).cloned().unwrap_or_default();
-        if force_copilot && *p != ProviderId::Copilot {
-            pc.backend = Some(ProviderId::Copilot);
-        }
-        Some(pc)
-    };
+    let config_fn = |p: &ProviderId| Some(config.providers.get(p).cloned().unwrap_or_default());
 
     let executor = make_executor_for_model(
         &suffix.model,

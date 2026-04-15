@@ -14,7 +14,7 @@
 //! `ampcode.com` verbatim via [`amp_management_proxy`].
 
 use axum::{
-    extract::{Path, Query, RawQuery, State},
+    extract::{Path, Query, State},
     http::{Method, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -437,24 +437,23 @@ fn byte_stream_to_gemini_sse(
     })
 }
 
-/// Handles `ANY /api/{*path}` — forwards non-provider `ampcode.com` management
-/// routes (auth, threads, telemetry, etc.) transparently to the upstream.
-#[allow(clippy::too_many_lines)]
-pub async fn amp_management_proxy(
+/// Transparent proxy to `ampcode.com` — used for both `/api/{*path}` and
+/// `/v0/management/{*path}`. Takes the original URI path directly so a
+/// single handler covers all non-provider amp routes.
+pub async fn ampcode_proxy(
     State(state): State<Arc<AppState>>,
+    axum::extract::Extension(fwd): axum::extract::Extension<ForwardedHeaders>,
     method: Method,
-    Path(path): Path<String>,
-    RawQuery(query): RawQuery,
-    axum::extract::Extension(forwarded): axum::extract::Extension<ForwardedHeaders>,
+    uri: axum::http::Uri,
     body: Bytes,
 ) -> Response {
-    let url = match query.as_deref() {
-        Some(q) if !q.is_empty() => format!("{AMP_BACKEND}/api/{path}?{q}"),
-        _ => format!("{AMP_BACKEND}/api/{path}"),
+    let path = uri.path();
+    let url = match uri.query() {
+        Some(q) => format!("{AMP_BACKEND}{path}?{q}"),
+        None => format!("{AMP_BACKEND}{path}"),
     };
 
-    // Debug logging for /api/internal requests (controlled by tracing level).
-    let debug = path == "internal" && tracing::enabled!(tracing::Level::DEBUG);
+    let debug = path.ends_with("/internal") && tracing::enabled!(tracing::Level::DEBUG);
     if debug {
         let req_body = std::str::from_utf8(&body)
             .ok()
@@ -463,15 +462,13 @@ pub async fn amp_management_proxy(
                 || format!("{body:?}"),
                 |v| serde_json::to_string_pretty(&v).unwrap_or_default(),
             );
-        tracing::debug!(%method, %url, body = %req_body, "amp proxy request");
+        tracing::debug!(%method, %url, body = %req_body, "ampcode proxy request");
     }
-
-    let upstream_headers = forwarded.headers;
 
     let resp = match state
         .http
         .request(method, url)
-        .headers(upstream_headers)
+        .headers(fwd.headers)
         .body(body)
         .send()
         .await
@@ -502,7 +499,7 @@ pub async fn amp_management_proxy(
                 || format!("{body_bytes:?}"),
                 |v| serde_json::to_string_pretty(&v).unwrap_or_default(),
             );
-        tracing::debug!(%status, body = %resp_body, "amp proxy response");
+        tracing::debug!(%status, body = %resp_body, "ampcode proxy response");
     }
 
     (status, resp_headers, body_bytes).into_response()

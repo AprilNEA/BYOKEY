@@ -17,21 +17,16 @@ pub mod threads;
 
 use axum::{
     Router,
-    extract::{Path, RawQuery, State},
-    http::{HeaderValue, Method, StatusCode},
-    response::{IntoResponse, Response},
+    extract::RawQuery,
+    http::{HeaderValue, StatusCode},
+    response::IntoResponse,
     routing::{any, get, post},
 };
-use bytes::Bytes;
 use std::sync::Arc;
 
 use crate::AppState;
-use crate::middleware::forward::ForwardedHeaders;
-use crate::util::bad_gateway;
 
 use super::{chat, messages};
-
-const AMP_BACKEND: &str = "https://ampcode.com";
 
 /// Build the Amp CLI / `AmpCode` router.
 ///
@@ -42,7 +37,7 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/auth/cli-login", get(cli_login_redirect))
         .route("/v1/login", get(login_redirect))
-        .route("/v0/management/{*path}", any(management_proxy))
+        .route("/v0/management/{*path}", any(provider::ampcode_proxy))
         // AmpCode provider-specific routes (must be registered before the catch-all)
         .route(
             "/api/provider/anthropic/v1/messages",
@@ -61,7 +56,7 @@ pub fn router() -> Router<Arc<AppState>> {
             post(provider::gemini_native_passthrough),
         )
         // Catch-all: forward remaining /api/* routes to ampcode.com
-        .route("/api/{*path}", any(provider::amp_management_proxy))
+        .route("/api/{*path}", any(provider::ampcode_proxy))
 }
 
 /// Redirects Amp CLI to the web login page.
@@ -91,41 +86,4 @@ pub async fn cli_login_redirect(RawQuery(query): RawQuery) -> impl IntoResponse 
         StatusCode::FOUND,
         [(axum::http::header::LOCATION, location)],
     )
-}
-
-/// Transparently proxies requests to the ampcode.com management API.
-pub async fn management_proxy(
-    State(state): State<Arc<AppState>>,
-    method: Method,
-    Path(path): Path<String>,
-    axum::extract::Extension(forwarded): axum::extract::Extension<ForwardedHeaders>,
-    body: Bytes,
-) -> Response {
-    let url = format!("{AMP_BACKEND}/v0/management/{path}");
-
-    let resp = match state
-        .http
-        .request(method, url)
-        .headers(forwarded.headers)
-        .body(body)
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => return bad_gateway(e),
-    };
-
-    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-    let mut resp_headers = axum::http::HeaderMap::new();
-    for (name, value) in resp.headers() {
-        if let (Ok(n), Ok(v)) = (
-            axum::http::HeaderName::from_bytes(name.as_ref()),
-            axum::http::HeaderValue::from_bytes(value.as_bytes()),
-        ) {
-            resp_headers.insert(n, v);
-        }
-    }
-
-    let body_bytes = resp.bytes().await.unwrap_or_default();
-    (status, resp_headers, body_bytes).into_response()
 }
