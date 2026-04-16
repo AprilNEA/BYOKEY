@@ -1,0 +1,32 @@
+[package]
+name = "ampcode"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+description = "Unofficial Rust client for Ampcode (ampcode.com)"
+license.workspace = true
+repository.workspace = true
+homepage = "https://ampcode.com"
+keywords = ["ampcode", "amp", "anthropic", "ai", "client"]
+categories = ["web-programming::http-client", "api-bindings"]
+
+[lints]
+workspace = true
+
+[features]
+default = ["rustls-tls"]
+rustls-tls = ["reqwest/rustls-tls"]
+native-tls = ["reqwest/native-tls"]
+
+[dependencies]
+reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
+axum = { workspace = true }
+serde_json = { workspace = true }
+tempfile = "3"

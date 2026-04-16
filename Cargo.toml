@@ -10,6 +10,7 @@ members = [
     "crates/provider",
     "crates/proto",
     "crates/proxy",
+    "crates/ampcode",
 ]
 exclude = ["desktop/src-tauri"]
 
@@ -36,6 +37,7 @@ byokey-provider = { version = "0.11.0", path = "crates/provider" }
 byokey-proto = { version = "0.11.0", path = "crates/proto" }
 byokey-proxy = { version = "0.11.0", path = "crates/proxy" }
 byokey-daemon = { version = "0.11.0", path = "crates/daemon" }
+ampcode = { version = "0.1.0", path = "crates/ampcode" }
 aigw = { version = "0.4.0", default-features = false, features = ["anthropic", "anthropic-claude-code", "openai", "openai-compat"] }
 aigw-core = "0.4.0"
 aigw-openai = "0.4.0"
