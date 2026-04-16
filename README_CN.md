@@ -40,19 +40,25 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
 <table>
   <tr>
     <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/anthropic.svg" width="36" alt="Anthropic"><br>
+      <img src="https://assets.byokey.io/icons/providers/claude.svg" width="36" alt="Claude"><br>
       <b>Claude</b><br>
       <sup>PKCE</sup><br>
       <sub>claude-opus-4-6<br>claude-sonnet-4-5<br>claude-haiku-4-5</sub>
     </td>
     <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/openai.svg" width="36" alt="OpenAI"><br>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="https://assets.byokey.io/icons/providers/codex-dark.svg">
+        <img src="https://assets.byokey.io/icons/providers/codex.svg" width="36" alt="Codex">
+      </picture><br>
       <b>Codex</b><br>
       <sup>PKCE</sup><br>
       <sub>gpt-5.4<br>gpt-5.3-codex<br>gpt-5.1-codex-max<br>o3 · o4-mini</sub>
     </td>
     <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/githubcopilot.svg" width="36" alt="GitHub Copilot"><br>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="https://assets.byokey.io/icons/providers/copilot-dark.svg">
+        <img src="https://assets.byokey.io/icons/providers/githubcopilot.svg" width="36" alt="GitHub Copilot">
+      </picture><br>
       <b>Copilot</b><br>
       <sup>设备码</sup><br>
       <sub>gpt-5.4<br>claude-sonnet-4.6<br>gemini-3.1-pro<br>grok-code-fast-1</sub>
@@ -60,19 +66,22 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
   </tr>
   <tr>
     <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/googlegemini.svg" width="36" alt="Google Gemini"><br>
+      <img src="https://assets.byokey.io/icons/providers/gemini.svg" width="36" alt="Gemini"><br>
       <b>Gemini</b><br>
       <sup>PKCE</sup><br>
       <sub>gemini-2.0-flash<br>gemini-1.5-pro<br>gemini-1.5-flash</sub>
     </td>
     <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/amazonwebservices.svg" width="36" alt="AWS"><br>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="https://assets.byokey.io/icons/providers/amazonwebservices-dark.svg">
+        <img src="https://assets.byokey.io/icons/providers/amazonwebservices.svg" width="36" alt="AWS">
+      </picture><br>
       <b>Kiro</b><br>
       <sup>设备码</sup><br>
       <sub>kiro-default</sub>
     </td>
     <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/googlegemini.svg" width="36" alt="Antigravity"><br>
+      <img src="https://assets.byokey.io/icons/providers/gemini.svg" width="36" alt="Antigravity"><br>
       <b>Antigravity</b><br>
       <sup>PKCE</sup><br>
       <sub>ag-gemini-2.5-pro<br>ag-gemini-2.5-flash<br>ag-claude-sonnet-4-5</sub>
@@ -86,13 +95,12 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       <sub>qwen3-max<br>qwen3-coder-plus<br>qwen-plus</sub>
     </td>
     <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/moonshot.svg" width="36" alt="Kimi"><br>
+      <img src="https://assets.byokey.io/icons/providers/kimi.svg" width="36" alt="Kimi"><br>
       <b>Kimi</b><br>
       <sup>设备码</sup><br>
       <sub>kimi-k2-0711</sub>
     </td>
     <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/iflow.svg" width="36" alt="iFlow"><br>
       <b>iFlow</b><br>
       <sup>授权码</sup><br>
       <sub>glm-4.5<br>glm-z1-flash<br>kimi-k2</sub>
@@ -122,7 +130,7 @@ cd BYOKEY
 cargo install --path .
 ```
 
-> **环境要求：** Rust 1.85+（edition 2024），以及用于 SQLite 的 C 编译器。
+> **环境要求：** Rust 1.85+（edition 2024）、用于 SQLite 的 C 编译器，以及用于 ConnectRPC 代码生成的 `protoc`（`brew install protobuf` / `apt-get install protobuf-compiler` / `choco install protoc`）。
 
 ## 快速开始
 
