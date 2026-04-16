@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/AprilNEA/BYOKEY/compare/v0.11.0...v0.12.0) - 2026-04-16
+
+### Added
+
+- sync with upstream, add VersionStore, update fingerprints
+
+### Fixed
+
+- *(ci)* update rustls-webpki/rand, ignore unfixable audit advisories
+- *(proxy)* strip unsupported params for codex OAuth, generalize device code prompt
+
+### Other
+
+- use branded provider icons with dark mode support
+- fix ugly Supported Providers table layout
+- use real registered model IDs in Supported Providers tables
+- sync README/CONTRIBUTING/AGENTS with post-v0.11.0 refactors
+- integrate origin/master (v0.11.0 release, PR #58, #69)
+- extract AuthCmd struct and reorganize CLI actions module
+- *(amp)* remove ad-blocking feature and extract shared proxy utilities
+- *(serve)* drop TLS, add socket activation, fix shutdown hang
+- add request-correlated logging and daemon control socket
+- *(provider)* migrate Kiro + OpenAI-compat providers to aigw
+- *(store)* migrate to sea-orm v2 + sea-orm-migration
+
 ## [0.11.0](https://github.com/AprilNEA/BYOKEY/compare/v0.10.0...v0.11.0) - 2026-04-09
 
 ### Fixed
