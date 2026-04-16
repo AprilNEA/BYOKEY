@@ -45,10 +45,11 @@ fn byok_to_connect_error(e: &byokey_types::ByokError) -> ConnectError {
         ByokError::Auth(_) | ByokError::TokenNotFound(_) | ByokError::TokenExpired(_) => {
             ConnectError::unauthenticated(msg)
         }
-        ByokError::UnsupportedModel(_) | ByokError::UnsupportedProvider(_) => {
-            ConnectError::not_found(msg)
+        ByokError::UnsupportedModel(_) => ConnectError::not_found(msg),
+        ByokError::UnsupportedProvider(_) | ByokError::Translation(_) => {
+            ConnectError::invalid_argument(msg)
         }
-        ByokError::Translation(_) => ConnectError::invalid_argument(msg),
+        ByokError::ProviderUnavailable(_) => ConnectError::unavailable(msg),
         _ => ConnectError::internal(msg),
     }
 }
@@ -510,13 +511,10 @@ impl amp_pb::AmpService for AmpServiceImpl {
     ) -> Result<(amp_pb::ListThreadsResponse, Context), ConnectError> {
         let req = request.to_owned_message();
         let all = self.0.amp_threads.list();
-        let filter = req.has_messages.or(Some(true));
+        let want_messages = req.has_messages.unwrap_or(true);
         let filtered: Vec<_> = all
             .iter()
-            .filter(|s| match filter {
-                Some(want) => (s.message_count > 0) == want,
-                None => true,
-            })
+            .filter(|s| !want_messages || s.message_count > 0)
             .collect();
         let total = filtered.len();
         let limit = usize::try_from(req.limit.unwrap_or(50))
@@ -558,7 +556,7 @@ impl amp_pb::AmpService for AmpServiceImpl {
             }
             internal_threads::parse_detail(&path).map_err(|e| {
                 tracing::error!(error = %e, "failed to parse amp thread");
-                ConnectError::internal(format!("failed to parse thread: {e}"))
+                ConnectError::internal("failed to parse thread")
             })
         })
         .await

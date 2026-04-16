@@ -223,6 +223,7 @@ struct AccountsView: View {
         guard let rateLimits = dataService.rateLimits else { return nil }
         guard let provider = rateLimits.providers.first(where: { $0.id == providerId }) else { return nil }
         guard let account = provider.accounts.first(where: { $0.accountID == accountId }) else { return nil }
+        guard account.hasSnapshot else { return nil }
         let headers = account.snapshot.headers
         return headers.isEmpty ? nil : headers
     }

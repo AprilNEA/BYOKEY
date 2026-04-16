@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
-use utoipa::ToSchema;
 
 /// Global request/token counters.
 #[derive(Default)]
@@ -27,7 +26,7 @@ pub struct UsageStats {
 }
 
 /// Per-model usage counters.
-#[derive(Default, Clone, Serialize, ToSchema)]
+#[derive(Default, Clone, Serialize)]
 pub struct ModelStats {
     pub requests: u64,
     pub success: u64,
@@ -37,7 +36,7 @@ pub struct ModelStats {
 }
 
 /// JSON-serializable snapshot of current usage.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize)]
 pub struct UsageSnapshot {
     pub total_requests: u64,
     pub success_requests: u64,

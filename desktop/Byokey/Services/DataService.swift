@@ -26,7 +26,11 @@ final class DataService {
 
     private var pollTask: Task<Void, Never>?
 
-    private var proto: ProtocolClient {
+    // Stored once — @Observable forbids `lazy var` (the macro turns them
+    // into computed properties).  Marked @ObservationIgnored so the macro
+    // leaves them as plain stored properties.
+    @ObservationIgnored
+    private var proto: ProtocolClient = {
         ProtocolClient(
             httpClient: URLSessionHTTPClient(),
             config: ProtocolClientConfig(
@@ -35,10 +39,16 @@ final class DataService {
                 codec: JSONCodec()
             )
         )
-    }
+    }()
+    @ObservationIgnored
+    private var statusClient: Byokey_Status_StatusServiceClient!
+    @ObservationIgnored
+    private var accountsClient: Byokey_Accounts_AccountsServiceClient!
 
-    private var statusClient: Byokey_Status_StatusServiceClient { .init(client: proto) }
-    private var accountsClient: Byokey_Accounts_AccountsServiceClient { .init(client: proto) }
+    init() {
+        statusClient = Byokey_Status_StatusServiceClient(client: proto)
+        accountsClient = Byokey_Accounts_AccountsServiceClient(client: proto)
+    }
 
     // MARK: - Polling
 
@@ -60,6 +70,13 @@ final class DataService {
 
     func reload() async {
         await fetchAll()
+    }
+
+    func loadHistory(from: Int64, to: Int64) async {
+        var req = Byokey_Status_GetUsageHistoryRequest()
+        req.from = from
+        req.to = to
+        history = (await statusClient.getUsageHistory(request: req)).message
     }
 
     func reloadAccounts() async {

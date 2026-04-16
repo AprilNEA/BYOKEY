@@ -93,6 +93,11 @@ jobs:
         with:
           key: desktop-${{ matrix.arch }}
 
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Import certificate
         uses: apple-actions/import-codesign-certs@v3
         with:

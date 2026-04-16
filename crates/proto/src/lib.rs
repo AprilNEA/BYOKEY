@@ -10,8 +10,9 @@
 //!
 //! # Re-exports
 //!
-//! - [`byokey::management::v1`] — management service (status, accounts,
-//!   usage, ratelimits, amp threads).
+//! - [`byokey::status`] — server health, usage, rate limits
+//! - [`byokey::accounts`] — provider account management
+//! - [`byokey::amp`] — Amp CLI thread browsing
 
 #![allow(
     dead_code,

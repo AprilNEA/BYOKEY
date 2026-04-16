@@ -26,6 +26,7 @@ message AccountDetail {
   optional string label = 2;
   bool is_active = 3;
   TokenState token_state = 4;
+  // Unix timestamp (seconds since epoch).
   optional uint64 expires_at = 5;
 }
 

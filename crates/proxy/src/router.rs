@@ -2,9 +2,11 @@
 //!
 //! All traffic — standard REST AI proxy, Amp CLI compatibility, and
 //! `ConnectRPC` management — is served from a single router on one port.
-//! The `ConnectRPC` management service is mounted as the router's
+//! The `ConnectRPC` management services are mounted as the router's
 //! `fallback_service`, so POST requests to
-//! `/byokey.management.ManagementService/{Method}` land there while
+//! `/byokey.status.StatusService/{Method}`,
+//! `/byokey.accounts.AccountsService/{Method}`, or
+//! `/byokey.amp.AmpService/{Method}` land there while
 //! named routes (amp, REST AI) take priority.
 
 use axum::extract::DefaultBodyLimit;
@@ -78,8 +80,10 @@ fn common_layers(router: Router) -> Router {
 /// - `/api/provider/*` — amp CLI's provider-namespaced AI endpoints.
 /// - `/api/{*path}`, `/v0/management/{*path}` — catch-all proxies to
 ///   `ampcode.com` used by the amp CLI.
-/// - `/byokey.management.ManagementService/{Method}` — local byokey
-///   management over `ConnectRPC` (fallback service).
+/// - `/byokey.status.StatusService/{Method}`,
+///   `/byokey.accounts.AccountsService/{Method}`,
+///   `/byokey.amp.AmpService/{Method}` — local byokey management over
+///   `ConnectRPC` (fallback service).
 ///
 /// The amp routes are wrapped in [`forward_headers_middleware`] to strip
 /// client auth and inject the amp upstream token. The middleware is

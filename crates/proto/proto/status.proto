@@ -103,5 +103,6 @@ message AccountRateLimit {
 
 message RateLimitSnapshot {
   map<string, string> headers = 1;
+  // Unix timestamp (seconds since epoch).
   uint64 captured_at = 2;
 }
