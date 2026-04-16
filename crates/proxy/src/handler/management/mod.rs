@@ -1,14 +1,9 @@
-//! BYOKEY management ``ConnectRPC`` service.
+//! BYOKEY management `ConnectRPC` services.
 //!
-//! Implements [`ManagementService`] from `byokey_proto` and exposes it as
-//! a ``ConnectRPC`` tower service. Mounted as the fallback service in
-//! [`crate::router::make_router`], so all
-//! `POST /byokey.management.ManagementService/{Method}` requests land
-//! here regardless of other registered routes.
-//!
-//! This file replaces the previous REST handlers under `/v0/management/*`.
-//! The business logic (auth queries, usage snapshot, rate-limit readout,
-//! amp thread parsing) is identical — only the wire format changed.
+//! Three services split by domain:
+//! - [`StatusServiceImpl`] — server health, usage, rate limits
+//! - [`AccountsServiceImpl`] — provider account CRUD
+//! - [`AmpServiceImpl`] — local Amp CLI thread browsing
 
 use std::sync::Arc;
 
@@ -16,40 +11,33 @@ use buffa::MessageField;
 use buffa::view::OwnedView;
 use buffa_types::google::protobuf::value::Kind;
 use buffa_types::google::protobuf::{ListValue, NullValue, Struct, Value};
-use byokey_proto::byokey::management as pb;
-use byokey_proto::byokey::management::{ManagementService, ManagementServiceExt as _};
 use connectrpc::{ConnectError, Context, Router as ConnectRouter};
 use serde_json::Value as JsonValue;
+
+use byokey_proto::byokey::accounts as acct;
+use byokey_proto::byokey::amp as amp_pb;
+use byokey_proto::byokey::status as stat;
 
 use crate::AppState;
 use crate::handler::amp::threads as internal_threads;
 
-// ───────────────────────────── service ─────────────────────────────
+// ───────────────────────── public entry point ─────────────────────
 
-/// `ConnectRPC` implementation of the BYOKEY management service.
-pub struct ManagementServiceImpl {
-    state: Arc<AppState>,
-}
-
-impl ManagementServiceImpl {
-    /// Construct a new service wired to the given shared application state.
-    #[must_use]
-    pub fn new(state: Arc<AppState>) -> Self {
-        Self { state }
-    }
-}
-
-/// Build a [`ConnectRouter`] pre-registered with the management service,
-/// ready to be attached to an axum server via `.into_axum_service()`.
+/// Build a [`ConnectRouter`] with all three management services registered.
 #[must_use]
 pub fn build_router(state: Arc<AppState>) -> ConnectRouter {
-    Arc::new(ManagementServiceImpl::new(state)).register(ConnectRouter::new())
+    use acct::AccountsServiceExt as _;
+    use amp_pb::AmpServiceExt as _;
+    use stat::StatusServiceExt as _;
+
+    let router = ConnectRouter::new();
+    let router = Arc::new(StatusServiceImpl(state.clone())).register(router);
+    let router = Arc::new(AccountsServiceImpl(state.clone())).register(router);
+    Arc::new(AmpServiceImpl(state)).register(router)
 }
 
-// ───────────────────────────── helpers ─────────────────────────────
+// ───────────────────────── helpers ────────────────────────────────
 
-/// Map [`byokey_types::ByokError`] to a [`ConnectError`] with a sensible
-/// grpc status code. Mirrors the axum [`crate::ApiError`] mapping.
 fn byok_to_connect_error(e: &byokey_types::ByokError) -> ConnectError {
     use byokey_types::ByokError;
     let msg = e.to_string();
@@ -65,8 +53,6 @@ fn byok_to_connect_error(e: &byokey_types::ByokError) -> ConnectError {
     }
 }
 
-/// Recursively convert a `serde_json::Value` into a `google.protobuf.Value`.
-#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 fn json_to_pb_value(v: JsonValue) -> Value {
     let kind = match v {
         JsonValue::Null => Kind::NullValue(NullValue::NULL_VALUE.into()),
@@ -97,8 +83,6 @@ fn json_to_pb_value(v: JsonValue) -> Value {
     }
 }
 
-/// Convert a `serde_json::Value` into a `google.protobuf.Struct`. Non-object
-/// inputs produce an empty struct.
 fn json_to_pb_struct(v: JsonValue) -> Struct {
     if let JsonValue::Object(map) = v {
         let fields = map
@@ -118,10 +102,306 @@ fn clamp_to_u32(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
-// ── conversions: internal amp thread types → proto ────────────────
+#[allow(clippy::cast_possible_wrap)]
+fn now_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
 
-fn to_pb_amp_thread_summary(s: &internal_threads::AmpThreadSummary) -> pb::AmpThreadSummary {
-    pb::AmpThreadSummary {
+// ═══════════════════════ StatusService ════════════════════════════
+
+struct StatusServiceImpl(Arc<AppState>);
+
+impl stat::StatusService for StatusServiceImpl {
+    async fn get_status(
+        &self,
+        ctx: Context,
+        _: OwnedView<stat::GetStatusRequestView<'static>>,
+    ) -> Result<(stat::GetStatusResponse, Context), ConnectError> {
+        let snapshot = self.0.config.load();
+        let server = stat::ServerInfo {
+            host: snapshot.host.clone(),
+            port: u32::from(snapshot.port),
+            ..Default::default()
+        };
+
+        let mut providers = Vec::new();
+        for pid in byokey_types::ProviderId::all() {
+            let cfg = snapshot.providers.get(pid);
+            let has_key = cfg.is_some_and(|c| c.api_key.is_some() || !c.api_keys.is_empty());
+            let auth = if has_key || self.0.auth.is_authenticated(pid).await {
+                stat::AuthStatus::AUTH_STATUS_VALID
+            } else {
+                let accts = self.0.auth.list_accounts(pid).await.unwrap_or_default();
+                if accts.is_empty() {
+                    stat::AuthStatus::AUTH_STATUS_NOT_CONFIGURED
+                } else {
+                    stat::AuthStatus::AUTH_STATUS_EXPIRED
+                }
+            };
+            providers.push(stat::ProviderStatus {
+                id: pid.to_string(),
+                display_name: pid.display_name().to_string(),
+                enabled: cfg.is_none_or(|c| c.enabled),
+                auth_status: auth.into(),
+                models_count: clamp_to_u32(byokey_provider::models_for_provider(pid).len()),
+                ..Default::default()
+            });
+        }
+        Ok((
+            stat::GetStatusResponse {
+                server: server.into(),
+                providers,
+                ..Default::default()
+            },
+            ctx,
+        ))
+    }
+
+    async fn get_usage(
+        &self,
+        ctx: Context,
+        _: OwnedView<stat::GetUsageRequestView<'static>>,
+    ) -> Result<(stat::GetUsageResponse, Context), ConnectError> {
+        let s = self.0.usage.snapshot();
+        let models = s
+            .models
+            .into_iter()
+            .map(|(k, m)| {
+                (
+                    k,
+                    stat::ModelStats {
+                        requests: m.requests,
+                        success: m.success,
+                        failure: m.failure,
+                        input_tokens: m.input_tokens,
+                        output_tokens: m.output_tokens,
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        Ok((
+            stat::GetUsageResponse {
+                total_requests: s.total_requests,
+                success_requests: s.success_requests,
+                failure_requests: s.failure_requests,
+                input_tokens: s.input_tokens,
+                output_tokens: s.output_tokens,
+                models,
+                ..Default::default()
+            },
+            ctx,
+        ))
+    }
+
+    async fn get_usage_history(
+        &self,
+        ctx: Context,
+        request: OwnedView<stat::GetUsageHistoryRequestView<'static>>,
+    ) -> Result<(stat::GetUsageHistoryResponse, Context), ConnectError> {
+        let req = request.to_owned_message();
+        let Some(store) = self.0.usage.store() else {
+            let to = now_seconds();
+            return Ok((
+                stat::GetUsageHistoryResponse {
+                    from: to - 86400,
+                    to,
+                    bucket_seconds: 3600,
+                    error: Some("no persistent usage store configured".into()),
+                    ..Default::default()
+                },
+                ctx,
+            ));
+        };
+        let to = req.to.unwrap_or_else(now_seconds);
+        let from = req.from.unwrap_or(to - 86400);
+        let range = to - from;
+        let bs = if range <= 86400 {
+            3600
+        } else if range <= 86400 * 7 {
+            21600
+        } else {
+            86400
+        };
+        let buckets = store
+            .query(from, to, req.model.as_deref(), bs)
+            .await
+            .map_err(|e| ConnectError::internal(e.to_string()))?
+            .into_iter()
+            .map(|b| stat::UsageBucket {
+                period_start: b.period_start,
+                model: b.model,
+                request_count: b.request_count,
+                input_tokens: b.input_tokens,
+                output_tokens: b.output_tokens,
+                ..Default::default()
+            })
+            .collect();
+        Ok((
+            stat::GetUsageHistoryResponse {
+                from,
+                to,
+                bucket_seconds: bs,
+                buckets,
+                error: None,
+                ..Default::default()
+            },
+            ctx,
+        ))
+    }
+
+    async fn get_rate_limits(
+        &self,
+        ctx: Context,
+        _: OwnedView<stat::GetRateLimitsRequestView<'static>>,
+    ) -> Result<(stat::GetRateLimitsResponse, Context), ConnectError> {
+        let all = self.0.ratelimits.all();
+        let mut by_prov: std::collections::HashMap<
+            byokey_types::ProviderId,
+            Vec<stat::AccountRateLimit>,
+        > = std::collections::HashMap::new();
+        for ((prov, aid), snap) in all {
+            by_prov
+                .entry(prov)
+                .or_default()
+                .push(stat::AccountRateLimit {
+                    account_id: aid,
+                    snapshot: MessageField::some(stat::RateLimitSnapshot {
+                        headers: snap.headers,
+                        captured_at: snap.captured_at,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                });
+        }
+        let providers = byokey_types::ProviderId::all()
+            .iter()
+            .filter_map(|pid| {
+                let accts = by_prov.remove(pid)?;
+                Some(stat::ProviderRateLimits {
+                    id: pid.to_string(),
+                    display_name: pid.display_name().to_string(),
+                    accounts: accts,
+                    ..Default::default()
+                })
+            })
+            .collect();
+        Ok((
+            stat::GetRateLimitsResponse {
+                providers,
+                ..Default::default()
+            },
+            ctx,
+        ))
+    }
+}
+
+// ═══════════════════════ AccountsService ══════════════════════════
+
+struct AccountsServiceImpl(Arc<AppState>);
+
+impl acct::AccountsService for AccountsServiceImpl {
+    async fn list_accounts(
+        &self,
+        ctx: Context,
+        _: OwnedView<acct::ListAccountsRequestView<'static>>,
+    ) -> Result<(acct::ListAccountsResponse, Context), ConnectError> {
+        let mut providers = Vec::new();
+        for pid in byokey_types::ProviderId::all() {
+            let infos = self.0.auth.list_accounts(pid).await.unwrap_or_default();
+            let tokens = self.0.auth.get_all_tokens(pid).await.unwrap_or_default();
+            let accounts = infos
+                .iter()
+                .map(|info| {
+                    let (ts, exp) = match tokens.iter().find(|(id, _)| id == &info.account_id) {
+                        Some((_, tok)) => {
+                            let s = match tok.state() {
+                                byokey_types::TokenState::Valid => {
+                                    acct::TokenState::TOKEN_STATE_VALID
+                                }
+                                byokey_types::TokenState::Expired => {
+                                    acct::TokenState::TOKEN_STATE_EXPIRED
+                                }
+                                byokey_types::TokenState::Invalid => {
+                                    acct::TokenState::TOKEN_STATE_INVALID
+                                }
+                            };
+                            (s, tok.expires_at)
+                        }
+                        None => (acct::TokenState::TOKEN_STATE_INVALID, None),
+                    };
+                    acct::AccountDetail {
+                        account_id: info.account_id.clone(),
+                        label: info.label.clone(),
+                        is_active: info.is_active,
+                        token_state: ts.into(),
+                        expires_at: exp,
+                        ..Default::default()
+                    }
+                })
+                .collect();
+            providers.push(acct::ProviderAccounts {
+                id: pid.to_string(),
+                display_name: pid.display_name().to_string(),
+                accounts,
+                ..Default::default()
+            });
+        }
+        Ok((
+            acct::ListAccountsResponse {
+                providers,
+                ..Default::default()
+            },
+            ctx,
+        ))
+    }
+
+    async fn remove_account(
+        &self,
+        ctx: Context,
+        request: OwnedView<acct::RemoveAccountRequestView<'static>>,
+    ) -> Result<(acct::RemoveAccountResponse, Context), ConnectError> {
+        let req = request.to_owned_message();
+        let pid: byokey_types::ProviderId = req
+            .provider
+            .parse()
+            .map_err(|e: byokey_types::ByokError| byok_to_connect_error(&e))?;
+        self.0
+            .auth
+            .remove_token_for(&pid, &req.account_id)
+            .await
+            .map_err(|e| byok_to_connect_error(&e))?;
+        Ok((acct::RemoveAccountResponse::default(), ctx))
+    }
+
+    async fn activate_account(
+        &self,
+        ctx: Context,
+        request: OwnedView<acct::ActivateAccountRequestView<'static>>,
+    ) -> Result<(acct::ActivateAccountResponse, Context), ConnectError> {
+        let req = request.to_owned_message();
+        let pid: byokey_types::ProviderId = req
+            .provider
+            .parse()
+            .map_err(|e: byokey_types::ByokError| byok_to_connect_error(&e))?;
+        self.0
+            .auth
+            .set_active_account(&pid, &req.account_id)
+            .await
+            .map_err(|e| byok_to_connect_error(&e))?;
+        Ok((acct::ActivateAccountResponse::default(), ctx))
+    }
+}
+
+// ═══════════════════════ AmpService ══════════════════════════════
+
+struct AmpServiceImpl(Arc<AppState>);
+
+fn to_pb_summary(s: &internal_threads::AmpThreadSummary) -> amp_pb::ThreadSummary {
+    amp_pb::ThreadSummary {
         id: s.id.clone(),
         created: s.created,
         title: s.title.clone(),
@@ -135,33 +415,13 @@ fn to_pb_amp_thread_summary(s: &internal_threads::AmpThreadSummary) -> pb::AmpTh
     }
 }
 
-fn to_pb_amp_usage(u: internal_threads::AmpUsage) -> pb::AmpUsage {
-    pb::AmpUsage {
-        model: u.model,
-        input_tokens: u.input_tokens,
-        output_tokens: u.output_tokens,
-        cache_creation_input_tokens: u.cache_creation_input_tokens,
-        cache_read_input_tokens: u.cache_read_input_tokens,
-        total_input_tokens: u.total_input_tokens,
-        ..Default::default()
-    }
-}
-
-fn to_pb_amp_state(s: internal_threads::AmpMessageState) -> pb::AmpMessageState {
-    pb::AmpMessageState {
-        state_type: s.state_type,
-        stop_reason: s.stop_reason,
-        ..Default::default()
-    }
-}
-
-fn to_pb_amp_content_block(b: internal_threads::AmpContentBlock) -> pb::AmpContentBlock {
-    use pb::amp_content_block::Block;
+fn to_pb_content_block(b: internal_threads::AmpContentBlock) -> amp_pb::ContentBlock {
+    use amp_pb::content_block::Block;
     let block = Some(match b {
         internal_threads::AmpContentBlock::Text { text } => Block::Text(text),
         internal_threads::AmpContentBlock::Thinking { thinking } => Block::Thinking(thinking),
         internal_threads::AmpContentBlock::ToolUse { id, name, input } => {
-            Block::ToolUse(Box::new(pb::AmpToolUse {
+            Block::ToolUse(Box::new(amp_pb::ToolUse {
                 id,
                 name,
                 input: MessageField::some(json_to_pb_struct(input)),
@@ -169,9 +429,9 @@ fn to_pb_amp_content_block(b: internal_threads::AmpContentBlock) -> pb::AmpConte
             }))
         }
         internal_threads::AmpContentBlock::ToolResult { tool_use_id, run } => {
-            Block::ToolResult(Box::new(pb::AmpToolResult {
+            Block::ToolResult(Box::new(amp_pb::ToolResult {
                 tool_use_id,
-                run: MessageField::some(pb::AmpToolRun {
+                run: MessageField::some(amp_pb::ToolRun {
                     status: run.status,
                     result: run.result.map(json_to_pb_value).into(),
                     error: run.error.map(json_to_pb_value).into(),
@@ -184,35 +444,53 @@ fn to_pb_amp_content_block(b: internal_threads::AmpContentBlock) -> pb::AmpConte
             Block::UnknownType(original_type.unwrap_or_default())
         }
     });
-    pb::AmpContentBlock {
+    amp_pb::ContentBlock {
         block,
         ..Default::default()
     }
 }
 
-fn to_pb_amp_message(m: internal_threads::AmpMessage) -> pb::AmpMessage {
-    pb::AmpMessage {
+fn to_pb_message(m: internal_threads::AmpMessage) -> amp_pb::Message {
+    amp_pb::Message {
         role: m.role,
         message_id: m.message_id,
-        content: m.content.into_iter().map(to_pb_amp_content_block).collect(),
-        usage: m.usage.map(to_pb_amp_usage).into(),
-        state: m.state.map(to_pb_amp_state).into(),
+        content: m.content.into_iter().map(to_pb_content_block).collect(),
+        usage: m
+            .usage
+            .map(|u| amp_pb::Usage {
+                model: u.model,
+                input_tokens: u.input_tokens,
+                output_tokens: u.output_tokens,
+                cache_creation_input_tokens: u.cache_creation_input_tokens,
+                cache_read_input_tokens: u.cache_read_input_tokens,
+                total_input_tokens: u.total_input_tokens,
+                ..Default::default()
+            })
+            .into(),
+        state: m
+            .state
+            .map(|s| amp_pb::MessageState {
+                state_type: s.state_type,
+                stop_reason: s.stop_reason,
+                ..Default::default()
+            })
+            .into(),
         ..Default::default()
     }
 }
 
-fn to_pb_amp_thread_detail(d: internal_threads::AmpThreadDetail) -> pb::AmpThreadDetail {
-    pb::AmpThreadDetail {
+fn to_pb_detail(d: internal_threads::AmpThreadDetail) -> amp_pb::ThreadDetail {
+    amp_pb::ThreadDetail {
         id: d.id,
         v: d.v,
         created: d.created,
         title: d.title,
         agent_mode: d.agent_mode,
-        messages: d.messages.into_iter().map(to_pb_amp_message).collect(),
+        messages: d.messages.into_iter().map(to_pb_message).collect(),
         relationships: d
             .relationships
             .into_iter()
-            .map(|r| pb::AmpRelationship {
+            .map(|r| amp_pb::Relationship {
                 thread_id: r.thread_id,
                 rel_type: r.rel_type,
                 role: r.role,
@@ -224,361 +502,22 @@ fn to_pb_amp_thread_detail(d: internal_threads::AmpThreadDetail) -> pb::AmpThrea
     }
 }
 
-// ───────────────────────── ManagementService impl ──────────────────────────
-
-impl ManagementService for ManagementServiceImpl {
-    // ── get_status ──────────────────────────────────────────────────
-
-    async fn get_status(
+impl amp_pb::AmpService for AmpServiceImpl {
+    async fn list_threads(
         &self,
         ctx: Context,
-        _request: OwnedView<pb::GetStatusRequestView<'static>>,
-    ) -> Result<(pb::GetStatusResponse, Context), ConnectError> {
-        let snapshot = self.state.config.load();
-
-        let server = pb::ServerInfo {
-            host: snapshot.host.clone(),
-            port: u32::from(snapshot.port),
-            ..Default::default()
-        };
-
-        let mut providers = Vec::new();
-        for provider_id in byokey_types::ProviderId::all() {
-            let config = snapshot.providers.get(provider_id);
-            let enabled = config.is_none_or(|c| c.enabled);
-            let has_api_key = config.is_some_and(|c| c.api_key.is_some() || !c.api_keys.is_empty());
-
-            let auth_status = if has_api_key || self.state.auth.is_authenticated(provider_id).await
-            {
-                pb::AuthStatus::AUTH_STATUS_VALID
-            } else {
-                let accounts = self
-                    .state
-                    .auth
-                    .list_accounts(provider_id)
-                    .await
-                    .unwrap_or_default();
-                if accounts.is_empty() {
-                    pb::AuthStatus::AUTH_STATUS_NOT_CONFIGURED
-                } else {
-                    pb::AuthStatus::AUTH_STATUS_EXPIRED
-                }
-            };
-
-            let models_count =
-                clamp_to_u32(byokey_provider::models_for_provider(provider_id).len());
-
-            providers.push(pb::ProviderStatus {
-                id: provider_id.to_string(),
-                display_name: provider_id.display_name().to_string(),
-                enabled,
-                auth_status: auth_status.into(),
-                models_count,
-                ..Default::default()
-            });
-        }
-
-        Ok((
-            pb::GetStatusResponse {
-                server: MessageField::some(server),
-                providers,
-                ..Default::default()
-            },
-            ctx,
-        ))
-    }
-
-    // ── get_usage ───────────────────────────────────────────────────
-
-    async fn get_usage(
-        &self,
-        ctx: Context,
-        _request: OwnedView<pb::GetUsageRequestView<'static>>,
-    ) -> Result<(pb::GetUsageResponse, Context), ConnectError> {
-        let snap = self.state.usage.snapshot();
-        let models = snap
-            .models
-            .into_iter()
-            .map(|(model, m)| {
-                (
-                    model,
-                    pb::ModelStats {
-                        requests: m.requests,
-                        success: m.success,
-                        failure: m.failure,
-                        input_tokens: m.input_tokens,
-                        output_tokens: m.output_tokens,
-                        ..Default::default()
-                    },
-                )
-            })
-            .collect();
-
-        Ok((
-            pb::GetUsageResponse {
-                total_requests: snap.total_requests,
-                success_requests: snap.success_requests,
-                failure_requests: snap.failure_requests,
-                input_tokens: snap.input_tokens,
-                output_tokens: snap.output_tokens,
-                models,
-                ..Default::default()
-            },
-            ctx,
-        ))
-    }
-
-    // ── get_usage_history ───────────────────────────────────────────
-
-    async fn get_usage_history(
-        &self,
-        ctx: Context,
-        request: OwnedView<pb::GetUsageHistoryRequestView<'static>>,
-    ) -> Result<(pb::GetUsageHistoryResponse, Context), ConnectError> {
+        request: OwnedView<amp_pb::ListThreadsRequestView<'static>>,
+    ) -> Result<(amp_pb::ListThreadsResponse, Context), ConnectError> {
         let req = request.to_owned_message();
-
-        let Some(store) = self.state.usage.store() else {
-            // Echo defaults so the client can still parse the response.
-            let to_default = now_seconds();
-            return Ok((
-                pb::GetUsageHistoryResponse {
-                    from: to_default - 86400,
-                    to: to_default,
-                    bucket_seconds: 3600,
-                    buckets: Vec::new(),
-                    error: Some("no persistent usage store configured".to_string()),
-                    ..Default::default()
-                },
-                ctx,
-            ));
-        };
-
-        let to = req.to.unwrap_or_else(now_seconds);
-        let from = req.from.unwrap_or(to - 86400);
-        let range = to - from;
-        let bucket_secs = if range <= 86400 {
-            3600
-        } else if range <= 86400 * 7 {
-            21600
-        } else {
-            86400
-        };
-
-        let buckets = store
-            .query(from, to, req.model.as_deref(), bucket_secs)
-            .await
-            .map_err(|e| ConnectError::internal(e.to_string()))?;
-
-        let buckets_pb = buckets
-            .into_iter()
-            .map(|b| pb::UsageBucket {
-                period_start: b.period_start,
-                model: b.model,
-                request_count: b.request_count,
-                input_tokens: b.input_tokens,
-                output_tokens: b.output_tokens,
-                ..Default::default()
-            })
-            .collect();
-
-        Ok((
-            pb::GetUsageHistoryResponse {
-                from,
-                to,
-                bucket_seconds: bucket_secs,
-                buckets: buckets_pb,
-                error: None,
-                ..Default::default()
-            },
-            ctx,
-        ))
-    }
-
-    // ── list_accounts ───────────────────────────────────────────────
-
-    async fn list_accounts(
-        &self,
-        ctx: Context,
-        _request: OwnedView<pb::ListAccountsRequestView<'static>>,
-    ) -> Result<(pb::ListAccountsResponse, Context), ConnectError> {
-        let mut providers = Vec::new();
-
-        for provider_id in byokey_types::ProviderId::all() {
-            let accounts_info = self
-                .state
-                .auth
-                .list_accounts(provider_id)
-                .await
-                .unwrap_or_default();
-            let all_tokens = self
-                .state
-                .auth
-                .get_all_tokens(provider_id)
-                .await
-                .unwrap_or_default();
-
-            let mut accounts = Vec::new();
-            for info in &accounts_info {
-                let (token_state, expires_at) = match all_tokens
-                    .iter()
-                    .find(|(id, _)| id == &info.account_id)
-                {
-                    Some((_, token)) => {
-                        let ts = match token.state() {
-                            byokey_types::TokenState::Valid => pb::TokenState::TOKEN_STATE_VALID,
-                            byokey_types::TokenState::Expired => {
-                                pb::TokenState::TOKEN_STATE_EXPIRED
-                            }
-                            byokey_types::TokenState::Invalid => {
-                                pb::TokenState::TOKEN_STATE_INVALID
-                            }
-                        };
-                        (ts, token.expires_at)
-                    }
-                    None => (pb::TokenState::TOKEN_STATE_INVALID, None),
-                };
-
-                accounts.push(pb::AccountDetail {
-                    account_id: info.account_id.clone(),
-                    label: info.label.clone(),
-                    is_active: info.is_active,
-                    token_state: token_state.into(),
-                    expires_at,
-                    ..Default::default()
-                });
-            }
-
-            providers.push(pb::ProviderAccounts {
-                id: provider_id.to_string(),
-                display_name: provider_id.display_name().to_string(),
-                accounts,
-                ..Default::default()
-            });
-        }
-
-        Ok((
-            pb::ListAccountsResponse {
-                providers,
-                ..Default::default()
-            },
-            ctx,
-        ))
-    }
-
-    // ── remove_account ──────────────────────────────────────────────
-
-    async fn remove_account(
-        &self,
-        ctx: Context,
-        request: OwnedView<pb::RemoveAccountRequestView<'static>>,
-    ) -> Result<(pb::RemoveAccountResponse, Context), ConnectError> {
-        let req = request.to_owned_message();
-        let provider_id: byokey_types::ProviderId = req
-            .provider
-            .parse()
-            .map_err(|e: byokey_types::ByokError| byok_to_connect_error(&e))?;
-        self.state
-            .auth
-            .remove_token_for(&provider_id, &req.account_id)
-            .await
-            .map_err(|e| byok_to_connect_error(&e))?;
-        Ok((pb::RemoveAccountResponse::default(), ctx))
-    }
-
-    // ── activate_account ────────────────────────────────────────────
-
-    async fn activate_account(
-        &self,
-        ctx: Context,
-        request: OwnedView<pb::ActivateAccountRequestView<'static>>,
-    ) -> Result<(pb::ActivateAccountResponse, Context), ConnectError> {
-        let req = request.to_owned_message();
-        let provider_id: byokey_types::ProviderId = req
-            .provider
-            .parse()
-            .map_err(|e: byokey_types::ByokError| byok_to_connect_error(&e))?;
-        self.state
-            .auth
-            .set_active_account(&provider_id, &req.account_id)
-            .await
-            .map_err(|e| byok_to_connect_error(&e))?;
-        Ok((pb::ActivateAccountResponse::default(), ctx))
-    }
-
-    // ── get_rate_limits ─────────────────────────────────────────────
-
-    async fn get_rate_limits(
-        &self,
-        ctx: Context,
-        _request: OwnedView<pb::GetRateLimitsRequestView<'static>>,
-    ) -> Result<(pb::GetRateLimitsResponse, Context), ConnectError> {
-        let all = self.state.ratelimits.all();
-
-        let mut by_provider: std::collections::HashMap<
-            byokey_types::ProviderId,
-            Vec<pb::AccountRateLimit>,
-        > = std::collections::HashMap::new();
-
-        for ((provider, account_id), snapshot) in all {
-            by_provider
-                .entry(provider)
-                .or_default()
-                .push(pb::AccountRateLimit {
-                    account_id,
-                    snapshot: MessageField::some(pb::RateLimitSnapshot {
-                        headers: snapshot.headers,
-                        captured_at: snapshot.captured_at,
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                });
-        }
-
-        let mut providers = Vec::new();
-        for provider_id in byokey_types::ProviderId::all() {
-            let accounts = by_provider.remove(provider_id).unwrap_or_default();
-            if accounts.is_empty() {
-                continue;
-            }
-            providers.push(pb::ProviderRateLimits {
-                id: provider_id.to_string(),
-                display_name: provider_id.display_name().to_string(),
-                accounts,
-                ..Default::default()
-            });
-        }
-
-        Ok((
-            pb::GetRateLimitsResponse {
-                providers,
-                ..Default::default()
-            },
-            ctx,
-        ))
-    }
-
-    // ── list_amp_threads ────────────────────────────────────────────
-
-    async fn list_amp_threads(
-        &self,
-        ctx: Context,
-        request: OwnedView<pb::ListAmpThreadsRequestView<'static>>,
-    ) -> Result<(pb::ListAmpThreadsResponse, Context), ConnectError> {
-        let req = request.to_owned_message();
-
-        let all = self.state.amp_threads.list();
-
-        // has_messages defaults to true (hide empty threads).
-        let has_messages_filter = req.has_messages.or(Some(true));
-
-        let filtered: Vec<&internal_threads::AmpThreadSummary> = all
+        let all = self.0.amp_threads.list();
+        let filter = req.has_messages.or(Some(true));
+        let filtered: Vec<_> = all
             .iter()
-            .filter(|s| match has_messages_filter {
+            .filter(|s| match filter {
                 Some(want) => (s.message_count > 0) == want,
                 None => true,
             })
             .collect();
-
         let total = filtered.len();
         let limit = usize::try_from(req.limit.unwrap_or(50))
             .unwrap_or(50)
@@ -586,16 +525,14 @@ impl ManagementService for ManagementServiceImpl {
         let offset = usize::try_from(req.offset.unwrap_or(0))
             .unwrap_or(0)
             .min(total);
-
-        let threads: Vec<pb::AmpThreadSummary> = filtered
+        let threads = filtered
             .into_iter()
             .skip(offset)
             .take(limit)
-            .map(to_pb_amp_thread_summary)
+            .map(to_pb_summary)
             .collect();
-
         Ok((
-            pb::ListAmpThreadsResponse {
+            amp_pb::ListThreadsResponse {
                 threads,
                 total: clamp_to_u32(total),
                 ..Default::default()
@@ -604,19 +541,15 @@ impl ManagementService for ManagementServiceImpl {
         ))
     }
 
-    // ── get_amp_thread ──────────────────────────────────────────────
-
-    async fn get_amp_thread(
+    async fn get_thread(
         &self,
         ctx: Context,
-        request: OwnedView<pb::GetAmpThreadRequestView<'static>>,
-    ) -> Result<(pb::GetAmpThreadResponse, Context), ConnectError> {
+        request: OwnedView<amp_pb::GetThreadRequestView<'static>>,
+    ) -> Result<(amp_pb::GetThreadResponse, Context), ConnectError> {
         let req = request.to_owned_message();
-
         if !internal_threads::is_valid_thread_id(&req.id) {
             return Err(ConnectError::invalid_argument("invalid thread ID format"));
         }
-
         let path = internal_threads::threads_dir().join(format!("{}.json", req.id));
         #[allow(clippy::result_large_err)]
         let detail = tokio::task::spawn_blocking(move || {
@@ -630,21 +563,12 @@ impl ManagementService for ManagementServiceImpl {
         })
         .await
         .map_err(|e| ConnectError::internal(format!("spawn_blocking failed: {e}")))??;
-
         Ok((
-            pb::GetAmpThreadResponse {
-                thread: MessageField::some(to_pb_amp_thread_detail(detail)),
+            amp_pb::GetThreadResponse {
+                thread: MessageField::some(to_pb_detail(detail)),
                 ..Default::default()
             },
             ctx,
         ))
     }
-}
-
-#[allow(clippy::cast_possible_wrap)]
-fn now_seconds() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
 }

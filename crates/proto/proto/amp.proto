@@ -1,0 +1,110 @@
+syntax = "proto3";
+package byokey.amp;
+
+import "google/protobuf/struct.proto";
+
+service AmpService {
+  rpc ListThreads(ListThreadsRequest) returns (ListThreadsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc GetThread(GetThreadRequest) returns (GetThreadResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}
+
+message ListThreadsRequest {
+  optional uint32 limit = 1;
+  optional uint32 offset = 2;
+  optional bool has_messages = 3;
+}
+
+message ListThreadsResponse {
+  repeated ThreadSummary threads = 1;
+  uint32 total = 2;
+}
+
+message ThreadSummary {
+  string id = 1;
+  uint64 created = 2;
+  optional string title = 3;
+  uint32 message_count = 4;
+  optional string agent_mode = 5;
+  optional string last_model = 6;
+  optional uint64 total_input_tokens = 7;
+  optional uint64 total_output_tokens = 8;
+  uint64 file_size_bytes = 9;
+}
+
+message GetThreadRequest {
+  string id = 1;
+}
+
+message GetThreadResponse {
+  ThreadDetail thread = 1;
+}
+
+message ThreadDetail {
+  string id = 1;
+  uint64 v = 2;
+  uint64 created = 3;
+  optional string title = 4;
+  optional string agent_mode = 5;
+  repeated Message messages = 6;
+  repeated Relationship relationships = 7;
+  optional google.protobuf.Struct env = 8;
+}
+
+message Message {
+  string role = 1;
+  uint64 message_id = 2;
+  repeated ContentBlock content = 3;
+  optional Usage usage = 4;
+  optional MessageState state = 5;
+}
+
+message ContentBlock {
+  oneof block {
+    string text = 1;
+    string thinking = 2;
+    ToolUse tool_use = 3;
+    ToolResult tool_result = 4;
+    string unknown_type = 5;
+  }
+}
+
+message ToolUse {
+  string id = 1;
+  string name = 2;
+  google.protobuf.Struct input = 3;
+}
+
+message ToolResult {
+  string tool_use_id = 1;
+  ToolRun run = 2;
+}
+
+message ToolRun {
+  string status = 1;
+  optional google.protobuf.Value result = 2;
+  optional google.protobuf.Value error = 3;
+}
+
+message Usage {
+  string model = 1;
+  optional uint64 input_tokens = 2;
+  optional uint64 output_tokens = 3;
+  optional uint64 cache_creation_input_tokens = 4;
+  optional uint64 cache_read_input_tokens = 5;
+  optional uint64 total_input_tokens = 6;
+}
+
+message MessageState {
+  string state_type = 1;
+  optional string stop_reason = 2;
+}
+
+message Relationship {
+  string thread_id = 1;
+  string rel_type = 2;
+  optional string role = 3;
+}

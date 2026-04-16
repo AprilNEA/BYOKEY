@@ -7,7 +7,11 @@ fn main() {
     println!("cargo:rerun-if-changed=proto");
 
     connectrpc_build::Config::new()
-        .files(&["proto/byokey/management/management.proto"])
+        .files(&[
+            "proto/status.proto",
+            "proto/accounts.proto",
+            "proto/amp.proto",
+        ])
         .includes(&["proto"])
         .include_file("_connectrpc.rs")
         .compile()

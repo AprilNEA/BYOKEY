@@ -55,7 +55,7 @@ struct AccountsView: View {
     // MARK: - Provider Card
 
     @ViewBuilder
-    private func providerCard(_ provider: Byokey_Management_ProviderAccounts) -> some View {
+    private func providerCard(_ provider: Byokey_Accounts_ProviderAccounts) -> some View {
         let isHovered = hoveredProvider == provider.id
         let stats = providerStats(for: provider.id)
 
@@ -264,7 +264,7 @@ struct AccountsView: View {
 // MARK: - Account Row
 
 private struct AccountRow: View {
-    let account: Byokey_Management_AccountDetail
+    let account: Byokey_Accounts_AccountDetail
     let providerName: String
     let rateLimitHeaders: [String: String]?
     let onActivate: () -> Void

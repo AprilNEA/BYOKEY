@@ -1,17 +1,14 @@
-/// Type aliases mapping generated ConnectRPC / proto types to short names
-/// used by the view layer. Management types come from `management.pb.swift`;
-/// the models endpoint is still REST so its types are hand-defined here.
+/// Type aliases mapping generated ConnectRPC proto types to short names.
 
-// MARK: - ConnectRPC proto type aliases
-
-typealias UsageSnapshot = Byokey_Management_GetUsageResponse
-typealias UsageHistoryResponse = Byokey_Management_GetUsageHistoryResponse
-typealias UsageBucket = Byokey_Management_UsageBucket
-typealias ProtoModelStats = Byokey_Management_ModelStats
-typealias RateLimitsResponse = Byokey_Management_GetRateLimitsResponse
-typealias ProviderRateLimits = Byokey_Management_ProviderRateLimits
-typealias AccountRateLimit = Byokey_Management_AccountRateLimit
-typealias ProtoRateLimitSnapshot = Byokey_Management_RateLimitSnapshot
+// MARK: - Status service
+typealias UsageSnapshot = Byokey_Status_GetUsageResponse
+typealias UsageHistoryResponse = Byokey_Status_GetUsageHistoryResponse
+typealias UsageBucket = Byokey_Status_UsageBucket
+typealias ProtoModelStats = Byokey_Status_ModelStats
+typealias RateLimitsResponse = Byokey_Status_GetRateLimitsResponse
+typealias ProviderRateLimits = Byokey_Status_ProviderRateLimits
+typealias AccountRateLimit = Byokey_Status_AccountRateLimit
+typealias ProtoRateLimitSnapshot = Byokey_Status_RateLimitSnapshot
 
 // MARK: - REST-only types (v1/models — not in proto)
 
@@ -28,8 +25,6 @@ struct ModelEntry: Decodable, Identifiable {
 
 // MARK: - Provider Icon
 
-/// Maps a provider id string to its asset catalog image name.
-/// Falls back to nil when no custom icon is available.
 func providerIconName(for id: String) -> String? {
     switch id.lowercased() {
     case "claude":       "provider-claude"

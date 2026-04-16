@@ -235,8 +235,8 @@ struct UsageView: View {
                 codec: JSONCodec()
             )
         )
-        let mgmt = Byokey_Management_ManagementServiceClient(client: proto)
-        var req = Byokey_Management_GetUsageHistoryRequest()
+        let mgmt = Byokey_Status_StatusServiceClient(client: proto)
+        var req = Byokey_Status_GetUsageHistoryRequest()
         req.from = from
         req.to = now
         history = (await mgmt.getUsageHistory(request: req)).message

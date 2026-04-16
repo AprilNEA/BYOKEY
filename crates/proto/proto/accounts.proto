@@ -1,0 +1,51 @@
+syntax = "proto3";
+package byokey.accounts;
+
+service AccountsService {
+  rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc RemoveAccount(RemoveAccountRequest) returns (RemoveAccountResponse);
+  rpc ActivateAccount(ActivateAccountRequest) returns (ActivateAccountResponse);
+}
+
+message ListAccountsRequest {}
+
+message ListAccountsResponse {
+  repeated ProviderAccounts providers = 1;
+}
+
+message ProviderAccounts {
+  string id = 1;
+  string display_name = 2;
+  repeated AccountDetail accounts = 3;
+}
+
+message AccountDetail {
+  string account_id = 1;
+  optional string label = 2;
+  bool is_active = 3;
+  TokenState token_state = 4;
+  optional uint64 expires_at = 5;
+}
+
+enum TokenState {
+  TOKEN_STATE_UNSPECIFIED = 0;
+  TOKEN_STATE_VALID = 1;
+  TOKEN_STATE_EXPIRED = 2;
+  TOKEN_STATE_INVALID = 3;
+}
+
+message RemoveAccountRequest {
+  string provider = 1;
+  string account_id = 2;
+}
+
+message RemoveAccountResponse {}
+
+message ActivateAccountRequest {
+  string provider = 1;
+  string account_id = 2;
+}
+
+message ActivateAccountResponse {}

@@ -1,0 +1,107 @@
+syntax = "proto3";
+package byokey.status;
+
+service StatusService {
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc GetUsage(GetUsageRequest) returns (GetUsageResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc GetUsageHistory(GetUsageHistoryRequest) returns (GetUsageHistoryResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc GetRateLimits(GetRateLimitsRequest) returns (GetRateLimitsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}
+
+message GetStatusRequest {}
+
+message GetStatusResponse {
+  ServerInfo server = 1;
+  repeated ProviderStatus providers = 2;
+}
+
+message ServerInfo {
+  string host = 1;
+  uint32 port = 2;
+}
+
+message ProviderStatus {
+  string id = 1;
+  string display_name = 2;
+  bool enabled = 3;
+  AuthStatus auth_status = 4;
+  uint32 models_count = 5;
+}
+
+enum AuthStatus {
+  AUTH_STATUS_UNSPECIFIED = 0;
+  AUTH_STATUS_VALID = 1;
+  AUTH_STATUS_EXPIRED = 2;
+  AUTH_STATUS_NOT_CONFIGURED = 3;
+}
+
+message GetUsageRequest {}
+
+message GetUsageResponse {
+  uint64 total_requests = 1;
+  uint64 success_requests = 2;
+  uint64 failure_requests = 3;
+  uint64 input_tokens = 4;
+  uint64 output_tokens = 5;
+  map<string, ModelStats> models = 6;
+}
+
+message ModelStats {
+  uint64 requests = 1;
+  uint64 success = 2;
+  uint64 failure = 3;
+  uint64 input_tokens = 4;
+  uint64 output_tokens = 5;
+}
+
+message GetUsageHistoryRequest {
+  optional int64 from = 1;
+  optional int64 to = 2;
+  optional string model = 3;
+}
+
+message GetUsageHistoryResponse {
+  int64 from = 1;
+  int64 to = 2;
+  int64 bucket_seconds = 3;
+  repeated UsageBucket buckets = 4;
+  optional string error = 5;
+}
+
+message UsageBucket {
+  int64 period_start = 1;
+  string model = 2;
+  uint64 request_count = 3;
+  uint64 input_tokens = 4;
+  uint64 output_tokens = 5;
+}
+
+message GetRateLimitsRequest {}
+
+message GetRateLimitsResponse {
+  repeated ProviderRateLimits providers = 1;
+}
+
+message ProviderRateLimits {
+  string id = 1;
+  string display_name = 2;
+  repeated AccountRateLimit accounts = 3;
+}
+
+message AccountRateLimit {
+  string account_id = 1;
+  RateLimitSnapshot snapshot = 2;
+}
+
+message RateLimitSnapshot {
+  map<string, string> headers = 1;
+  uint64 captured_at = 2;
+}

@@ -5,11 +5,11 @@ import Foundation
 final class DataService {
     // MARK: - Shared State
 
-    private(set) var providers: [Byokey_Management_ProviderStatus] = []
-    private(set) var providerAccounts: [Byokey_Management_ProviderAccounts] = []
-    private(set) var usage: Byokey_Management_GetUsageResponse?
-    private(set) var history: Byokey_Management_GetUsageHistoryResponse?
-    private(set) var rateLimits: Byokey_Management_GetRateLimitsResponse?
+    private(set) var providers: [Byokey_Status_ProviderStatus] = []
+    private(set) var providerAccounts: [Byokey_Accounts_ProviderAccounts] = []
+    private(set) var usage: Byokey_Status_GetUsageResponse?
+    private(set) var history: Byokey_Status_GetUsageHistoryResponse?
+    private(set) var rateLimits: Byokey_Status_GetRateLimitsResponse?
     private(set) var models: [ModelEntry] = []
     private(set) var isLoading = false
 
@@ -26,8 +26,8 @@ final class DataService {
 
     private var pollTask: Task<Void, Never>?
 
-    private var mgmt: Byokey_Management_ManagementServiceClient {
-        let client = ProtocolClient(
+    private var proto: ProtocolClient {
+        ProtocolClient(
             httpClient: URLSessionHTTPClient(),
             config: ProtocolClientConfig(
                 host: AppEnvironment.shared.baseURL.absoluteString,
@@ -35,8 +35,10 @@ final class DataService {
                 codec: JSONCodec()
             )
         )
-        return Byokey_Management_ManagementServiceClient(client: client)
     }
+
+    private var statusClient: Byokey_Status_StatusServiceClient { .init(client: proto) }
+    private var accountsClient: Byokey_Accounts_AccountsServiceClient { .init(client: proto) }
 
     // MARK: - Polling
 
@@ -61,8 +63,7 @@ final class DataService {
     }
 
     func reloadAccounts() async {
-        let resp = await mgmt.listAccounts(request: .init())
-        if let msg = resp.message {
+        if let msg = (await accountsClient.listAccounts(request: .init())).message {
             providerAccounts = msg.providers
         }
     }
@@ -70,24 +71,20 @@ final class DataService {
     // MARK: - Mutations
 
     func activateAccount(provider: String, accountId: String) async throws {
-        var req = Byokey_Management_ActivateAccountRequest()
+        var req = Byokey_Accounts_ActivateAccountRequest()
         req.provider = provider
         req.accountID = accountId
-        let resp = await mgmt.activateAccount(request: req)
-        if let error = resp.error {
-            throw error
-        }
+        let resp = await accountsClient.activateAccount(request: req)
+        if let error = resp.error { throw error }
         await reloadAccounts()
     }
 
     func removeAccount(provider: String, accountId: String) async throws {
-        var req = Byokey_Management_RemoveAccountRequest()
+        var req = Byokey_Accounts_RemoveAccountRequest()
         req.provider = provider
         req.accountID = accountId
-        let resp = await mgmt.removeAccount(request: req)
-        if let error = resp.error {
-            throw error
-        }
+        let resp = await accountsClient.removeAccount(request: req)
+        if let error = resp.error { throw error }
         await reloadAccounts()
     }
 
@@ -97,36 +94,35 @@ final class DataService {
         isLoading = true
         defer { isLoading = false }
 
-        if let msg = (await mgmt.getStatus(request: .init())).message {
+        if let msg = (await statusClient.getStatus(request: .init())).message {
             providers = msg.providers
         } else {
             providers = []
         }
 
-        if let msg = (await mgmt.listAccounts(request: .init())).message {
+        if let msg = (await accountsClient.listAccounts(request: .init())).message {
             providerAccounts = msg.providers
         }
 
-        if let msg = (await mgmt.getUsage(request: .init())).message {
+        if let msg = (await statusClient.getUsage(request: .init())).message {
             usage = msg
         } else {
             usage = nil
         }
 
-        if let msg = (await mgmt.getRateLimits(request: .init())).message {
+        if let msg = (await statusClient.getRateLimits(request: .init())).message {
             rateLimits = msg
         } else {
             rateLimits = nil
         }
 
-        // /v1/models is still REST — fetch via plain HTTP.
         await fetchModels()
 
         let now = Int64(Date().timeIntervalSince1970)
-        var histReq = Byokey_Management_GetUsageHistoryRequest()
+        var histReq = Byokey_Status_GetUsageHistoryRequest()
         histReq.from = now - 86400
         histReq.to = now
-        if let msg = (await mgmt.getUsageHistory(request: histReq)).message {
+        if let msg = (await statusClient.getUsageHistory(request: histReq)).message {
             history = msg
         } else {
             history = nil

@@ -285,7 +285,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/byokey.management.ManagementService/GetStatus")
+                    .uri("/byokey.status.StatusService/GetStatus")
                     .header("content-type", "application/json")
                     .body(Body::from("{}"))
                     .unwrap(),
