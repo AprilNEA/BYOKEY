@@ -103,7 +103,7 @@ struct DashboardStatsRow: View {
     }
 
     private func tokenTimeSeries(
-        _ keyPath: KeyPath<UsageBucket, Int64>
+        _ keyPath: KeyPath<UsageBucket, UInt64>
     ) -> [(date: Date, value: UInt64)] {
         guard let history = dataService.history else { return [] }
         return Dictionary(grouping: history.buckets, by: \.periodStart)

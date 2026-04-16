@@ -1,5 +1,6 @@
 import Charts
 import Connect
+import SwiftProtobuf
 import SwiftUI
 
 struct UsageView: View {
@@ -226,13 +227,19 @@ struct UsageView: View {
         defer { isLoading = false }
         let now = Int64(Date().timeIntervalSince1970)
         let from = now - selectedRange.seconds
-        let client = Client(
-            serverURL: AppEnvironment.shared.baseURL,
-            transport: URLSessionTransport()
+        let proto = ProtocolClient(
+            httpClient: URLSessionHTTPClient(),
+            config: ProtocolClientConfig(
+                host: AppEnvironment.shared.baseURL.absoluteString,
+                networkProtocol: .connect,
+                codec: JSONCodec()
+            )
         )
-        history = try? await client.usage_history_handler(
-            .init(path: .init(from: from, to: now, model: ""))
-        ).ok.body.json
+        let mgmt = Byokey_Management_ManagementServiceClient(client: proto)
+        var req = Byokey_Management_GetUsageHistoryRequest()
+        req.from = from
+        req.to = now
+        history = (await mgmt.getUsageHistory(request: req)).message
     }
 
     // MARK: - Helpers

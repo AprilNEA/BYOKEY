@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		BA0A10052F5460010096A005 /* OpenAPIRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = BA0A10022F5460010096A002 /* OpenAPIRuntime */; };
-		BA0A10062F5460010096A006 /* OpenAPIURLSession in Frameworks */ = {isa = PBXBuildFile; productRef = BA0A10032F5460010096A003 /* OpenAPIURLSession */; };
+		BA0A10052F5460010096A005 /* Connect in Frameworks */ = {isa = PBXBuildFile; productRef = BA0A10022F5460010096A002 /* Connect */; };
+		BA0A10062F5460010096A006 /* SwiftProtobuf in Frameworks */ = {isa = PBXBuildFile; productRef = BA0A10032F5460010096A003 /* SwiftProtobuf */; };
 		BA0A100A2F5460010096A00A /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = BA0A10092F5460010096A009 /* Sparkle */; };
 /* End PBXBuildFile section */
 
@@ -29,8 +29,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				BA0A10052F5460010096A005 /* OpenAPIRuntime in Frameworks */,
-				BA0A10062F5460010096A006 /* OpenAPIURLSession in Frameworks */,
+				BA0A10052F5460010096A005 /* Connect in Frameworks */,
+				BA0A10062F5460010096A006 /* SwiftProtobuf in Frameworks */,
 				BA0A100A2F5460010096A00A /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -76,8 +76,8 @@
 			);
 			name = Byokey;
 			packageProductDependencies = (
-				BA0A10022F5460010096A002 /* OpenAPIRuntime */,
-				BA0A10032F5460010096A003 /* OpenAPIURLSession */,
+				BA0A10022F5460010096A002 /* Connect */,
+				BA0A10032F5460010096A003 /* SwiftProtobuf */,
 				BA0A10092F5460010096A009 /* Sparkle */,
 			);
 			productName = Byokey;
@@ -109,8 +109,8 @@
 			mainGroup = BAD6C0AC2F53FC2500968364;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				BA0A10012F5460010096A001 /* XCRemoteSwiftPackageReference "swift-openapi-runtime" */,
-				BAD6C10E2F544FFC00968364 /* XCRemoteSwiftPackageReference "swift-openapi-urlsession" */,
+				BA0A10012F5460010096A001 /* XCRemoteSwiftPackageReference "connect-swift" */,
+				BAD6C10E2F544FFC00968364 /* XCRemoteSwiftPackageReference "swift-protobuf" */,
 				BA0A10082F5460010096A008 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -375,12 +375,12 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		BA0A10012F5460010096A001 /* XCRemoteSwiftPackageReference "swift-openapi-runtime" */ = {
+		BA0A10012F5460010096A001 /* XCRemoteSwiftPackageReference "connect-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/apple/swift-openapi-runtime";
+			repositoryURL = "https://github.com/connectrpc/connect-swift";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 1.8.2;
+				minimumVersion = 1.2.1;
 			};
 		};
 		BA0A10082F5460010096A008 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
@@ -391,26 +391,26 @@
 				minimumVersion = 2.6.0;
 			};
 		};
-		BAD6C10E2F544FFC00968364 /* XCRemoteSwiftPackageReference "swift-openapi-urlsession" */ = {
+		BAD6C10E2F544FFC00968364 /* XCRemoteSwiftPackageReference "swift-protobuf" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/apple/swift-openapi-urlsession";
+			repositoryURL = "https://github.com/apple/swift-protobuf";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 1.2.0;
+				minimumVersion = 1.28.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		BA0A10022F5460010096A002 /* OpenAPIRuntime */ = {
+		BA0A10022F5460010096A002 /* Connect */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = BA0A10012F5460010096A001 /* XCRemoteSwiftPackageReference "swift-openapi-runtime" */;
-			productName = OpenAPIRuntime;
+			package = BA0A10012F5460010096A001 /* XCRemoteSwiftPackageReference "connect-swift" */;
+			productName = Connect;
 		};
-		BA0A10032F5460010096A003 /* OpenAPIURLSession */ = {
+		BA0A10032F5460010096A003 /* SwiftProtobuf */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = BAD6C10E2F544FFC00968364 /* XCRemoteSwiftPackageReference "swift-openapi-urlsession" */;
-			productName = OpenAPIURLSession;
+			package = BAD6C10E2F544FFC00968364 /* XCRemoteSwiftPackageReference "swift-protobuf" */;
+			productName = SwiftProtobuf;
 		};
 		BA0A10092F5460010096A009 /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -192,10 +192,10 @@ struct AccountsView: View {
     // MARK: - Data Helpers
 
     private struct ProviderAggregateStats {
-        var requests: Int64 = 0
-        var success: Int64 = 0
-        var inputTokens: Int64 = 0
-        var outputTokens: Int64 = 0
+        var requests: UInt64 = 0
+        var success: UInt64 = 0
+        var inputTokens: UInt64 = 0
+        var outputTokens: UInt64 = 0
     }
 
     private func providerStats(for providerId: String) -> ProviderAggregateStats? {
@@ -461,7 +461,7 @@ private struct AccountRow: View {
         switch account.tokenState {
         case .valid: .green
         case .expired: .orange
-        case .invalid: .red
+        default: .red
         }
     }
 
@@ -469,7 +469,7 @@ private struct AccountRow: View {
         switch account.tokenState {
         case .valid: "Active"
         case .expired: "Expired"
-        case .invalid: "Invalid"
+        default: "Invalid"
         }
     }
 
