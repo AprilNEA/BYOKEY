@@ -18,7 +18,7 @@ struct GeneralView: View {
                         .layoutPriority(1)
                     if let rateLimits = dataService.rateLimits,
                        rateLimits.providers.contains(where: {
-                           $0.accounts.contains(where: { !$0.snapshot.headers.additionalProperties.isEmpty })
+                           $0.accounts.contains(where: { !$0.snapshot.headers.isEmpty })
                        })
                     {
                         DashboardRateLimitsCard(data: rateLimits)

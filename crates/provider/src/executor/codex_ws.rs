@@ -2,15 +2,16 @@
 //!
 //! Connects to `ChatGPT`'s WebSocket endpoint and translates the Codex
 //! Responses protocol to `OpenAI` chat completion SSE format.  Uses the same
-//! SSE translator as the HTTP executor ([`super::codex::translate_codex_sse`]).
+//! SSE translator as the HTTP executor
+//! ([`super::codex::translate_codex_responses_sse`]).
 
 use crate::registry;
+use aigw_openai::{ResponsesRequestConfig, build_responses_create_request};
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
-use byokey_translate::OpenAIToCodex;
 use byokey_types::{
     ByokError, ChatRequest, ProviderId,
-    traits::{ByteStream, ProviderExecutor, ProviderResponse, RequestTranslator, Result},
+    traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
 };
 use bytes::Bytes;
 use futures_util::{SinkExt as _, StreamExt as _, stream::try_unfold};
@@ -18,7 +19,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use tokio_tungstenite::tungstenite;
 
-use super::codex::translate_codex_sse;
+use super::codex::translate_codex_responses_sse;
 
 /// `ChatGPT` WebSocket endpoint for the Codex Responses API.
 const WS_URL: &str = "wss://chatgpt.com/backend-api/codex/ws";
@@ -55,12 +56,18 @@ impl ProviderExecutor for CodexWsExecutor {
     async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
         let token = self.token().await?;
 
-        // Translate the OpenAI chat request to Codex format.
-        let mut codex_body = OpenAIToCodex.translate_request(request.into_body())?;
+        // Translate the OpenAI chat request to Codex format via aigateway's
+        // ResponsesRequestTranslator (codex preset).
+        let aigw_request: aigw_core::model::ChatRequest =
+            serde_json::from_value(request.into_body())
+                .map_err(|e: serde_json::Error| ByokError::Translation(e.to_string()))?;
+        let responses_req =
+            build_responses_create_request(&aigw_request, &ResponsesRequestConfig::codex())
+                .map_err(|e| ByokError::Translation(e.to_string()))?;
+        let mut codex_body = serde_json::to_value(&responses_req)
+            .map_err(|e: serde_json::Error| ByokError::Translation(e.to_string()))?;
         codex_body["stream"] = Value::Bool(true);
         codex_body["type"] = Value::String("response.create".into());
-
-        let model = codex_body["model"].as_str().unwrap_or("codex").to_string();
 
         // Build the WebSocket handshake request with required headers.
         let ws_request = http::Request::builder()
@@ -119,8 +126,8 @@ impl ProviderExecutor for CodexWsExecutor {
             }
         }));
 
-        Ok(ProviderResponse::Stream(translate_codex_sse(
-            raw_stream, model,
+        Ok(ProviderResponse::Stream(translate_codex_responses_sse(
+            raw_stream,
         )))
     }
 

@@ -160,7 +160,10 @@ final class ProcessManager {
 
     @discardableResult
     func checkReachability() async -> Bool {
-        let url = URL(string: "http://127.0.0.1:\(currentPort)/v0/management/status")!
+        // Probes /v1/models — a cheap REST endpoint that's always available
+        // on the main proxy port. The old /v0/management/status path moved
+        // to ConnectRPC; see SWIFT_MIGRATION.md.
+        let url = URL(string: "http://127.0.0.1:\(currentPort)/v1/models")!
         var request = URLRequest(url: url, timeoutInterval: 2)
         request.httpMethod = "GET"
         do {

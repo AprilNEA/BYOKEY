@@ -151,7 +151,7 @@ struct ModelsView: View {
 
             Spacer()
 
-            if let usage = dataService.usage?.models.additionalProperties[model.id] {
+            if let usage = dataService.usage?.models[model.id] {
                 Text("\(usage.requests) req")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)

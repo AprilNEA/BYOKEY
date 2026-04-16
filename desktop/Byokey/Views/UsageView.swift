@@ -1,5 +1,5 @@
 import Charts
-import OpenAPIURLSession
+import Connect
 import SwiftUI
 
 struct UsageView: View {
@@ -51,24 +51,24 @@ struct UsageView: View {
     private func summarySection(_ s: UsageSnapshot) -> some View {
         Section("Summary") {
             LabeledContent("Total Requests") {
-                Text("\(s.total_requests)")
+                Text("\(s.totalRequests)")
                     .monospacedDigit()
             }
             LabeledContent("Success Rate") {
                 Text(successRate(s))
                     .monospacedDigit()
-                    .foregroundStyle(s.failure_requests == 0 ? .green : .orange)
+                    .foregroundStyle(s.failureRequests == 0 ? .green : .orange)
             }
             LabeledContent("Input Tokens") {
-                Text(formatTokens(UInt64(s.input_tokens)))
+                Text(formatTokens(UInt64(s.inputTokens)))
                     .monospacedDigit()
             }
             LabeledContent("Output Tokens") {
-                Text(formatTokens(UInt64(s.output_tokens)))
+                Text(formatTokens(UInt64(s.outputTokens)))
                     .monospacedDigit()
             }
             LabeledContent("Total Tokens") {
-                Text(formatTokens(UInt64(s.input_tokens + s.output_tokens)))
+                Text(formatTokens(UInt64(s.inputTokens + s.outputTokens)))
                     .monospacedDigit()
                     .fontWeight(.semibold)
             }
@@ -79,12 +79,12 @@ struct UsageView: View {
 
     private func tokenBreakdownChart(_ s: UsageSnapshot) -> some View {
         Section("Token Distribution by Model") {
-            if s.models.additionalProperties.isEmpty {
+            if s.models.isEmpty {
                 Text("No data")
                     .foregroundStyle(.secondary)
             } else {
-                let sorted = s.models.additionalProperties
-                    .map { TokenSlice(model: $0.key, input: UInt64($0.value.input_tokens), output: UInt64($0.value.output_tokens)) }
+                let sorted = s.models
+                    .map { TokenSlice(model: $0.key, input: UInt64($0.value.inputTokens), output: UInt64($0.value.outputTokens)) }
                     .sorted { ($0.input + $0.output) > ($1.input + $1.output) }
 
                 let top = Array(sorted.prefix(6))
@@ -116,12 +116,12 @@ struct UsageView: View {
 
     private func modelsSection(_ s: UsageSnapshot) -> some View {
         Section("By Model") {
-            if s.models.additionalProperties.isEmpty {
+            if s.models.isEmpty {
                 Text("No model usage recorded")
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(
-                    s.models.additionalProperties.sorted(by: { $0.value.requests > $1.value.requests }),
+                    s.models.sorted(by: { $0.value.requests > $1.value.requests }),
                     id: \.key
                 ) { model, stats in
                     VStack(alignment: .leading, spacing: 4) {
@@ -136,8 +136,8 @@ struct UsageView: View {
                                 .monospacedDigit()
                         }
                         HStack(spacing: 12) {
-                            Label(formatTokens(UInt64(stats.input_tokens)), systemImage: "arrow.up")
-                            Label(formatTokens(UInt64(stats.output_tokens)), systemImage: "arrow.down")
+                            Label(formatTokens(UInt64(stats.inputTokens)), systemImage: "arrow.up")
+                            Label(formatTokens(UInt64(stats.outputTokens)), systemImage: "arrow.down")
                             if stats.failure > 0 {
                                 Label("\(stats.failure) failed", systemImage: "exclamationmark.triangle")
                                     .foregroundStyle(.red)
@@ -147,13 +147,13 @@ struct UsageView: View {
                         .foregroundStyle(.secondary)
 
                         // Token proportion bar
-                        let total = stats.input_tokens + stats.output_tokens
+                        let total = stats.inputTokens + stats.outputTokens
                         if total > 0 {
                             GeometryReader { geo in
                                 HStack(spacing: 0) {
                                     Rectangle()
                                         .fill(.indigo.gradient)
-                                        .frame(width: geo.size.width * CGFloat(stats.input_tokens) / CGFloat(total))
+                                        .frame(width: geo.size.width * CGFloat(stats.inputTokens) / CGFloat(total))
                                     Rectangle()
                                         .fill(.cyan.gradient)
                                 }
@@ -238,17 +238,17 @@ struct UsageView: View {
     // MARK: - Helpers
 
     private func successRate(_ s: UsageSnapshot) -> String {
-        guard s.total_requests > 0 else { return "–" }
-        let rate = Double(s.success_requests) / Double(s.total_requests) * 100
+        guard s.totalRequests > 0 else { return "–" }
+        let rate = Double(s.successRequests) / Double(s.totalRequests) * 100
         return String(format: "%.1f%%", rate)
     }
 
     private func aggregatedBuckets(_ h: UsageHistoryResponse) -> [AggregateBucket] {
-        let grouped: [Int64: [Components.Schemas.UsageBucket]] = Dictionary(grouping: h.buckets, by: \.period_start)
+        let grouped: [Int64: [UsageBucket]] = Dictionary(grouping: h.buckets, by: \.periodStart)
         let mapped: [AggregateBucket] = grouped.map { key, buckets in
-            let reqs = buckets.reduce(Int64(0)) { $0 + $1.request_count }
-            let inp = buckets.reduce(Int64(0)) { $0 + $1.input_tokens }
-            let out = buckets.reduce(Int64(0)) { $0 + $1.output_tokens }
+            let reqs = buckets.reduce(Int64(0)) { $0 + Int64($1.requestCount) }
+            let inp = buckets.reduce(Int64(0)) { $0 + Int64($1.inputTokens) }
+            let out = buckets.reduce(Int64(0)) { $0 + Int64($1.outputTokens) }
             return AggregateBucket(
                 period_start: key,
                 request_count: UInt64(reqs),

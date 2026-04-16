@@ -1,7 +1,8 @@
-//! Amp CLI compatibility layer — served on a dedicated port when `amp.port`
-//! is configured.
+//! Amp CLI compatibility layer — served on the main byokey port alongside
+//! the REST AI proxy and `ConnectRPC` management service.
 //!
-//! Routes (all paths are served **without** an `/amp` prefix):
+//! Routes (all paths are served **without** an `/amp` prefix, matching
+//! what the amp CLI sends on the wire):
 //! - `GET  /v1/login`              -> 302 redirect to ampcode.com/login.
 //! - `GET  /auth/cli-login`        -> 302 redirect to ampcode.com/auth/cli-login.
 //! - `ANY  /v0/management/{*path}` -> proxy to ampcode.com/v0/management/*.
@@ -10,54 +11,17 @@
 //!
 //! Submodules:
 //! - [`provider`] — `AmpCode` provider-namespaced AI endpoints (`/api/provider/*`).
-//! - [`threads`]  — local Amp CLI thread listing / detail endpoints.
+//! - [`threads`]  — parser + in-memory index for local Amp CLI thread files
+//!   (consumed by the `ConnectRPC` management service).
 
 pub mod provider;
 pub mod threads;
 
 use axum::{
-    Router,
     extract::RawQuery,
     http::{HeaderValue, StatusCode},
     response::IntoResponse,
-    routing::{any, get, post},
 };
-use std::sync::Arc;
-
-use crate::AppState;
-
-use super::{chat, messages};
-
-/// Build the Amp CLI / `AmpCode` router.
-///
-/// Designed to run on its own listener (via `amp.port`). All paths match
-/// what the Amp CLI actually sends on the wire — `new URL(path, ampUrl)` in
-/// JS drops the base path component, so no `/amp` prefix is needed.
-pub fn router() -> Router<Arc<AppState>> {
-    Router::new()
-        .route("/auth/cli-login", get(cli_login_redirect))
-        .route("/v1/login", get(login_redirect))
-        .route("/v0/management/{*path}", any(provider::ampcode_proxy))
-        // AmpCode provider-specific routes (must be registered before the catch-all)
-        .route(
-            "/api/provider/anthropic/v1/messages",
-            post(messages::anthropic_messages),
-        )
-        .route(
-            "/api/provider/openai/v1/chat/completions",
-            post(chat::chat_completions),
-        )
-        .route(
-            "/api/provider/openai/v1/responses",
-            post(provider::codex_responses_passthrough),
-        )
-        .route(
-            "/api/provider/google/v1beta/models/{action}",
-            post(provider::gemini_native_passthrough),
-        )
-        // Catch-all: forward remaining /api/* routes to ampcode.com
-        .route("/api/{*path}", any(provider::ampcode_proxy))
-}
 
 /// Redirects Amp CLI to the web login page.
 pub async fn login_redirect() -> impl IntoResponse {

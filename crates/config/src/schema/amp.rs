@@ -2,17 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-fn default_amp_port() -> u16 {
-    18018
-}
-
 /// Proxy-side configuration for `AmpCode` integration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AmpConfig {
-    /// Separate listen port for the Amp-compatible router (default 18018).
-    #[serde(default = "default_amp_port")]
-    pub port: u16,
-
     /// Enables shared-proxy mode: when set, byokey strips the client's
     /// `Authorization` and `X-Api-Key` headers and injects this key upstream.
     #[serde(default)]
@@ -24,22 +16,13 @@ pub struct AmpConfig {
     pub settings: HashMap<String, serde_json::Value>,
 }
 
-impl Default for AmpConfig {
-    fn default() -> Self {
-        Self {
-            port: default_amp_port(),
-            upstream_key: None,
-            settings: HashMap::new(),
-        }
-    }
-}
-
 impl AmpConfig {
     /// Resolve the `amp.url` value.
     ///
-    /// Priority: CLI `--url` > `amp.settings["amp.url"]` > `http://{host}:{amp.port}`.
+    /// Priority: CLI `--url` > `amp.settings["amp.url"]` > `http://{host}:{port}`
+    /// where `port` is the main byokey listen port.
     #[must_use]
-    pub fn resolve_url(&self, explicit: Option<&str>, host: &str) -> String {
+    pub fn resolve_url(&self, explicit: Option<&str>, host: &str, port: u16) -> String {
         explicit
             .map(String::from)
             .or_else(|| {
@@ -47,7 +30,7 @@ impl AmpConfig {
                     .get("amp.url")
                     .and_then(|v| v.as_str().map(String::from))
             })
-            .unwrap_or_else(|| format!("http://{host}:{}", self.port))
+            .unwrap_or_else(|| format!("http://{host}:{port}"))
     }
 
     /// Default path for Amp CLI settings: `~/.config/amp/settings.json`.
@@ -105,12 +88,13 @@ mod tests {
     use crate::schema::Config;
 
     const HOST: &str = "127.0.0.1";
+    const PORT: u16 = 8018;
 
     #[test]
     fn test_resolve_url_explicit_wins() {
         let cfg = AmpConfig::default();
         assert_eq!(
-            cfg.resolve_url(Some("http://custom:9999"), HOST),
+            cfg.resolve_url(Some("http://custom:9999"), HOST, PORT),
             "http://custom:9999",
         );
     }
@@ -122,28 +106,31 @@ mod tests {
             "amp.url".to_string(),
             serde_json::json!("http://from-settings:1234"),
         );
-        assert_eq!(cfg.resolve_url(None, HOST), "http://from-settings:1234",);
+        assert_eq!(
+            cfg.resolve_url(None, HOST, PORT),
+            "http://from-settings:1234",
+        );
     }
 
     #[test]
-    fn test_resolve_url_default_uses_amp_port() {
+    fn test_resolve_url_default_uses_main_port() {
         let cfg = AmpConfig::default();
-        assert_eq!(cfg.resolve_url(None, HOST), "http://127.0.0.1:18018");
+        assert_eq!(cfg.resolve_url(None, HOST, PORT), "http://127.0.0.1:8018");
     }
 
     #[test]
     fn test_resolve_url_custom_port() {
-        let cfg = AmpConfig {
-            port: 9999,
-            ..AmpConfig::default()
-        };
-        assert_eq!(cfg.resolve_url(None, HOST), "http://127.0.0.1:9999");
+        let cfg = AmpConfig::default();
+        assert_eq!(cfg.resolve_url(None, HOST, 9999), "http://127.0.0.1:9999",);
     }
 
     #[test]
     fn test_resolve_url_custom_host() {
         let cfg = AmpConfig::default();
-        assert_eq!(cfg.resolve_url(None, "0.0.0.0"), "http://0.0.0.0:18018");
+        assert_eq!(
+            cfg.resolve_url(None, "0.0.0.0", PORT),
+            "http://0.0.0.0:8018",
+        );
     }
 
     #[test]
@@ -200,16 +187,8 @@ amp:
     #[test]
     fn test_from_yaml_amp_defaults_when_omitted() {
         let c = Config::from_yaml("port: 1234").unwrap();
-        assert_eq!(c.amp.port, 18018);
         assert!(c.amp.upstream_key.is_none());
         assert!(c.amp.settings.is_empty());
-    }
-
-    #[test]
-    fn test_from_yaml_amp_port() {
-        let yaml = "amp:\n  port: 19000";
-        let c = Config::from_yaml(yaml).unwrap();
-        assert_eq!(c.amp.port, 19000);
     }
 
     #[test]

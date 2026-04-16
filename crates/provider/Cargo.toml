@@ -18,6 +18,7 @@ byokey-auth.workspace = true
 byokey-translate.workspace = true
 aigw.workspace = true
 aigw-core.workspace = true
+aigw-openai.workspace = true
 reqwest.workspace = true
 secrecy.workspace = true
 rquest.workspace = true

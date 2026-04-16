@@ -12,16 +12,16 @@ struct DashboardStatsRow: View {
                 .frame(maxHeight: .infinity, alignment: .top)
             tokenCard(
                 title: "INPUT TOKENS",
-                value: UInt64(usage?.input_tokens ?? 0),
+                value: UInt64(usage?.inputTokens ?? 0),
                 color: .indigo,
-                points: tokenTimeSeries(\.input_tokens)
+                points: tokenTimeSeries(\.inputTokens)
             )
             .frame(maxHeight: .infinity, alignment: .top)
             tokenCard(
                 title: "OUTPUT TOKENS",
-                value: UInt64(usage?.output_tokens ?? 0),
+                value: UInt64(usage?.outputTokens ?? 0),
                 color: .cyan,
-                points: tokenTimeSeries(\.output_tokens)
+                points: tokenTimeSeries(\.outputTokens)
             )
             .frame(maxHeight: .infinity, alignment: .top)
         }
@@ -29,21 +29,21 @@ struct DashboardStatsRow: View {
 
     private var requestsCard: some View {
         Card("REQUESTS") {
-            HeroNumber(value: UInt64(usage?.total_requests ?? 0))
+            HeroNumber(value: UInt64(usage?.totalRequests ?? 0))
 
             HStack(spacing: 16) {
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark")
                         .foregroundStyle(.green)
-                    Text("\(usage?.success_requests ?? 0)")
+                    Text("\(usage?.successRequests ?? 0)")
                 }
                 Divider().frame(height: 14)
                 HStack(spacing: 4) {
                     Image(systemName: "xmark")
                         .foregroundStyle(
-                            (usage?.failure_requests ?? 0) > 0 ? .red : .secondary
+                            (usage?.failureRequests ?? 0) > 0 ? .red : .secondary
                         )
-                    Text("\(usage?.failure_requests ?? 0)")
+                    Text("\(usage?.failureRequests ?? 0)")
                 }
             }
             .font(.caption)
@@ -106,7 +106,7 @@ struct DashboardStatsRow: View {
         _ keyPath: KeyPath<UsageBucket, Int64>
     ) -> [(date: Date, value: UInt64)] {
         guard let history = dataService.history else { return [] }
-        return Dictionary(grouping: history.buckets, by: \.period_start)
+        return Dictionary(grouping: history.buckets, by: \.periodStart)
             .map { ts, buckets in
                 (date: Date(timeIntervalSince1970: TimeInterval(ts)),
                  value: UInt64(buckets.reduce(0) { $0 + $1[keyPath: keyPath] }))

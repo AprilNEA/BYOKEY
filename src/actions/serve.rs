@@ -123,31 +123,6 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
     }
     let app = byokey_proxy::make_router(Arc::clone(&state));
 
-    // Spawn the Amp-dedicated listener (default port 18018).
-    let config_snapshot = config_arc.load();
-    {
-        let amp_port = config_snapshot.amp.port;
-        let amp_addr = format!("{effective_host}:{amp_port}");
-        let amp_app = byokey_proxy::make_amp_router(Arc::clone(&state));
-        let parsed: std::net::SocketAddr = amp_addr
-            .parse()
-            .map_err(|e| anyhow::anyhow!("invalid amp address {amp_addr}: {e}"))?;
-        let std_listener = std::net::TcpListener::bind(parsed)
-            .map_err(|e| anyhow::anyhow!("bind amp {amp_addr}: {e}"))?;
-        std_listener
-            .set_nonblocking(true)
-            .map_err(|e| anyhow::anyhow!("set_nonblocking: {e}"))?;
-        let amp_listener = tokio::net::TcpListener::from_std(std_listener)
-            .map_err(|e| anyhow::anyhow!("from_std: {e}"))?;
-        tracing::info!(addr = %amp_addr, "amp listener ready");
-        tokio::spawn(async move {
-            if let Err(e) = axum::serve(amp_listener, amp_app).await {
-                tracing::error!(error = %e, "amp listener failed");
-            }
-        });
-    }
-    drop(config_snapshot);
-
     // Acquire the HTTP listener. Prefer a pre-opened fd from systemfd /
     // systemd / launchd socket activation (no rebind on restart, no
     // EADDRINUSE in dev loops). Fall back to a fresh sync bind so that

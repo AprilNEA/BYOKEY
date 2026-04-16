@@ -21,7 +21,7 @@ pub use byokey_provider::VersionStore;
 pub use error::ApiError;
 pub use handler::amp::threads::AmpThreadIndex;
 pub use openapi::ApiDoc;
-pub use router::{make_amp_router, make_router};
+pub use router::make_router;
 pub use usage::{UsageRecorder, UsageStats};
 
 use arc_swap::ArcSwap;

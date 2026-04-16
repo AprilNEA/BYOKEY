@@ -1,9 +1,16 @@
 //! Axum router construction and route registration.
+//!
+//! All traffic — standard REST AI proxy, Amp CLI compatibility, and
+//! `ConnectRPC` management — is served from a single router on one port.
+//! The `ConnectRPC` management service is mounted as the router's
+//! `fallback_service`, so POST requests to
+//! `/byokey.management.ManagementService/{Method}` land there while
+//! named routes (amp, REST AI) take priority.
 
 use axum::extract::DefaultBodyLimit;
 use axum::{
     Router, http, middleware,
-    routing::{get, post},
+    routing::{any, get, post},
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -60,9 +67,54 @@ fn common_layers(router: Router) -> Router {
         ))
 }
 
-/// Build the main byokey router (`OpenAI` / Anthropic / Copilot compatible).
+/// Build the unified byokey router.
+///
+/// Routes served:
+/// - `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/v1/models`
+///   — `OpenAI` / Anthropic compatible REST AI.
+/// - `/openapi.json` — REST `OpenAPI` spec (AI endpoints only).
+/// - `/auth/cli-login`, `/v1/login` — amp CLI login redirects to
+///   `ampcode.com`.
+/// - `/api/provider/*` — amp CLI's provider-namespaced AI endpoints.
+/// - `/api/{*path}`, `/v0/management/{*path}` — catch-all proxies to
+///   `ampcode.com` used by the amp CLI.
+/// - `/byokey.management.ManagementService/{Method}` — local byokey
+///   management over `ConnectRPC` (fallback service).
+///
+/// The amp routes are wrapped in [`forward_headers_middleware`] to strip
+/// client auth and inject the amp upstream token. The middleware is
+/// scoped to that sub-router only via `.layer()` before `.merge()`, so
+/// REST and `ConnectRPC` routes are unaffected.
 pub fn make_router(state: Arc<AppState>) -> Router {
-    let router = Router::new()
+    // Amp-specific routes with forward_headers_middleware scoped to them.
+    let amp_routes = Router::new()
+        .route("/auth/cli-login", get(amp::cli_login_redirect))
+        .route("/v1/login", get(amp::login_redirect))
+        .route("/v0/management/{*path}", any(amp::provider::ampcode_proxy))
+        .route(
+            "/api/provider/anthropic/v1/messages",
+            post(messages::anthropic_messages),
+        )
+        .route(
+            "/api/provider/openai/v1/chat/completions",
+            post(chat::chat_completions),
+        )
+        .route(
+            "/api/provider/openai/v1/responses",
+            post(amp::provider::codex_responses_passthrough),
+        )
+        .route(
+            "/api/provider/google/v1beta/models/{action}",
+            post(amp::provider::gemini_native_passthrough),
+        )
+        .route("/api/{*path}", any(amp::provider::ampcode_proxy))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::forward::forward_headers_middleware,
+        ));
+
+    // REST AI proxy routes.
+    let rest_routes = Router::new()
         .route("/v1/chat/completions", post(chat::chat_completions))
         .route(
             "/v1/responses",
@@ -70,24 +122,16 @@ pub fn make_router(state: Arc<AppState>) -> Router {
         )
         .route("/v1/messages", post(messages::anthropic_messages))
         .route("/v1/models", get(models::list_models))
-        .nest("/v0/management", management::router())
-        .route("/openapi.json", get(openapi::openapi_json))
-        .with_state(state);
-    common_layers(router)
-}
+        .route("/openapi.json", get(openapi::openapi_json));
 
-/// Build the Amp CLI router (served on a separate port via `amp.port`).
-///
-/// Includes the [`forward_headers_middleware`] which prepares upstream headers
-/// (filtering + amp auth injection) and stores them as [`ForwardedHeaders`] in
-/// request extensions for proxy handlers.
-pub fn make_amp_router(state: Arc<AppState>) -> Router {
-    let router = amp::router()
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            crate::middleware::forward::forward_headers_middleware,
-        ))
-        .with_state(state);
+    // `ConnectRPC` management service (served as the fallback).
+    let connect_service = management::build_router(state.clone()).into_axum_service();
+
+    let router = rest_routes
+        .merge(amp_routes)
+        .with_state(state)
+        .fallback_service(connect_service);
+
     common_layers(router)
 }
 
@@ -144,7 +188,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_amp_login_redirect() {
-        let app = make_amp_router(make_state());
+        let app = make_router(make_state());
         let resp = app
             .oneshot(
                 Request::builder()
@@ -164,7 +208,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_amp_cli_login_redirect() {
-        let app = make_amp_router(make_state());
+        let app = make_router(make_state());
         let resp = app
             .oneshot(
                 Request::builder()
@@ -230,5 +274,30 @@ mod tests {
 
         // Missing required `model` field → axum JSON rejection → 422
         assert_eq!(resp.status(), axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    /// Basic sanity check that the `ConnectRPC` management service is
+    /// reachable at the expected fallback path.
+    #[tokio::test]
+    async fn test_management_get_status_reachable() {
+        let app = make_router(make_state());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/byokey.management.ManagementService/GetStatus")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Whatever the service returns, it should be handled — not a 404.
+        assert_ne!(
+            resp.status(),
+            axum::http::StatusCode::NOT_FOUND,
+            "`ConnectRPC` fallback should serve management requests"
+        );
     }
 }

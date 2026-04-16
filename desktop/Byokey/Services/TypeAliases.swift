@@ -1,19 +1,30 @@
-/// Type aliases mapping old hand-written types to the generated OpenAPI types.
-/// This lets Views continue using short names (e.g. `UsageSnapshot`)
-/// while all data comes from the generated `Components.Schemas` namespace.
+/// Type aliases mapping generated ConnectRPC / proto types to short names
+/// used by the view layer. Management types come from `management.pb.swift`;
+/// the models endpoint is still REST so its types are hand-defined here.
 
-typealias UsageSnapshot = Components.Schemas.UsageSnapshot
-typealias UsageHistoryResponse = Components.Schemas.UsageHistoryResponse
-typealias UsageBucket = Components.Schemas.UsageBucket
-typealias ModelStats = Components.Schemas.ModelStats
-typealias ModelEntry = Components.Schemas.ModelEntry
-typealias ModelsResponse = Components.Schemas.ModelsResponse
+// MARK: - ConnectRPC proto type aliases
 
-extension Components.Schemas.ModelEntry: Identifiable {}
-typealias RateLimitsResponse = Components.Schemas.RateLimitsResponse
-typealias ProviderRateLimits = Components.Schemas.ProviderRateLimits
-typealias AccountRateLimit = Components.Schemas.AccountRateLimit
-typealias RateLimitSnapshot = Components.Schemas.RateLimitSnapshot
+typealias UsageSnapshot = Byokey_Management_GetUsageResponse
+typealias UsageHistoryResponse = Byokey_Management_GetUsageHistoryResponse
+typealias UsageBucket = Byokey_Management_UsageBucket
+typealias ProtoModelStats = Byokey_Management_ModelStats
+typealias RateLimitsResponse = Byokey_Management_GetRateLimitsResponse
+typealias ProviderRateLimits = Byokey_Management_ProviderRateLimits
+typealias AccountRateLimit = Byokey_Management_AccountRateLimit
+typealias ProtoRateLimitSnapshot = Byokey_Management_RateLimitSnapshot
+
+// MARK: - REST-only types (v1/models — not in proto)
+
+struct ModelsResponse: Decodable {
+    let object: String
+    let data: [ModelEntry]
+}
+
+struct ModelEntry: Decodable, Identifiable {
+    let id: String
+    let object: String
+    let owned_by: String
+}
 
 // MARK: - Provider Icon
 

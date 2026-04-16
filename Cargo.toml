@@ -8,6 +8,7 @@ members = [
     "crates/auth",
     "crates/translate",
     "crates/provider",
+    "crates/proto",
     "crates/proxy",
 ]
 exclude = ["desktop/src-tauri"]
@@ -32,10 +33,12 @@ byokey-store = { version = "0.11.0", path = "crates/store" }
 byokey-auth = { version = "0.11.0", path = "crates/auth" }
 byokey-translate = { version = "0.11.0", path = "crates/translate" }
 byokey-provider = { version = "0.11.0", path = "crates/provider" }
+byokey-proto = { version = "0.11.0", path = "crates/proto" }
 byokey-proxy = { version = "0.11.0", path = "crates/proxy" }
 byokey-daemon = { version = "0.11.0", path = "crates/daemon" }
-aigw = { version = "0.2.0", default-features = false, features = ["anthropic", "anthropic-claude-code", "openai", "openai-compat"] }
-aigw-core = "0.2.0"
+aigw = { version = "0.4.0", default-features = false, features = ["anthropic", "anthropic-claude-code", "openai", "openai-compat"] }
+aigw-core = "0.4.0"
+aigw-openai = "0.4.0"
 reqwest = { version = "0.12", default-features = false }
 secrecy = "0.10"
 
@@ -100,6 +103,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"]
 tracing-appender = "0.2"
 # OpenAPI
 utoipa = "5"
+# ConnectRPC (Rust server, buffa-based protobuf)
+connectrpc = { version = "0.3", default-features = false, features = ["axum", "gzip"] }
+connectrpc-build = "0.3"
+buffa = "0.3"
+buffa-types = { version = "0.3", features = ["json"] }
+http-body = "1"
 
 
 [workspace.lints.rust]

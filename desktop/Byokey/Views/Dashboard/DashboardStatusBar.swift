@@ -59,7 +59,7 @@ struct DashboardStatusBar: View {
                 Spacer()
 
                 statusItem("PROVIDERS") {
-                    let active = dataService.providers.filter { $0.enabled && $0.auth_status == .valid }.count
+                    let active = dataService.providers.filter { $0.enabled && $0.authStatus == .valid }.count
                     let total = dataService.providers.count
                     Text("\(active)/\(total) active")
                         .fontWeight(.semibold)

@@ -44,9 +44,9 @@ dependencies = [
 
 [[package]]
 name = "aigw"
-version = "0.2.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b0bf17ca65661b99d29884984bce817585156c634809be388273f954013068c"
+checksum = "ad15c089a873417322d0b59d9782fc1430cfe4bfe70a14ed8808e1f3e72ad159"
 dependencies = [
  "aigw-anthropic",
  "aigw-openai",
@@ -55,9 +55,9 @@ dependencies = [
 
 [[package]]
 name = "aigw-anthropic"
-version = "0.2.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e247abb6d94cec715257361a6db81c55a5c069e7f3682bb7ea031fe039a3e9fc"
+checksum = "b489591d2854036b29ef33d625340645e14de73f870e10ce80aa06e9fcd6c0dd"
 dependencies = [
  "aigw-core",
  "bon",
@@ -76,9 +76,9 @@ dependencies = [
 
 [[package]]
 name = "aigw-core"
-version = "0.2.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a664aa9ce1de7dd698f603bf9c062c2d71c4132616a3343afdddfa8c8052b4da"
+checksum = "08728c63efcd8e309aff604b2c4de8e6e30c83cb7e30db52bf344430c0cc982a"
 dependencies = [
  "bon",
  "bytes",
@@ -91,9 +91,9 @@ dependencies = [
 
 [[package]]
 name = "aigw-openai"
-version = "0.2.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8444245aae14d74ef30012a09a0c6fdeca7994d0909a7bc5319a5f9b58cd0cd"
+checksum = "8a340511409db89757ec2248ceb8845975ab7d606d4b87a296e931ea8f3127b9"
 dependencies = [
  "aigw-core",
  "bon",
@@ -112,9 +112,9 @@ dependencies = [
 
 [[package]]
 name = "aigw-openai-compat"
-version = "0.2.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c87fcb742d1e7b175e3b34499beb29f38d78ec6deb72ee3c052961e41dd6f93"
+checksum = "7ce546e8dbb16c31f56e1445aca3d4a1c70ca52187410383995b5651c8a36d71"
 dependencies = [
  "aigw-core",
  "aigw-openai",
@@ -715,6 +715,57 @@ dependencies = [
 ]
 
 [[package]]
+name = "buffa"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df3fea50199859017c80584fef221c61abb882c69ed5b6e30a0bf75864e3c505"
+dependencies = [
+ "base64",
+ "bytes",
+ "hashbrown 0.15.5",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "buffa-codegen"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f9ddcb25f0dde4d82e0a1128b0c459feba775e24dfa7cb0c3f4a9d61abfa245"
+dependencies = [
+ "buffa",
+ "buffa-descriptor",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "buffa-descriptor"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a0794ed1f8a0c6ab168c70258e21cf74ca7b87a7dd888a0a69745b075f2d351"
+dependencies = [
+ "buffa",
+]
+
+[[package]]
+name = "buffa-types"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4d80c9929af9fcc673653b99f81c1d13aa32c2bb329bb1ef02ec533994389c6"
+dependencies = [
+ "buffa",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -804,11 +855,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "byokey-proto"
+version = "0.11.0"
+dependencies = [
+ "buffa",
+ "buffa-types",
+ "connectrpc",
+ "connectrpc-build",
+ "http-body",
+ "serde",
+]
+
+[[package]]
 name = "byokey-provider"
 version = "0.11.0"
 dependencies = [
  "aigw",
  "aigw-core",
+ "aigw-openai",
  "anyhow",
  "async-trait",
  "bon",
@@ -847,13 +911,17 @@ dependencies = [
  "arc-swap",
  "async-trait",
  "axum",
+ "buffa",
+ "buffa-types",
  "byokey-auth",
  "byokey-config",
+ "byokey-proto",
  "byokey-provider",
  "byokey-store",
  "byokey-translate",
  "byokey-types",
  "bytes",
+ "connectrpc",
  "futures-util",
  "http-body-util",
  "notify",
@@ -954,6 +1022,9 @@ name = "bytes"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "cc"
@@ -1113,6 +1184,62 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
+]
+
+[[package]]
+name = "connectrpc"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20d510caddfd82db44276604ce400d9fe13fa85fcc738eb457d82089f8e68b74"
+dependencies = [
+ "async-compression",
+ "axum",
+ "base64",
+ "buffa",
+ "bytes",
+ "flate2",
+ "futures",
+ "http",
+ "http-body",
+ "http-body-util",
+ "percent-encoding",
+ "pin-project",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tracing",
+]
+
+[[package]]
+name = "connectrpc-build"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "888e07502105f763ac37e677480f0d6bf907436cbdddf24db8131ebac279c474"
+dependencies = [
+ "anyhow",
+ "buffa",
+ "buffa-codegen",
+ "connectrpc-codegen",
+ "tempfile",
+]
+
+[[package]]
+name = "connectrpc-codegen"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75af2f1a3e0e0eeb65091fa116b1860a2552ef0533143b784bf6ae4cc6ea997b"
+dependencies = [
+ "anyhow",
+ "buffa",
+ "buffa-codegen",
+ "heck 0.5.0",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -1911,6 +2038,7 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash",
+ "serde",
 ]
 
 [[package]]
@@ -4926,6 +5054,7 @@ dependencies = [
  "pin-project-lite",
  "sync_wrapper",
  "tokio",
+ "tokio-util",
  "tower-layer",
  "tower-service",
  "tracing",

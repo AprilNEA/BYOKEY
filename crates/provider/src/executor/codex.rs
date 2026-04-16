@@ -6,20 +6,22 @@
 //!   `api.openai.com/v1/chat/completions`.  No translation needed.
 //!
 //! * **OAuth token** (Codex CLI PKCE flow) — private Codex Responses API at
-//!   `chatgpt.com/backend-api/codex/responses`.  Request translated with
-//!   [`OpenAIToCodex`]; response parsed from SSE and translated with
-//!   [`CodexToOpenAI`].
+//!   `chatgpt.com/backend-api/codex/responses`.  Request and response translated
+//!   via [`aigw_openai`]'s Responses API helpers
+//!   ([`build_responses_create_request`], [`ResponsesResponseTranslator`],
+//!   [`ResponsesStreamParser`]) with the Codex preset config.
 use crate::http_util::ProviderHttp;
 use crate::registry;
+use aigw_core::translate::{ResponseTranslator as _, StreamParser as _};
+use aigw_openai::{
+    ResponsesRequestConfig, ResponsesResponseTranslator, ResponsesStreamParser,
+    build_responses_create_request,
+};
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
-use byokey_translate::{CodexToOpenAI, OpenAIToCodex};
 use byokey_types::{
     ByokError, ChatRequest, ProviderId, RateLimitStore,
-    traits::{
-        ByteStream, ProviderExecutor, ProviderResponse, RequestTranslator, ResponseTranslator,
-        Result,
-    },
+    traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
 };
 use bytes::Bytes;
 use futures_util::{StreamExt as _, TryStreamExt as _, stream::try_unfold};
@@ -112,25 +114,36 @@ impl CodexExecutor {
         self.ph.send(builder).await
     }
 
+    /// Translate a `ChatRequest` body `Value` to the Codex Responses API JSON
+    /// body using [`aigw_openai::build_responses_create_request`] with the
+    /// Codex preset config.
+    fn translate_body(body: Value) -> Result<Value> {
+        let aigw_request: aigw_core::model::ChatRequest = serde_json::from_value(body)
+            .map_err(|e: serde_json::Error| ByokError::Translation(e.to_string()))?;
+        let responses_req =
+            build_responses_create_request(&aigw_request, &ResponsesRequestConfig::codex())
+                .map_err(|e| ByokError::Translation(e.to_string()))?;
+        serde_json::to_value(&responses_req)
+            .map_err(|e: serde_json::Error| ByokError::Translation(e.to_string()))
+    }
+
     /// Translates an `OpenAI` Chat request, sends it to the Codex Responses
     /// API, and returns a streaming `ByteStream` of `OpenAI`-format SSE events.
     async fn codex_stream(&self, body: Value, token: &str) -> Result<ProviderResponse> {
-        let mut codex_body = OpenAIToCodex.translate_request(body)?;
+        let mut codex_body = Self::translate_body(body)?;
         codex_body["stream"] = Value::Bool(true);
 
         let resp = self.codex_request(&codex_body, token).await?;
 
-        let model = codex_body["model"].as_str().unwrap_or("codex").to_string();
-
         let raw: ByteStream = ProviderHttp::byte_stream(resp);
 
-        Ok(ProviderResponse::Stream(translate_codex_sse(raw, model)))
+        Ok(ProviderResponse::Stream(translate_codex_responses_sse(raw)))
     }
 
     /// Like [`codex_stream`] but collects the full SSE response and extracts
     /// the completed OpenAI-format `Value`.
     async fn codex_complete(&self, body: Value, token: &str) -> Result<ProviderResponse> {
-        let mut codex_body = OpenAIToCodex.translate_request(body)?;
+        let mut codex_body = Self::translate_body(body)?;
         codex_body["stream"] = Value::Bool(true); // Codex always streams
 
         let resp = self.codex_request(&codex_body, token).await?;
@@ -141,15 +154,27 @@ impl CodexExecutor {
             all.extend_from_slice(&chunk);
         }
 
-        // Find the response.completed SSE event
+        // Find the `response.completed` SSE event and translate the inner
+        // `response` object via aigw_openai's ResponsesResponseTranslator.
         for line in String::from_utf8_lossy(&all).lines() {
             if let Some(data) = line.strip_prefix("data: ")
                 && let Ok(ev) = serde_json::from_str::<Value>(data)
                 && ev["type"].as_str() == Some("response.completed")
             {
                 let response = ev["response"].clone();
-                let translated = CodexToOpenAI.translate_response(response)?;
-                return Ok(ProviderResponse::Complete(translated));
+                let resp_bytes = serde_json::to_vec(&response)
+                    .map_err(|e: serde_json::Error| ByokError::Translation(e.to_string()))?;
+                let chat_resp = ResponsesResponseTranslator
+                    .translate_response(http::StatusCode::OK, &resp_bytes)
+                    .map_err(|e| ByokError::Translation(e.to_string()))?;
+                let mut value = serde_json::to_value(&chat_resp)
+                    .map_err(|e: serde_json::Error| ByokError::Translation(e.to_string()))?;
+                // Prefix response id with `chatcmpl-` to match BYOKEY's
+                // legacy CodexToOpenAI behaviour.
+                if let Some(id) = value.get("id").and_then(Value::as_str) {
+                    value["id"] = Value::String(format!("chatcmpl-{id}"));
+                }
+                return Ok(ProviderResponse::Complete(value));
             }
         }
 
@@ -170,198 +195,54 @@ fn random_uuid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-/// Wraps a raw Codex SSE `ByteStream` and translates its events to
-/// `OpenAI` chat completion chunk SSE format line-by-line.
-#[allow(clippy::too_many_lines)]
-pub(crate) fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStream {
+/// Wraps a raw Codex Responses API SSE `ByteStream` and translates each event
+/// to an `OpenAI` chat-completion-chunk SSE line.
+///
+/// Delegates semantic parsing to [`aigw_openai::ResponsesStreamParser`], then
+/// converts the canonical `StreamEvent`s to `OpenAI` SSE bytes via the shared
+/// [`stream_bridge`](crate::stream_bridge) helpers.
+pub(crate) fn translate_codex_responses_sse(inner: ByteStream) -> ByteStream {
+    use crate::stream_bridge::{SseContext, stream_events_to_sse};
+
     struct State {
         inner: ByteStream,
         buf: Vec<u8>,
-        model: String,
+        parser: ResponsesStreamParser,
+        ctx: SseContext,
         done: bool,
-        tool_call_index: i64,
-        /// Buffered `encrypted_content` from `response.output_item.added`
-        /// (reasoning type). Emitted when the thinking block finalizes.
-        thinking_signature: Option<String>,
-        /// True while a reasoning output item is open (between added and done).
-        thinking_block_open: bool,
     }
 
     Box::pin(try_unfold(
         State {
             inner,
             buf: Vec::new(),
-            model,
+            parser: ResponsesStreamParser::new(),
+            ctx: SseContext::default(),
             done: false,
-            tool_call_index: 0,
-            thinking_signature: None,
-            thinking_block_open: false,
         },
         |mut s| async move {
             loop {
-                // Attempt to consume one complete line from the buffer.
                 if let Some(nl) = s.buf.iter().position(|&b| b == b'\n') {
                     let raw: Vec<u8> = s.buf.drain(..=nl).collect();
                     let line = String::from_utf8_lossy(&raw);
                     let line = line.trim_end_matches(['\r', '\n']);
 
-                    if let Some(data) = line.strip_prefix("data: ")
-                        && let Ok(ev) = serde_json::from_str::<Value>(data)
-                    {
-                        match ev["type"].as_str().unwrap_or("") {
-                            // Capture encrypted_content when a reasoning item starts.
-                            "response.output_item.added"
-                                if ev.pointer("/item/type").and_then(Value::as_str)
-                                    == Some("reasoning") =>
-                            {
-                                s.thinking_block_open = true;
-                                s.thinking_signature = ev
-                                    .pointer("/item/encrypted_content")
-                                    .and_then(Value::as_str)
-                                    .map(String::from);
-                                continue;
-                            }
-                            // Finalize reasoning block — emit buffered signature.
-                            "response.output_item.done"
-                                if ev.pointer("/item/type").and_then(Value::as_str)
-                                    == Some("reasoning") =>
-                            {
-                                s.thinking_block_open = false;
-                                if let Some(sig) = s.thinking_signature.take() {
-                                    let chunk = serde_json::json!({
-                                        "object": "chat.completion.chunk",
-                                        "model": &s.model,
-                                        "choices": [{
-                                            "index": 0,
-                                            "delta": {"reasoning_signature": sig},
-                                            "finish_reason": null
-                                        }]
-                                    });
-                                    let line = format!("data: {chunk}\n\n");
-                                    return Ok(Some((Bytes::from(line), s)));
-                                }
-                                continue;
-                            }
-                            "response.reasoning_summary_text.delta" => {
-                                let delta = ev["delta"].as_str().unwrap_or("").to_string();
-                                let chunk = serde_json::json!({
-                                    "object": "chat.completion.chunk",
-                                    "model": &s.model,
-                                    "choices": [{
-                                        "index": 0,
-                                        "delta": {"reasoning_content": delta},
-                                        "finish_reason": null
-                                    }]
-                                });
-                                let line = format!("data: {chunk}\n\n");
-                                return Ok(Some((Bytes::from(line), s)));
-                            }
-                            "response.output_text.delta" => {
-                                let delta = ev["delta"].as_str().unwrap_or("").to_string();
-                                let chunk = serde_json::json!({
-                                    "object": "chat.completion.chunk",
-                                    "model": &s.model,
-                                    "choices": [{
-                                        "index": 0,
-                                        "delta": {"content": delta},
-                                        "finish_reason": null
-                                    }]
-                                });
-                                let line = format!("data: {chunk}\n\n");
-                                return Ok(Some((Bytes::from(line), s)));
-                            }
-                            "response.output_item.added"
-                                if ev.pointer("/item/type").and_then(Value::as_str)
-                                    == Some("function_call") =>
-                            {
-                                // Flush pending thinking signature before starting tool calls.
-                                let mut prefix = String::new();
-                                if let Some(sig) = s.thinking_signature.take() {
-                                    s.thinking_block_open = false;
-                                    let sig_chunk = serde_json::json!({
-                                        "object": "chat.completion.chunk",
-                                        "model": &s.model,
-                                        "choices": [{
-                                            "index": 0,
-                                            "delta": {"reasoning_signature": sig},
-                                            "finish_reason": null
-                                        }]
-                                    });
-                                    prefix = format!("data: {sig_chunk}\n\n");
-                                }
-                                let id = ev
-                                    .pointer("/item/call_id")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("")
-                                    .to_string();
-                                let name = ev
-                                    .pointer("/item/name")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("")
-                                    .to_string();
-                                let idx = s.tool_call_index;
-                                s.tool_call_index += 1;
-                                let chunk = serde_json::json!({
-                                    "object": "chat.completion.chunk",
-                                    "model": &s.model,
-                                    "choices": [{"index": 0, "delta": {
-                                        "tool_calls": [{"index": idx, "id": id, "type": "function", "function": {"name": name, "arguments": ""}}]
-                                    }, "finish_reason": null}]
-                                });
-                                let line = format!("{prefix}data: {chunk}\n\n");
-                                return Ok(Some((Bytes::from(line), s)));
-                            }
-                            "response.function_call_arguments.delta" => {
-                                let delta = ev["delta"].as_str().unwrap_or("").to_string();
-                                let idx = (s.tool_call_index - 1).max(0);
-                                let chunk = serde_json::json!({
-                                    "object": "chat.completion.chunk",
-                                    "model": &s.model,
-                                    "choices": [{"index": 0, "delta": {
-                                        "tool_calls": [{"index": idx, "function": {"arguments": delta}}]
-                                    }, "finish_reason": null}]
-                                });
-                                let line = format!("data: {chunk}\n\n");
-                                return Ok(Some((Bytes::from(line), s)));
-                            }
-                            "response.completed" => {
-                                let mut chunks = Vec::new();
-                                // If tool calls were emitted, send a finish chunk
-                                if s.tool_call_index > 0 {
-                                    let finish = serde_json::json!({
-                                        "object": "chat.completion.chunk",
-                                        "model": &s.model,
-                                        "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]
-                                    });
-                                    chunks.extend_from_slice(
-                                        format!("data: {finish}\n\n").as_bytes(),
-                                    );
-                                }
-                                // Emit usage chunk from the completed response
-                                let input_tokens = ev
-                                    .pointer("/response/usage/input_tokens")
-                                    .and_then(Value::as_u64)
-                                    .unwrap_or(0);
-                                let output_tokens = ev
-                                    .pointer("/response/usage/output_tokens")
-                                    .and_then(Value::as_u64)
-                                    .unwrap_or(0);
-                                let usage_chunk = serde_json::json!({
-                                    "object": "chat.completion.chunk",
-                                    "model": &s.model,
-                                    "choices": [],
-                                    "usage": {
-                                        "prompt_tokens": input_tokens,
-                                        "completion_tokens": output_tokens,
-                                        "total_tokens": input_tokens + output_tokens
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        match s.parser.parse_event("", data) {
+                            Ok(events) if !events.is_empty() => {
+                                let sse_bytes = stream_events_to_sse(&events, &mut s.ctx);
+                                if !sse_bytes.is_empty() {
+                                    if events
+                                        .iter()
+                                        .any(|e| matches!(e, aigw_core::model::StreamEvent::Done))
+                                    {
+                                        s.done = true;
                                     }
-                                });
-                                chunks.extend_from_slice(
-                                    format!("data: {usage_chunk}\n\n").as_bytes(),
-                                );
-                                chunks.extend_from_slice(b"data: [DONE]\n\n");
-                                s.done = true;
-                                return Ok(Some((Bytes::from(chunks), s)));
+                                    return Ok(Some((Bytes::from(sse_bytes), s)));
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "codex responses stream parse error");
                             }
                             _ => {}
                         }
@@ -373,7 +254,6 @@ pub(crate) fn translate_codex_sse(inner: ByteStream, model: String) -> ByteStrea
                     return Ok(None);
                 }
 
-                // Buffer more data from the upstream stream.
                 match s.inner.next().await {
                     Some(Ok(b)) => s.buf.extend_from_slice(&b),
                     Some(Err(e)) => return Err(e),

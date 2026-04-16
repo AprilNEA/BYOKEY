@@ -1,0 +1,32 @@
+[package]
+name = "byokey-proto"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "BYOKEY ConnectRPC protocol definitions (generated from .proto)"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+build = "build.rs"
+
+# This crate owns the generated ConnectRPC service code, which uses
+# `unsafe impl` for buffa's marker traits. Rather than relaxing the
+# workspace-wide `unsafe_code = "forbid"` lint everywhere it is used,
+# we keep the generated code isolated here and override the lint for
+# this crate only.
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+all = { level = "warn", priority = -2 }
+
+[build-dependencies]
+connectrpc-build.workspace = true
+
+[dependencies]
+connectrpc.workspace = true
+buffa.workspace = true
+buffa-types.workspace = true
+http-body.workspace = true
+serde.workspace = true

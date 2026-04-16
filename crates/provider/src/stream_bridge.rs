@@ -66,6 +66,34 @@ pub fn stream_event_to_sse(event: &StreamEvent, ctx: &mut SseContext) -> Option<
             Some(format!("data: {chunk}\n\n").into_bytes())
         }
 
+        StreamEvent::ReasoningDelta(text) => {
+            let chunk = json!({
+                "id": &ctx.id,
+                "object": "chat.completion.chunk",
+                "model": &ctx.model,
+                "choices": [{
+                    "index": 0,
+                    "delta": {"reasoning_content": text},
+                    "finish_reason": null
+                }]
+            });
+            Some(format!("data: {chunk}\n\n").into_bytes())
+        }
+
+        StreamEvent::ReasoningSignature(sig) => {
+            let chunk = json!({
+                "id": &ctx.id,
+                "object": "chat.completion.chunk",
+                "model": &ctx.model,
+                "choices": [{
+                    "index": 0,
+                    "delta": {"reasoning_signature": sig},
+                    "finish_reason": null
+                }]
+            });
+            Some(format!("data: {chunk}\n\n").into_bytes())
+        }
+
         StreamEvent::ToolCallStart { index, id, name } => {
             let chunk = json!({
                 "id": &ctx.id,
@@ -173,6 +201,30 @@ mod tests {
         let bytes = stream_event_to_sse(&event, &mut ctx).unwrap();
         let line = String::from_utf8(bytes).unwrap();
         assert!(line.contains(r#""content":"Hello"#));
+    }
+
+    #[test]
+    fn reasoning_delta_emits_reasoning_content() {
+        let mut ctx = SseContext {
+            id: "chatcmpl-test".into(),
+            model: "o4-mini".into(),
+        };
+        let event = StreamEvent::ReasoningDelta("thinking...".to_string());
+        let bytes = stream_event_to_sse(&event, &mut ctx).unwrap();
+        let line = String::from_utf8(bytes).unwrap();
+        assert!(line.contains(r#""reasoning_content":"thinking..."#));
+    }
+
+    #[test]
+    fn reasoning_signature_emits_reasoning_signature() {
+        let mut ctx = SseContext {
+            id: "chatcmpl-test".into(),
+            model: "o4-mini".into(),
+        };
+        let event = StreamEvent::ReasoningSignature("opaque_sig".to_string());
+        let bytes = stream_event_to_sse(&event, &mut ctx).unwrap();
+        let line = String::from_utf8(bytes).unwrap();
+        assert!(line.contains(r#""reasoning_signature":"opaque_sig"#));
     }
 
     #[test]

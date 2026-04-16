@@ -1,0 +1,27 @@
+# ConnectRPC Swift code generation for the byokey desktop app.
+#
+# Prerequisites: brew install bufbuild/buf/buf
+# Run from this directory: buf generate
+#
+# Outputs land under Generated/Connect/
+
+version: v2
+
+inputs:
+  - directory: ../../crates/proto/proto
+
+plugins:
+  # SwiftProtobuf message types.
+  - remote: buf.build/apple/swift
+    out: Generated/Connect
+    opt:
+      - Visibility=Internal
+
+  # ConnectRPC service client stubs.
+  - remote: buf.build/connectrpc/swift
+    out: Generated/Connect
+    opt:
+      - Visibility=Internal
+      - GenerateAsyncMethods=true
+      - GenerateCallbackMethods=false
+      - GenerateServiceMetadata=true

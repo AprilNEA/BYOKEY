@@ -37,6 +37,11 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build
         shell: bash
         run: cargo build --release --target ${{ matrix.target }}

@@ -115,13 +115,13 @@ struct AmpView: View {
         let selectedProvider = selectedId.flatMap { id in
             dataService.providers.first { $0.id == id }
         }
-        let isActive = isAmpOfficial || selectedProvider?.auth_status == .valid
+        let isActive = isAmpOfficial || selectedProvider?.authStatus == .valid
 
         // Display name for the current selection
         let displayName: String = if isAmpOfficial {
             "Amp Official"
         } else {
-            selectedProvider?.display_name ?? selectedId ?? family.name
+            selectedProvider?.displayName ?? selectedId ?? family.name
         }
 
         return VStack(alignment: .leading, spacing: 12) {
@@ -165,9 +165,9 @@ struct AmpView: View {
                     } label: {
                         HStack {
                             Circle()
-                                .fill(provider.auth_status == .valid ? .green : .gray)
+                                .fill(provider.authStatus == .valid ? .green : .gray)
                                 .frame(width: 6, height: 6)
-                            Text(provider.display_name)
+                            Text(provider.displayName)
                             if provider.id == selectedId {
                                 Image(systemName: "checkmark")
                             }

@@ -6,10 +6,10 @@ struct DashboardHistoryChart: View {
 
     private var aggregated: [(date: Date, requests: UInt64)] {
         guard let history = dataService.history else { return [] }
-        return Dictionary(grouping: history.buckets, by: \.period_start)
+        return Dictionary(grouping: history.buckets, by: \.periodStart)
             .map { ts, buckets in
                 (date: Date(timeIntervalSince1970: TimeInterval(ts)),
-                 requests: UInt64(buckets.reduce(0) { $0 + $1.request_count }))
+                 requests: UInt64(buckets.reduce(0) { $0 + $1.requestCount }))
             }
             .sorted { $0.date < $1.date }
     }

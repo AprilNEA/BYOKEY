@@ -55,7 +55,7 @@ struct AccountsView: View {
     // MARK: - Provider Card
 
     @ViewBuilder
-    private func providerCard(_ provider: Components.Schemas.ProviderAccounts) -> some View {
+    private func providerCard(_ provider: Byokey_Management_ProviderAccounts) -> some View {
         let isHovered = hoveredProvider == provider.id
         let stats = providerStats(for: provider.id)
 
@@ -69,7 +69,7 @@ struct AccountsView: View {
                         .frame(width: 22, height: 22)
                 }
 
-                Text(provider.display_name)
+                Text(provider.displayName)
                     .font(.system(size: 13, weight: .semibold))
 
                 Spacer()
@@ -110,16 +110,16 @@ struct AccountsView: View {
                     .padding(.horizontal, 16)
 
                 VStack(spacing: 0) {
-                    ForEach(Array(provider.accounts.enumerated()), id: \.element.account_id) { index, account in
+                    ForEach(Array(provider.accounts.enumerated()), id: \.element.accountID) { index, account in
                         AccountRow(
                             account: account,
-                            providerName: provider.display_name,
-                            rateLimitHeaders: rateLimitHeaders(providerId: provider.id, accountId: account.account_id),
+                            providerName: provider.displayName,
+                            rateLimitHeaders: rateLimitHeaders(providerId: provider.id, accountId: account.accountID),
                             onActivate: {
-                                Task { await activateAccount(provider: provider.id, accountId: account.account_id) }
+                                Task { await activateAccount(provider: provider.id, accountId: account.accountID) }
                             },
                             onRemove: {
-                                Task { await removeAccount(provider: provider.id, accountId: account.account_id) }
+                                Task { await removeAccount(provider: provider.id, accountId: account.accountID) }
                             }
                         )
 
@@ -199,7 +199,7 @@ struct AccountsView: View {
     }
 
     private func providerStats(for providerId: String) -> ProviderAggregateStats? {
-        guard let modelStats = dataService.usage?.models.additionalProperties else { return nil }
+        guard let modelStats = dataService.usage?.models else { return nil }
 
         // Build model → provider mapping from the models list
         let modelToProvider: [String: String] = Dictionary(
@@ -212,8 +212,8 @@ struct AccountsView: View {
             if modelToProvider[modelId] == providerId {
                 agg.requests += stats.requests
                 agg.success += stats.success
-                agg.inputTokens += stats.input_tokens
-                agg.outputTokens += stats.output_tokens
+                agg.inputTokens += stats.inputTokens
+                agg.outputTokens += stats.outputTokens
             }
         }
         return agg.requests > 0 ? agg : nil
@@ -222,8 +222,8 @@ struct AccountsView: View {
     private func rateLimitHeaders(providerId: String, accountId: String) -> [String: String]? {
         guard let rateLimits = dataService.rateLimits else { return nil }
         guard let provider = rateLimits.providers.first(where: { $0.id == providerId }) else { return nil }
-        guard let account = provider.accounts.first(where: { $0.account_id == accountId }) else { return nil }
-        let headers = account.snapshot.headers.additionalProperties
+        guard let account = provider.accounts.first(where: { $0.accountID == accountId }) else { return nil }
+        let headers = account.snapshot.headers
         return headers.isEmpty ? nil : headers
     }
 
@@ -264,7 +264,7 @@ struct AccountsView: View {
 // MARK: - Account Row
 
 private struct AccountRow: View {
-    let account: Components.Schemas.AccountDetail
+    let account: Byokey_Management_AccountDetail
     let providerName: String
     let rateLimitHeaders: [String: String]?
     let onActivate: () -> Void
@@ -273,10 +273,10 @@ private struct AccountRow: View {
     @State private var isExpanded = false
 
     private var displayName: String {
-        if let label = account.label, label != providerName {
-            return label
+        if account.hasLabel, !account.label.isEmpty, account.label != providerName {
+            return account.label
         }
-        return account.account_id
+        return account.accountID
     }
 
     var body: some View {
@@ -287,10 +287,10 @@ private struct AccountRow: View {
                 Button(action: onActivate) {
                     ZStack {
                         Circle()
-                            .strokeBorder(account.is_active ? Color.accentColor : .secondary.opacity(0.3), lineWidth: 1.5)
+                            .strokeBorder(account.isActive ? Color.accentColor : .secondary.opacity(0.3), lineWidth: 1.5)
                             .frame(width: 16, height: 16)
 
-                        if account.is_active {
+                        if account.isActive {
                             Circle()
                                 .fill(Color.accentColor)
                                 .frame(width: 8, height: 8)
@@ -298,7 +298,7 @@ private struct AccountRow: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .disabled(account.is_active)
+                .disabled(account.isActive)
 
                 // Name
                 Text(displayName)
@@ -458,7 +458,7 @@ private struct AccountRow: View {
     }
 
     private var stateColor: Color {
-        switch account.token_state {
+        switch account.tokenState {
         case .valid: .green
         case .expired: .orange
         case .invalid: .red
@@ -466,7 +466,7 @@ private struct AccountRow: View {
     }
 
     private var stateLabel: String {
-        switch account.token_state {
+        switch account.tokenState {
         case .valid: "Active"
         case .expired: "Expired"
         case .invalid: "Invalid"
@@ -474,10 +474,10 @@ private struct AccountRow: View {
     }
 
     private var remainingText: String? {
-        guard let expiresAt = account.expires_at else { return nil }
-        let now = Int64(Date().timeIntervalSince1970)
-        let remaining = expiresAt - now
-        guard remaining > 0 else { return nil }
+        guard account.hasExpiresAt else { return nil }
+        let now = UInt64(Date().timeIntervalSince1970)
+        guard account.expiresAt > now else { return nil }
+        let remaining = account.expiresAt - now
 
         let days = remaining / 86400
         let hours = (remaining % 86400) / 3600

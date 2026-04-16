@@ -19,7 +19,9 @@ pub fn cmd_amp(action: AmpAction) -> Result<()> {
 
 fn cmd_amp_inject(url: Option<String>) -> Result<()> {
     let config = load_byokey_config();
-    let resolved_url = config.amp.resolve_url(url.as_deref(), &config.host);
+    let resolved_url = config
+        .amp
+        .resolve_url(url.as_deref(), &config.host, config.port);
 
     let settings_path = byokey_config::AmpConfig::default_settings_path()
         .ok_or_else(|| anyhow::anyhow!("cannot determine HOME directory"))?;

@@ -7,15 +7,15 @@ struct DashboardRateLimitsCard: View {
         Card("RATE LIMITS") {
             VStack(spacing: 8) {
                 ForEach(data.providers, id: \.id) { provider in
-                    ForEach(provider.accounts, id: \.account_id) { account in
-                        if !account.snapshot.headers.additionalProperties.isEmpty {
+                    ForEach(provider.accounts, id: \.accountID) { account in
+                        if !account.snapshot.headers.isEmpty {
                             rateLimitRow(
                                 providerId: provider.id,
-                                name: provider.display_name,
+                                name: provider.displayName,
                                 multiAccount: provider.accounts.count > 1,
-                                accountId: account.account_id,
-                                headers: account.snapshot.headers.additionalProperties,
-                                capturedAt: UInt64(account.snapshot.captured_at)
+                                accountId: account.accountID,
+                                headers: account.snapshot.headers,
+                                capturedAt: UInt64(account.snapshot.capturedAt)
                             )
                         }
                     }
