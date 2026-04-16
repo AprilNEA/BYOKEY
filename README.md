@@ -42,7 +42,7 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
     <td align="center" width="200" valign="top">
       <img src="https://assets.byokey.io/icons/providers/claude.svg" width="36" alt="Claude"><br>
       <b>Claude</b><br>
-      <sup>PKCE</sup><br>
+      <img src="https://img.shields.io/badge/OAuth-444?style=flat-square" alt="OAuth"><br>
       <sub>claude-opus-4-6<br>claude-sonnet-4-5<br>claude-haiku-4-5</sub>
     </td>
     <td align="center" width="200" valign="top">
@@ -51,7 +51,7 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
         <img src="https://assets.byokey.io/icons/providers/codex.svg" width="36" alt="Codex">
       </picture><br>
       <b>Codex</b><br>
-      <sup>PKCE</sup><br>
+      <img src="https://img.shields.io/badge/OAuth-444?style=flat-square" alt="OAuth"><br>
       <sub>gpt-5.4<br>gpt-5.3-codex<br>gpt-5.1-codex-max<br>o3 · o4-mini</sub>
     </td>
     <td align="center" width="200" valign="top">
@@ -60,7 +60,7 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
         <img src="https://assets.byokey.io/icons/providers/githubcopilot.svg" width="36" alt="GitHub Copilot">
       </picture><br>
       <b>Copilot</b><br>
-      <sup>Device code</sup><br>
+      <img src="https://img.shields.io/badge/Device_code-444?style=flat-square" alt="Device code"><br>
       <sub>gpt-5.4<br>claude-sonnet-4.6<br>gemini-3.1-pro<br>grok-code-fast-1</sub>
     </td>
   </tr>
@@ -68,7 +68,7 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
     <td align="center" width="200" valign="top">
       <img src="https://assets.byokey.io/icons/providers/gemini.svg" width="36" alt="Gemini"><br>
       <b>Gemini</b><br>
-      <sup>PKCE</sup><br>
+      <img src="https://img.shields.io/badge/OAuth-444?style=flat-square" alt="OAuth"><br>
       <sub>gemini-2.0-flash<br>gemini-1.5-pro<br>gemini-1.5-flash</sub>
     </td>
     <td align="center" width="200" valign="top">
@@ -77,13 +77,13 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
         <img src="https://assets.byokey.io/icons/providers/amazonwebservices.svg" width="36" alt="AWS">
       </picture><br>
       <b>Kiro</b><br>
-      <sup>Device code</sup><br>
+      <img src="https://img.shields.io/badge/Device_code-444?style=flat-square" alt="Device code"><br>
       <sub>kiro-default</sub>
     </td>
     <td align="center" width="200" valign="top">
       <img src="https://assets.byokey.io/icons/providers/gemini.svg" width="36" alt="Antigravity"><br>
       <b>Antigravity</b><br>
-      <sup>PKCE</sup><br>
+      <img src="https://img.shields.io/badge/OAuth-444?style=flat-square" alt="OAuth"><br>
       <sub>ag-gemini-2.5-pro<br>ag-gemini-2.5-flash<br>ag-claude-sonnet-4-5</sub>
     </td>
   </tr>
@@ -91,18 +91,18 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
     <td align="center" width="200" valign="top">
       <img src="https://assets.byokey.io/icons/providers/alibabacloud.svg" width="36" alt="Qwen"><br>
       <b>Qwen</b><br>
-      <sup>Device code</sup><br>
+      <img src="https://img.shields.io/badge/Device_code-444?style=flat-square" alt="Device code"><br>
       <sub>qwen3-max<br>qwen3-coder-plus<br>qwen-plus</sub>
     </td>
     <td align="center" width="200" valign="top">
       <img src="https://assets.byokey.io/icons/providers/kimi.svg" width="36" alt="Kimi"><br>
       <b>Kimi</b><br>
-      <sup>Device code</sup><br>
+      <img src="https://img.shields.io/badge/Device_code-444?style=flat-square" alt="Device code"><br>
       <sub>kimi-k2-0711</sub>
     </td>
     <td align="center" width="200" valign="top">
       <b>iFlow</b><br>
-      <sup>Auth code</sup><br>
+      <img src="https://img.shields.io/badge/OAuth-444?style=flat-square" alt="OAuth"><br>
       <sub>glm-4.5<br>glm-z1-flash<br>kimi-k2</sub>
     </td>
   </tr>
