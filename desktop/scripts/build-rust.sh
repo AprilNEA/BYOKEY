@@ -112,17 +112,17 @@ if [ "${CONFIGURATION}" = "Release" ]; then
             ARM_TARGET="aarch64-apple-darwin"
             X86_TARGET="x86_64-apple-darwin"
 
-            for T in "${ARM_TARGET}" "${X86_TARGET}"; do
-                if ! rustup target list --installed 2>/dev/null | grep -qx "${T}"; then
-                    if command -v rustup >/dev/null 2>&1; then
+            if command -v rustup >/dev/null 2>&1; then
+                for T in "${ARM_TARGET}" "${X86_TARGET}"; do
+                    if ! rustup target list --installed 2>/dev/null | grep -qx "${T}"; then
                         echo "note: rust target ${T} not installed — running 'rustup target add ${T}'"
                         rustup target add "${T}"
-                    else
-                        echo "warning: target ${T} missing and rustup not on PATH;" >&2
-                        echo "         install it via your toolchain manager (e.g. 'mise exec -- rustup target add ${T}')" >&2
                     fi
-                fi
-            done
+                done
+            else
+                echo "warning: rustup not on PATH; assuming targets ${ARM_TARGET} and ${X86_TARGET} are pre-installed." >&2
+                echo "         Install them via your toolchain manager if the build fails (e.g. 'mise exec -- rustup target add aarch64-apple-darwin x86_64-apple-darwin')." >&2
+            fi
 
             echo "building byokey (release, universal: ${ARM_TARGET} + ${X86_TARGET})…"
             "${CARGO_CMD[@]}" build --release --target "${ARM_TARGET}" --bin byokey

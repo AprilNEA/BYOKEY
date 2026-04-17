@@ -145,16 +145,23 @@ impl AccountSelector {
     pub fn pick(&self, ctx: &SelectionContext) -> Option<String> {
         let idx = self.strategy.select(&self.nodes, ctx)?;
         let picked = self.nodes.get(idx)?.account_id.clone();
-        if let Ok(mut last) = self.last_picked.lock() {
-            *last = Some(picked.clone());
-        }
+        // Recover from poisoning so observability doesn't silently die.
+        let mut last = self
+            .last_picked
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *last = Some(picked.clone());
         Some(picked)
     }
 
     /// Last account returned by [`pick`](Self::pick), if any.
     #[must_use]
     pub fn last_picked(&self) -> Option<String> {
-        self.last_picked.lock().ok().and_then(|g| g.clone())
+        let guard = self
+            .last_picked
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.clone()
     }
 }
 

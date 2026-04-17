@@ -223,12 +223,24 @@ impl AuthManager {
         self: &Arc<Self>,
         provider: &ProviderId,
     ) -> Result<(String, OAuthToken)> {
-        // Single store call to establish the active-account snapshot.
-        let active_id = match self.store.list_accounts(provider).await {
-            Ok(accts) => accts
-                .into_iter()
-                .find(|a| a.is_active)
-                .map(|a| a.account_id),
+        // Single store call establishes the account snapshot. If any account
+        // is marked active, use it. Otherwise, if accounts exist but none is
+        // active, use the first one (logged as a warning — set_active_account
+        // should have enforced the invariant). Only fall through to the
+        // default-account path when the list is truly empty.
+        let account_id = match self.store.list_accounts(provider).await {
+            Ok(accts) if !accts.is_empty() => {
+                if let Some(active) = accts.iter().find(|a| a.is_active) {
+                    Some(active.account_id.clone())
+                } else {
+                    tracing::warn!(
+                        provider = ?provider,
+                        "no active account marked; defaulting to first account in the list"
+                    );
+                    Some(accts[0].account_id.clone())
+                }
+            }
+            Ok(_) => None,
             Err(e) => {
                 tracing::warn!(
                     provider = ?provider,
@@ -239,7 +251,7 @@ impl AuthManager {
             }
         };
 
-        if let Some(account_id) = active_id {
+        if let Some(account_id) = account_id {
             // Load the token for the specific account we just identified —
             // no second list_accounts call, so the pair is consistent.
             let token = self.get_token_for(provider, &account_id).await?;

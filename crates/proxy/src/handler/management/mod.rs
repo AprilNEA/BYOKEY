@@ -284,7 +284,9 @@ impl stat::StatusService for StatusServiceImpl {
             ));
         };
         let to = req.to.unwrap_or_else(now_seconds);
-        let from = req.from.unwrap_or(to - THIRTY_DAYS_SECS);
+        let from = req
+            .from
+            .unwrap_or_else(|| to.saturating_sub(THIRTY_DAYS_SECS));
         if from > to {
             return Err(ConnectError::invalid_argument(
                 "from must be less than or equal to to",

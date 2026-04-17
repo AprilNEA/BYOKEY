@@ -48,15 +48,13 @@ struct ThreadsView: View {
         isLoadingThreads = true
         await dataService.reloadAmpThreads()
         isLoadingThreads = false
-        do {
-            repeat {
+        while !Task.isCancelled {
+            do {
                 try await Task.sleep(for: .seconds(30))
-                await dataService.reloadAmpThreads()
-            } while !Task.isCancelled
-        } catch is CancellationError {
-            // Task was cancelled — exit cleanly.
-        } catch {
-            // Unexpected error from sleep; exit loop.
+            } catch {
+                return
+            }
+            await dataService.reloadAmpThreads()
         }
     }
 
