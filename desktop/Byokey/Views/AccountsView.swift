@@ -1,11 +1,20 @@
 import SwiftUI
 
+private struct PendingRemoval: Identifiable {
+    let providerId: String
+    let providerName: String
+    let accountId: String
+    let accountLabel: String
+    var id: String { "\(providerId)/\(accountId)" }
+}
+
 struct AccountsView: View {
     @Environment(ProcessManager.self) private var pm
     @Environment(DataService.self) private var dataService
     @State private var loginInProgress: String?
     @State private var errorMessage: String?
     @State private var hoveredProvider: String?
+    @State private var pendingRemoval: PendingRemoval?
 
     var body: some View {
         DetailPage("Accounts") {
@@ -54,6 +63,30 @@ struct AccountsView: View {
                 )
                 Spacer()
             }
+        }
+        .alert(
+            "Remove account?",
+            isPresented: Binding(
+                get: { pendingRemoval != nil },
+                set: { if !$0 { pendingRemoval = nil } }
+            ),
+            presenting: pendingRemoval
+        ) { removal in
+            Button("Remove", role: .destructive) {
+                let captured = removal
+                pendingRemoval = nil
+                Task {
+                    await removeAccount(
+                        provider: captured.providerId,
+                        accountId: captured.accountId
+                    )
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingRemoval = nil
+            }
+        } message: { removal in
+            Text("This will sign out \(removal.accountLabel) from \(removal.providerName). You'll need to re-authenticate to use it again.")
         }
     }
 
@@ -125,7 +158,14 @@ struct AccountsView: View {
                                 Task { await activateAccount(provider: provider.id, accountId: account.accountID) }
                             },
                             onRemove: {
-                                Task { await removeAccount(provider: provider.id, accountId: account.accountID) }
+                                pendingRemoval = PendingRemoval(
+                                    providerId: provider.id,
+                                    providerName: provider.displayName,
+                                    accountId: account.accountID,
+                                    accountLabel: account.hasLabel && !account.label.isEmpty
+                                        ? account.label
+                                        : account.accountID
+                                )
                             }
                         )
 

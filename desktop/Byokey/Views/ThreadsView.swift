@@ -10,47 +10,77 @@ struct ThreadsView: View {
     @State private var detailError: String?
 
     var body: some View {
-        DetailPage("Threads") {
-            if pm.isReachable {
-                if dataService.ampThreads.isEmpty, dataService.isLoading {
-                    ProgressView("Loading threads…")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if dataService.ampThreads.isEmpty {
-                    ContentUnavailableView(
-                        "No Amp Threads",
-                        systemImage: "bubble.left.and.bubble.right",
-                        description: Text("Run Amp CLI to record conversations. Threads appear as they're written to disk.")
-                    )
-                } else {
-                    HSplitView {
-                        ThreadList(
-                            threads: dataService.ampThreads,
-                            selectedID: $selectedID
-                        )
-                        .frame(minWidth: 260, idealWidth: 300, maxWidth: 420)
-
-                        ThreadDetailPane(
-                            detail: detail,
-                            isLoading: isLoadingDetail,
-                            error: detailError,
-                            emptyHint: selectedID == nil
-                        )
-                        .frame(minWidth: 400)
-                    }
+        // Deliberately bypasses DetailPage: a list+detail split view needs
+        // the full detail-pane width and height, not the 1100pt centered
+        // content area DetailPage enforces for typographic pages.
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 16) {
+                Text("Threads")
+                    .font(.system(size: 28, weight: .bold))
+                Spacer(minLength: 16)
+                if !dataService.ampThreads.isEmpty {
+                    Text("\(dataService.ampThreads.count)")
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(.secondary.opacity(0.1), in: Capsule())
                 }
-            } else if pm.isRunning {
-                ServerStartingView()
-            } else {
-                Spacer()
-                ContentUnavailableView(
-                    "Server Not Running",
-                    systemImage: "server.rack",
-                    description: Text("Enable the proxy server to read Amp threads.")
-                )
-                Spacer()
             }
+            .padding(.horizontal, 24)
+            .padding(.top, 24)
+            .padding(.bottom, 12)
+
+            Divider()
+
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: selectedID) { await loadSelected() }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if pm.isReachable {
+            if dataService.ampThreads.isEmpty, dataService.isLoading {
+                ProgressView("Loading threads…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if dataService.ampThreads.isEmpty {
+                ContentUnavailableView(
+                    "No Amp Threads",
+                    systemImage: "bubble.left.and.bubble.right",
+                    description: Text("Run Amp CLI to record conversations. Threads appear as they're written to disk.")
+                )
+            } else {
+                HSplitView {
+                    ThreadList(
+                        threads: dataService.ampThreads,
+                        selectedID: $selectedID
+                    )
+                    .frame(minWidth: 240, idealWidth: 300, maxWidth: 420)
+                    .frame(maxHeight: .infinity)
+
+                    ThreadDetailPane(
+                        detail: detail,
+                        isLoading: isLoadingDetail,
+                        error: detailError,
+                        emptyHint: selectedID == nil
+                    )
+                    .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        } else if pm.isRunning {
+            ServerStartingView()
+        } else {
+            ContentUnavailableView(
+                "Server Not Running",
+                systemImage: "server.rack",
+                description: Text("Enable the proxy server to read Amp threads.")
+            )
+        }
     }
 
     private func loadSelected() async {
@@ -176,6 +206,7 @@ private struct ThreadDetailPane: View {
                 ContentUnavailableView("Thread not found", systemImage: "questionmark.circle")
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -202,7 +233,9 @@ private struct ThreadDetailContent: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(20)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var header: some View {
