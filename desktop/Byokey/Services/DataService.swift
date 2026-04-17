@@ -168,15 +168,10 @@ final class DataService {
 
         await fetchModels()
 
-        let now = Int64(Date().timeIntervalSince1970)
-        var histReq = Byokey_Status_GetUsageHistoryRequest()
-        histReq.from = now - 86400
-        histReq.to = now
-        if let msg = (await statusClient.getUsageHistory(request: histReq)).message,
-           msg != history
-        {
-            history = msg
-        }
+        // NOTE: history is intentionally NOT fetched here.
+        // It is exclusively managed by loadHistory(from:to:) which is driven
+        // by the UsageRange picker in OverviewView.  Polling must not clobber
+        // the user-selected range with a hard-coded 24h window.
 
         if let msg = (await statusClient.getUsageByAccount(request: .init())).message,
            msg.rows != accountUsage
@@ -184,7 +179,9 @@ final class DataService {
             accountUsage = msg.rows
         }
 
-        await reloadAmpThreads()
+        // NOTE: ampThreads are intentionally NOT fetched here.
+        // Threads are heavyweight; they are loaded on-demand when ThreadsView
+        // appears and on a separate 30-second timer managed by that view.
     }
 
     private func fetchModels() async {

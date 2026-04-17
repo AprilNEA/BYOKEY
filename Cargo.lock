@@ -2788,6 +2788,8 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 [[package]]
 name = "loadwise-core"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccfdf361e30c2460298a79792dc96e596a6b9e14a498e7b790e296f896d359f7"
 dependencies = [
  "bon 2.3.0",
  "rand 0.9.4",

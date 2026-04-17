@@ -99,9 +99,6 @@ pub struct RoutingPolicy {
 }
 
 /// Owns a strategy + a node pool and picks accounts on demand.
-///
-/// Use [`AccountSelector::rebuild`] when the account pool changes (add or
-/// remove OAuth accounts) so the strategy fingerprints stay consistent.
 pub struct AccountSelector {
     nodes: Vec<AccountNode>,
     strategy: Box<dyn Strategy<AccountNode> + Send + Sync>,
@@ -186,11 +183,25 @@ impl From<&byokey_config::RoutingPolicyEntry> for RoutingPolicy {
     }
 }
 
+/// A strategy that always selects the first node in the pool (index 0).
+///
+/// This implements the `Priority` semantic: the first configured account is
+/// preferred unconditionally. The pool ordering is determined by
+/// `policy.accounts` (or declaration order when `policy.accounts` is empty).
+struct PriorityStrategy;
+
+impl Strategy<AccountNode> for PriorityStrategy {
+    fn select(&self, nodes: &[AccountNode], _ctx: &SelectionContext) -> Option<usize> {
+        if nodes.is_empty() { None } else { Some(0) }
+    }
+}
+
 /// Map a [`StrategyKind`] to a concrete `loadwise` strategy.
 fn build_strategy(kind: StrategyKind) -> Box<dyn Strategy<AccountNode> + Send + Sync> {
     use loadwise_core::strategy::{Random, RoundRobin, WeightedRandom, WeightedRoundRobin};
     match kind {
-        StrategyKind::RoundRobin | StrategyKind::Priority => Box::new(RoundRobin::new()),
+        StrategyKind::RoundRobin => Box::new(RoundRobin::new()),
+        StrategyKind::Priority => Box::new(PriorityStrategy),
         StrategyKind::WeightedRoundRobin => Box::new(WeightedRoundRobin::new()),
         StrategyKind::Random => Box::new(Random::new()),
         StrategyKind::WeightedRandom => Box::new(WeightedRandom::new()),

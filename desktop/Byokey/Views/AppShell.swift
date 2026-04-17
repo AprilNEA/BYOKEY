@@ -156,7 +156,6 @@ private struct SidebarView: View {
     @Binding var selection: SidebarItem?
     @Binding var showLog: Bool
     @Environment(ProcessManager.self) private var pm
-    @Environment(AppEnvironment.self) private var appEnv
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

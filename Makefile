@@ -1,5 +1,8 @@
 .PHONY: build build-release desktop desktop-build desktop-run clean openapi
 
+# Resolve the Byokey.app bundle path from Xcode's DerivedData once and reuse.
+BYOKEY_APP := $(shell find ~/Library/Developer/Xcode/DerivedData/Byokey-*/Build/Products/Debug -name '*.app' -maxdepth 1 2>/dev/null | head -1)
+
 # Build the byokey binary (debug)
 build:
 	cargo build
@@ -25,7 +28,13 @@ desktop-build:
 
 # Build and launch the desktop app
 desktop-run: desktop-build
-	@open "$$(find ~/Library/Developer/Xcode/DerivedData/Byokey-*/Build/Products/Debug -name '*.app' -maxdepth 1 | head -1)"
+	$(eval BYOKEY_APP := $(shell find ~/Library/Developer/Xcode/DerivedData/Byokey-*/Build/Products/Debug -name '*.app' -maxdepth 1 2>/dev/null | head -1))
+	@if [ -z "$(BYOKEY_APP)" ]; then \
+		echo "error: Byokey.app not found in DerivedData — did the build succeed?"; \
+		exit 1; \
+	fi
+	@echo "Launching $(BYOKEY_APP)"
+	@open "$(BYOKEY_APP)"
 
 clean:
 	cargo clean

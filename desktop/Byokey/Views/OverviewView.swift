@@ -153,7 +153,7 @@ struct OverviewView: View {
                 if points.isEmpty {
                     usageEmptyState
                 } else {
-                    UsageHistoryChart(points: points)
+                    UsageHistoryChart(points: points, range: range)
                         .frame(height: 160)
                 }
             }
@@ -285,6 +285,7 @@ struct OverviewView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -378,6 +379,7 @@ enum UsageRange: String, CaseIterable, Identifiable {
 
 private struct UsageHistoryChart: View {
     let points: [UsagePoint]
+    let range: UsageRange
 
     var body: some View {
         Chart {
@@ -402,9 +404,22 @@ private struct UsageHistoryChart: View {
             "Output": Color.purple.gradient,
         ])
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 6)) { _ in
-                AxisGridLine()
-                AxisValueLabel(format: .dateTime.hour())
+            switch range {
+            case .day:
+                AxisMarks(values: .automatic(desiredCount: 6)) { _ in
+                    AxisGridLine()
+                    AxisValueLabel(format: .dateTime.hour())
+                }
+            case .week:
+                AxisMarks(values: .stride(by: .day, count: 1)) { _ in
+                    AxisGridLine()
+                    AxisValueLabel(format: .dateTime.day(.defaultDigits).month(.abbreviated))
+                }
+            case .month:
+                AxisMarks(values: .stride(by: .day, count: 7)) { _ in
+                    AxisGridLine()
+                    AxisValueLabel(format: .dateTime.day(.defaultDigits).month(.abbreviated))
+                }
             }
         }
         .chartYAxis {

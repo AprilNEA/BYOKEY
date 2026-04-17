@@ -227,21 +227,37 @@ impl AuthManager {
 
     /// Retrieve a valid token alongside the account ID that served it.
     ///
-    /// Combines [`get_token`](Self::get_token) and
-    /// [`active_account_id`](Self::active_account_id). Use this instead of
-    /// `get_token` when the caller needs to attribute the request to a
-    /// specific OAuth account (e.g. for usage tracking).
+    /// Reads the active-account list once and uses that snapshot for both the
+    /// account ID and the token fetch, preventing a TOCTOU race where the
+    /// active account changes between the two reads.
     ///
     /// # Errors
     ///
-    /// Returns the same errors as [`get_token`](Self::get_token).
+    /// Returns the same errors as [`get_token_for`](Self::get_token_for), or
+    /// falls back to the default-account path when no named accounts exist.
     pub async fn get_token_with_account(
         self: &Arc<Self>,
         provider: &ProviderId,
     ) -> Result<(String, OAuthToken)> {
-        let account_id = self.active_account_id(provider).await;
-        let token = self.get_token(provider).await?;
-        Ok((account_id, token))
+        // Single store call to establish the active-account snapshot.
+        let active_id = match self.store.list_accounts(provider).await {
+            Ok(accts) => accts
+                .into_iter()
+                .find(|a| a.is_active)
+                .map(|a| a.account_id),
+            Err(_) => None,
+        };
+
+        if let Some(account_id) = active_id {
+            // Load the token for the specific account we just identified —
+            // no second list_accounts call, so the pair is consistent.
+            let token = self.get_token_for(provider, &account_id).await?;
+            Ok((account_id, token))
+        } else {
+            // No named accounts; fall through to the default-account path.
+            let token = self.get_token(provider).await?;
+            Ok((byokey_types::DEFAULT_ACCOUNT.to_string(), token))
+        }
     }
 
     /// Load all tokens for a provider (for round-robin rotation).

@@ -108,9 +108,12 @@ mod tests {
         Migrator::up(&db, None).await.unwrap();
 
         let applied = Migrator::get_applied_migrations(&db).await.unwrap();
-        assert_eq!(applied.len(), HISTORICAL_MIGRATIONS.len());
+        // All registered migrations (historical + new) must be applied.
+        assert_eq!(applied.len(), Migrator::migrations().len());
         for (i, m) in applied.iter().enumerate() {
-            assert_eq!(m.name(), HISTORICAL_MIGRATIONS[i]);
+            if i < HISTORICAL_MIGRATIONS.len() {
+                assert_eq!(m.name(), HISTORICAL_MIGRATIONS[i]);
+            }
         }
     }
 
@@ -118,14 +121,50 @@ mod tests {
     async fn backfill_marks_historical_migrations_as_applied() {
         let db = Database::connect("sqlite::memory:").await.unwrap();
 
-        // Simulate a pre-migration install: create just the `accounts` table
-        // by hand, leave `seaql_migrations` absent.
+        // Simulate a pre-migration install: create the tables that the legacy
+        // hand-written `migrate()` function produced (all tables through
+        // `usage_records`, but without `account_id` which migration 6 adds).
+        // Leave `seaql_migrations` absent.
         db.execute_unprepared(
             "CREATE TABLE accounts (
                 provider    TEXT NOT NULL,
                 account_id  TEXT NOT NULL,
                 token_json  TEXT NOT NULL,
                 PRIMARY KEY (provider, account_id)
+            )",
+        )
+        .await
+        .unwrap();
+        db.execute_unprepared(
+            "CREATE TABLE conversations (
+                id          TEXT PRIMARY KEY NOT NULL,
+                provider    TEXT NOT NULL,
+                model       TEXT NOT NULL,
+                created_at  INTEGER NOT NULL
+            )",
+        )
+        .await
+        .unwrap();
+        db.execute_unprepared(
+            "CREATE TABLE messages (
+                id              TEXT PRIMARY KEY NOT NULL,
+                conversation_id TEXT NOT NULL,
+                role            TEXT NOT NULL,
+                content         TEXT NOT NULL,
+                created_at      INTEGER NOT NULL
+            )",
+        )
+        .await
+        .unwrap();
+        db.execute_unprepared(
+            "CREATE TABLE usage_records (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                model         TEXT NOT NULL,
+                provider      TEXT NOT NULL,
+                input_tokens  INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                success       INTEGER NOT NULL DEFAULT 1,
+                created_at    INTEGER NOT NULL
             )",
         )
         .await
@@ -137,10 +176,18 @@ mod tests {
         let applied = Migrator::get_applied_migrations(&db).await.unwrap();
         assert_eq!(applied.len(), HISTORICAL_MIGRATIONS.len());
 
-        // Migrator::up should now be a no-op (no pending migrations).
+        // Migrator::up should run only migration 6 (add account_id to usage_records).
         let pending = Migrator::get_pending_migrations(&db).await.unwrap();
-        assert!(pending.is_empty());
+        assert_eq!(
+            pending.len(),
+            Migrator::migrations().len() - HISTORICAL_MIGRATIONS.len(),
+            "only post-historical migrations should be pending"
+        );
         Migrator::up(&db, None).await.unwrap();
+
+        // After up, all migrations must be applied.
+        let applied_after = Migrator::get_applied_migrations(&db).await.unwrap();
+        assert_eq!(applied_after.len(), Migrator::migrations().len());
     }
 
     #[tokio::test]

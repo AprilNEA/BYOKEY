@@ -103,6 +103,8 @@ fn clamp_to_u32(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
+const THIRTY_DAYS_SECS: i64 = 30 * 24 * 3600;
+
 fn policy_strategy_to_proto(kind: byokey_config::PolicyStrategyKind) -> stat::RoutingStrategy {
     use byokey_config::PolicyStrategyKind as K;
     match kind {
@@ -281,8 +283,10 @@ impl stat::StatusService for StatusServiceImpl {
                 ctx,
             ));
         };
+        let to = req.to.unwrap_or_else(now_seconds);
+        let from = req.from.unwrap_or(to - THIRTY_DAYS_SECS);
         let totals = store
-            .totals_by_account(req.from, req.to)
+            .totals_by_account(Some(from), Some(to))
             .await
             .map_err(|e| ConnectError::internal(e.to_string()))?;
         let rows = totals

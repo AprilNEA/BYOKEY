@@ -272,14 +272,37 @@ struct AmpView: View {
 
     private func currentChoice(family: ModelFamily) -> RoutingChoice {
         guard let providerId = routing[family.id] else { return .ampOfficial }
-        // If this provider has an active account, show it as pinned; otherwise show as provider-default.
-        let activeAccount = dataService.providerAccounts
-            .first(where: { $0.id == providerId })?
-            .accounts.first(where: { $0.isActive })
-        if let activeAccount {
-            return .account(providerId: providerId, accountId: activeAccount.accountID)
+        // Return the user's *pinned* choice as stored in settings.json.
+        // The routing dict stores only a provider ID (no pinned account ID), so
+        // this is always .provider — never .account — unless we later add per-
+        // account pinning to the config format.  Do NOT fall through to the live
+        // active account: that would make the picker reflect the router's runtime
+        // decision instead of the user's stored preference.
+        if let pinnedAccountId = pinnedAccountId(for: providerId) {
+            return .account(providerId: providerId, accountId: pinnedAccountId)
         }
         return .provider(id: providerId)
+    }
+
+    /// Returns the explicitly-pinned account ID for a provider, if one was
+    /// saved to settings.json.  Returns nil when the user chose "active account
+    /// (default)" — i.e. only the provider is pinned, not a specific account.
+    private func pinnedAccountId(for providerId: String) -> String? {
+        guard let data = try? Data(contentsOf: configURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let providers = json["providers"] as? [String: Any]
+        else { return nil }
+
+        for family in modelFamilies {
+            if let conf = providers[family.id] as? [String: Any],
+               let backend = conf["backend"] as? String,
+               backend == providerId,
+               let accountId = conf["account_id"] as? String
+            {
+                return accountId
+            }
+        }
+        return nil
     }
 
     private func displayLabel(for choice: RoutingChoice, family: ModelFamily) -> (String, Color) {
@@ -326,16 +349,19 @@ struct AmpView: View {
     private func apply(choice: RoutingChoice, family: String) async {
         switch choice {
         case .ampOfficial:
-            writeBackend(family: family, provider: nil)
+            writeBackend(family: family, provider: nil, accountId: nil)
             resultMessage = .init(text: "Routing cleared. Requests will pass through to Amp.", isError: false)
         case .provider(let providerId):
-            writeBackend(family: family, provider: providerId)
+            // Pin provider but clear any previously pinned account so the
+            // router uses its own active-account selection.
+            writeBackend(family: family, provider: providerId, accountId: nil)
             resultMessage = .init(text: "Routing updated. Using provider's active account.", isError: false)
         case .account(let providerId, let accountId):
-            writeBackend(family: family, provider: providerId)
+            // Pin both the provider and the specific account.
+            writeBackend(family: family, provider: providerId, accountId: accountId)
             do {
                 try await dataService.activateAccount(provider: providerId, accountId: accountId)
-                resultMessage = .init(text: "Routing updated. Account activated.", isError: false)
+                resultMessage = .init(text: "Routing updated. Account pinned.", isError: false)
             } catch {
                 resultMessage = .init(
                     text: "Routing saved but activation failed: \(error.localizedDescription)",
@@ -345,7 +371,7 @@ struct AmpView: View {
         }
     }
 
-    private func writeBackend(family: String, provider: String?) {
+    private func writeBackend(family: String, provider: String?, accountId: String?) {
         routing[family] = provider
 
         var raw: [String: Any] = [:]
@@ -362,6 +388,13 @@ struct AmpView: View {
             conf["backend"] = provider
         } else {
             conf.removeValue(forKey: "backend")
+            conf.removeValue(forKey: "account_id")
+        }
+
+        if let accountId {
+            conf["account_id"] = accountId
+        } else {
+            conf.removeValue(forKey: "account_id")
         }
 
         providers[family] = conf

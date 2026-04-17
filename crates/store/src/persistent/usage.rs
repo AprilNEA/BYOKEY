@@ -260,4 +260,66 @@ mod tests {
         assert_eq!(buckets[0].model, "claude-opus-4-5");
         assert_eq!(buckets[0].input_tokens, 10);
     }
+
+    #[tokio::test]
+    async fn test_totals_by_account() {
+        let s = mem().await;
+
+        // alice: 2 successful requests
+        s.record(&UsageRecord {
+            model: "claude-opus-4-5".into(),
+            provider: "anthropic".into(),
+            account_id: "alice".into(),
+            input_tokens: 100,
+            output_tokens: 50,
+            success: true,
+        })
+        .await
+        .unwrap();
+        s.record(&UsageRecord {
+            model: "claude-opus-4-5".into(),
+            provider: "anthropic".into(),
+            account_id: "alice".into(),
+            input_tokens: 200,
+            output_tokens: 80,
+            success: true,
+        })
+        .await
+        .unwrap();
+
+        // bob: 1 successful request
+        s.record(&UsageRecord {
+            model: "claude-opus-4-5".into(),
+            provider: "anthropic".into(),
+            account_id: "bob".into(),
+            input_tokens: 50,
+            output_tokens: 20,
+            success: true,
+        })
+        .await
+        .unwrap();
+
+        let totals = s.totals_by_account(None, None).await.unwrap();
+
+        // Both accounts must appear.
+        assert_eq!(totals.len(), 2, "expected two account rows");
+
+        let alice = totals
+            .iter()
+            .find(|r| r.account_id == "alice")
+            .expect("alice row missing");
+        assert_eq!(alice.provider, "anthropic");
+        assert_eq!(alice.request_count, 2);
+        assert_eq!(alice.success_count, 2);
+        assert_eq!(alice.input_tokens, 300);
+        assert_eq!(alice.output_tokens, 130);
+
+        let bob = totals
+            .iter()
+            .find(|r| r.account_id == "bob")
+            .expect("bob row missing");
+        assert_eq!(bob.request_count, 1);
+        assert_eq!(bob.input_tokens, 50);
+        assert_eq!(bob.output_tokens, 20);
+    }
 }

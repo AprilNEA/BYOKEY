@@ -39,6 +39,16 @@ struct ThreadsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: selectedID) { await loadSelected() }
+        .task { await loadThreads() }
+    }
+
+    private func loadThreads() async {
+        // Initial load on appear, then refresh every 30 seconds.
+        await dataService.reloadAmpThreads()
+        repeat {
+            try? await Task.sleep(for: .seconds(30))
+            await dataService.reloadAmpThreads()
+        } while !Task.isCancelled
     }
 
     @ViewBuilder
