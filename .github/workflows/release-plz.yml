@@ -22,6 +22,10 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Stub historical loadwise path-deps
+        run: bash .github/scripts/stub-loadwise-path-deps.sh
       - uses: dtolnay/rust-toolchain@stable
       - uses: MarcoIeni/release-plz-action@v0.5
         with:
@@ -58,6 +62,10 @@ jobs:
             | grep '^release-plz-' \
             | xargs -I{} gh api repos/${{ github.repository }}/git/refs/heads/{} -X DELETE \
             || true
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Stub historical loadwise path-deps
+        run: bash .github/scripts/stub-loadwise-path-deps.sh
       - uses: dtolnay/rust-toolchain@stable
       - uses: MarcoIeni/release-plz-action@v0.5
         with:
