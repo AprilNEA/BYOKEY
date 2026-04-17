@@ -55,7 +55,19 @@ git_release_enable = false
 changelog_update = false
 
 [[package]]
+name = "byokey-proto"
+git_tag_enable = false
+git_release_enable = false
+changelog_update = false
+
+[[package]]
 name = "byokey-daemon"
+git_tag_enable = false
+git_release_enable = false
+changelog_update = false
+
+[[package]]
+name = "ampcode"
 git_tag_enable = false
 git_release_enable = false
 changelog_update = false
