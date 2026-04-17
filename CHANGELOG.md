@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0](https://github.com/AprilNEA/BYOKEY/compare/v0.11.0...v1.0.0) - 2026-04-18
+
+First stable release. API surface (HTTP proxy endpoints, CLI commands,
+config schema, ConnectRPC management service) is now covered by semver.
+
+### Added
+
+- Simplified Chinese README under `docs/README_CN.md` with bilingual switcher
+- Light/dark hero screenshots rendered via `<picture>` + `prefers-color-scheme`
+
+### Fixed
+
+- *(ci)* unblock release-plz against historical loadwise path-deps
+- *(ci)* unblock Test, Clippy, and Desktop (macOS) jobs
+- *(desktop)* swap menu bar icon from `server.rack` to `key.fill`
+
 ## [0.11.0](https://github.com/AprilNEA/BYOKEY/compare/v0.10.0...v0.11.0) - 2026-04-09
 
 ### Fixed
