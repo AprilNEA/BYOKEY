@@ -42,7 +42,7 @@ struct ByokeyApp: App {
                 .environment(processManager)
                 .environment(updaterState)
         } label: {
-            Image(systemName: "server.rack")
+            Image(systemName: "key.fill")
         }
     }
 }
