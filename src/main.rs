@@ -92,6 +92,34 @@ enum Commands {
         #[command(flatten)]
         store: StoreArgs,
     },
+    /// Store a static API key as a provider account.
+    AddApiKey {
+        /// Provider name.
+        provider: ProviderId,
+        /// The API key / bearer token. Read from stdin if set to `-`.
+        api_key: String,
+        /// Account identifier. Defaults to `default`.
+        #[arg(long, value_name = "NAME")]
+        account: Option<String>,
+        /// Human-readable label to show in UIs.
+        #[arg(long)]
+        label: Option<String>,
+        #[command(flatten)]
+        store: StoreArgs,
+    },
+    /// Import the local Claude Code CLI's OAuth credentials as an Anthropic
+    /// (Claude) account. Reads from macOS Keychain or
+    /// `~/.claude/.credentials.json`.
+    ImportClaudeCode {
+        /// Account identifier. Defaults to `claude-code`.
+        #[arg(long, value_name = "NAME")]
+        account: Option<String>,
+        /// Human-readable label to show in UIs. Defaults to `Claude Code`.
+        #[arg(long)]
+        label: Option<String>,
+        #[command(flatten)]
+        store: StoreArgs,
+    },
     /// Remove stored credentials for a provider.
     Logout {
         /// Provider name.
@@ -153,6 +181,36 @@ async fn run(command: Commands) -> Result<()> {
             auth::AuthCmd::new(store.db)
                 .await?
                 .login(provider, account)
+                .await
+        }
+        Commands::AddApiKey {
+            provider,
+            api_key,
+            account,
+            label,
+            store,
+        } => {
+            let api_key = if api_key == "-" {
+                use std::io::Read as _;
+                let mut buf = String::new();
+                std::io::stdin().read_to_string(&mut buf)?;
+                buf.trim().to_string()
+            } else {
+                api_key
+            };
+            auth::AuthCmd::new(store.db)
+                .await?
+                .add_api_key(provider, api_key, account, label)
+                .await
+        }
+        Commands::ImportClaudeCode {
+            account,
+            label,
+            store,
+        } => {
+            auth::AuthCmd::new(store.db)
+                .await?
+                .import_claude_code(account, label)
                 .await
         }
         Commands::Logout {

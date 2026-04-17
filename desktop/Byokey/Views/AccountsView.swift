@@ -15,6 +15,7 @@ struct AccountsView: View {
     @State private var errorMessage: String?
     @State private var hoveredProvider: String?
     @State private var pendingRemoval: PendingRemoval?
+    @State private var addSheetProvider: AddSheetTarget?
 
     var body: some View {
         DetailPage("Accounts") {
@@ -87,6 +88,23 @@ struct AccountsView: View {
             }
         } message: { removal in
             Text("This will sign out \(removal.accountLabel) from \(removal.providerName). You'll need to re-authenticate to use it again.")
+        }
+        .sheet(item: $addSheetProvider) { target in
+            AddAccountSheet(
+                providerId: target.id,
+                providerName: target.displayName,
+                onDismiss: { addSheetProvider = nil },
+                onComplete: {
+                    addSheetProvider = nil
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(500))
+                        await dataService.reloadAccounts()
+                    }
+                },
+                onError: { message in
+                    errorMessage = message
+                }
+            )
         }
     }
 
@@ -183,16 +201,14 @@ struct AccountsView: View {
                 .padding(.horizontal, 16)
 
             Button {
-                Task { await login(provider: provider.id) }
+                addSheetProvider = AddSheetTarget(
+                    id: provider.id,
+                    displayName: provider.displayName
+                )
             } label: {
                 HStack(spacing: 6) {
-                    if loginInProgress == provider.id {
-                        ProgressView()
-                            .controlSize(.mini)
-                    } else {
-                        Image(systemName: "plus.circle.fill")
-                            .foregroundStyle(Color.accentColor.opacity(0.7))
-                    }
+                    Image(systemName: "plus.circle.fill")
+                        .foregroundStyle(Color.accentColor.opacity(0.7))
                     Text(provider.accounts.isEmpty ? "Login" : "Add Account")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Color.accentColor.opacity(0.9))
@@ -201,7 +217,6 @@ struct AccountsView: View {
                 .padding(.vertical, 10)
             }
             .buttonStyle(.plain)
-            .disabled(loginInProgress != nil)
         }
         .cardSurface(isHovered: isHovered)
         .animation(.easeOut(duration: 0.15), value: isHovered)
@@ -325,6 +340,226 @@ struct AccountsView: View {
             errorMessage = "Login failed: \(error.localizedDescription)"
         }
         loginInProgress = nil
+    }
+}
+
+private struct AddSheetTarget: Identifiable {
+    let id: String
+    let displayName: String
+}
+
+// MARK: - Add Account Sheet
+
+private enum AddMethod: Hashable {
+    case claudeCode
+    case oauth
+    case apiKey
+}
+
+private struct AddAccountSheet: View {
+    let providerId: String
+    let providerName: String
+    let onDismiss: () -> Void
+    let onComplete: () -> Void
+    let onError: (String) -> Void
+
+    @State private var method: AddMethod
+    @State private var apiKey: String = ""
+    @State private var label: String = ""
+    @State private var isSubmitting = false
+    @State private var localError: String?
+
+    init(
+        providerId: String,
+        providerName: String,
+        onDismiss: @escaping () -> Void,
+        onComplete: @escaping () -> Void,
+        onError: @escaping (String) -> Void
+    ) {
+        self.providerId = providerId
+        self.providerName = providerName
+        self.onDismiss = onDismiss
+        self.onComplete = onComplete
+        self.onError = onError
+        // Default: Claude Code for Anthropic, OAuth otherwise.
+        self._method = State(initialValue: providerId == "claude" ? .claudeCode : .oauth)
+    }
+
+    private var showsClaudeCode: Bool {
+        providerId == "claude"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Add \(providerName) Account")
+                        .font(.system(size: 16, weight: .semibold))
+                    Text("Choose how to authenticate.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("", systemImage: "xmark", action: onDismiss)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(spacing: 8) {
+                if showsClaudeCode {
+                    methodCard(
+                        method: .claudeCode,
+                        icon: "key.icloud",
+                        title: "Import from Claude Code",
+                        subtitle: "Read the OAuth token your Claude Code CLI already stored on this Mac."
+                    )
+                }
+                methodCard(
+                    method: .oauth,
+                    icon: "person.badge.key",
+                    title: "Sign in with OAuth",
+                    subtitle: "Open your browser to authenticate with \(providerName)."
+                )
+                methodCard(
+                    method: .apiKey,
+                    icon: "lock.rectangle",
+                    title: "Paste an API key",
+                    subtitle: "Use a static API key — no refresh token, no expiry."
+                )
+            }
+
+            if method == .apiKey {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("API key")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    SecureField("sk-…", text: $apiKey)
+                        .textFieldStyle(.roundedBorder)
+                    Text("Label (optional)")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
+                    TextField("e.g. Work", text: $label)
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+
+            if let localError {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                    Text(localError)
+                }
+                .font(.caption)
+                .foregroundStyle(.red)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel", action: onDismiss)
+                    .keyboardShortcut(.cancelAction)
+                Button {
+                    Task { await submit() }
+                } label: {
+                    if isSubmitting {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text(submitButtonLabel)
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(isSubmitting || !isReady)
+            }
+        }
+        .padding(24)
+        .frame(width: 440)
+    }
+
+    @ViewBuilder
+    private func methodCard(
+        method: AddMethod,
+        icon: String,
+        title: String,
+        subtitle: String
+    ) -> some View {
+        let isSelected = self.method == method
+        Button {
+            self.method = method
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 18))
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    .frame(width: 24, alignment: .center)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary.opacity(0.4))
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isSelected ? Color.accentColor.opacity(0.08) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(
+                        isSelected ? Color.accentColor.opacity(0.5) : .secondary.opacity(0.15),
+                        lineWidth: 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var submitButtonLabel: String {
+        switch method {
+        case .claudeCode: return "Import"
+        case .oauth: return "Sign in"
+        case .apiKey: return "Save key"
+        }
+    }
+
+    private var isReady: Bool {
+        switch method {
+        case .apiKey: return !apiKey.trimmingCharacters(in: .whitespaces).isEmpty
+        default: return true
+        }
+    }
+
+    private func submit() async {
+        isSubmitting = true
+        localError = nil
+        do {
+            switch method {
+            case .claudeCode:
+                try await CLIRunner.importClaudeCode()
+            case .oauth:
+                try await CLIRunner.login(provider: providerId)
+            case .apiKey:
+                let trimmed = apiKey.trimmingCharacters(in: .whitespaces)
+                let trimmedLabel = label.trimmingCharacters(in: .whitespaces)
+                try await CLIRunner.addApiKey(
+                    provider: providerId,
+                    apiKey: trimmed,
+                    label: trimmedLabel.isEmpty ? nil : trimmedLabel
+                )
+            }
+            onComplete()
+        } catch {
+            localError = error.localizedDescription
+            onError(error.localizedDescription)
+        }
+        isSubmitting = false
     }
 }
 

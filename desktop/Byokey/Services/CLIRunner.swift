@@ -55,6 +55,27 @@ enum CLIRunner {
         if status != 0 { throw CLIError.commandFailed("login", output) }
     }
 
+    static func addApiKey(
+        provider: String,
+        apiKey: String,
+        account: String? = nil,
+        label: String? = nil
+    ) async throws {
+        var args = ["add-api-key", provider, apiKey]
+        if let account { args += ["--account", account] }
+        if let label { args += ["--label", label] }
+        let (status, output) = try await run(args)
+        if status != 0 { throw CLIError.commandFailed("add-api-key", output) }
+    }
+
+    static func importClaudeCode(account: String? = nil, label: String? = nil) async throws {
+        var args = ["import-claude-code"]
+        if let account { args += ["--account", account] }
+        if let label { args += ["--label", label] }
+        let (status, output) = try await run(args)
+        if status != 0 { throw CLIError.commandFailed("import-claude-code", output) }
+    }
+
     // MARK: - Amp
 
     static func ampInject(url: String? = nil) async throws -> String {

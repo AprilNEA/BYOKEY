@@ -1,7 +1,7 @@
 use anyhow::Result;
 use byokey_auth::AuthManager;
 use byokey_daemon::process::ServerStatus;
-use byokey_types::ProviderId;
+use byokey_types::{OAuthToken, ProviderId};
 use std::{path::PathBuf, sync::Arc};
 
 pub struct AuthCmd {
@@ -22,6 +22,59 @@ impl AuthCmd {
         byokey_auth::flow::login(&provider, &self.auth, account.as_deref())
             .await
             .map_err(|e| anyhow::anyhow!("login failed: {e}"))?;
+        Ok(())
+    }
+
+    /// Store an API key as a non-expiring token for the given provider.
+    pub async fn add_api_key(
+        &self,
+        provider: ProviderId,
+        api_key: String,
+        account: Option<String>,
+        label: Option<String>,
+    ) -> Result<()> {
+        let account_id = account
+            .as_deref()
+            .unwrap_or(byokey_types::DEFAULT_ACCOUNT)
+            .to_string();
+        let token = OAuthToken {
+            access_token: api_key,
+            refresh_token: None,
+            expires_at: None,
+            token_type: Some("api-key".to_string()),
+        };
+        self.auth
+            .save_token_for(&provider, &account_id, label.as_deref(), token)
+            .await
+            .map_err(|e| anyhow::anyhow!("add-api-key failed: {e}"))?;
+        println!("{provider}: API key saved to account '{account_id}'");
+        Ok(())
+    }
+
+    /// Import the currently-logged-in Claude Code OAuth credentials from
+    /// macOS Keychain (or `~/.claude/.credentials.json` on other platforms)
+    /// as an Anthropic account.
+    pub async fn import_claude_code(
+        &self,
+        account: Option<String>,
+        label: Option<String>,
+    ) -> Result<()> {
+        let token = byokey_auth::provider::claude_code::load_token()
+            .await
+            .map_err(|e| anyhow::anyhow!("read Claude Code credentials: {e}"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no Claude Code credentials found — is Claude Code logged in on this machine?"
+                )
+            })?;
+        let provider = ProviderId::Claude;
+        let account_id = account.as_deref().unwrap_or("claude-code").to_string();
+        let label = label.or_else(|| Some("Claude Code".to_string()));
+        self.auth
+            .save_token_for(&provider, &account_id, label.as_deref(), token)
+            .await
+            .map_err(|e| anyhow::anyhow!("save Claude Code token: {e}"))?;
+        println!("{provider}: imported Claude Code credentials to account '{account_id}'");
         Ok(())
     }
 

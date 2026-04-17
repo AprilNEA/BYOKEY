@@ -7,6 +7,7 @@
 pub mod amp;
 pub mod antigravity;
 pub mod claude;
+pub mod claude_code;
 pub mod codex;
 pub mod copilot;
 pub mod gemini;
