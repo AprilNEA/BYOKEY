@@ -240,7 +240,7 @@ mod tests {
     fn test_round_robin() {
         let router = CredentialRouter::new(
             vec!["key-a".into(), "key-b".into(), "key-c".into()],
-            Duration::from_secs(60),
+            Duration::from_mins(1),
         );
         let k1 = router.next_key().unwrap().to_string();
         let k2 = router.next_key().unwrap().to_string();
@@ -255,10 +255,8 @@ mod tests {
 
     #[test]
     fn test_cooldown_skips_key() {
-        let router = CredentialRouter::new(
-            vec!["key-a".into(), "key-b".into()],
-            Duration::from_secs(60),
-        );
+        let router =
+            CredentialRouter::new(vec!["key-a".into(), "key-b".into()], Duration::from_mins(1));
         // Cool down key-a
         router.mark_error("key-a");
         // Should skip key-a and return key-b
@@ -268,10 +266,8 @@ mod tests {
 
     #[test]
     fn test_all_cooled_returns_none() {
-        let router = CredentialRouter::new(
-            vec!["key-a".into(), "key-b".into()],
-            Duration::from_secs(60),
-        );
+        let router =
+            CredentialRouter::new(vec!["key-a".into(), "key-b".into()], Duration::from_mins(1));
         router.mark_error("key-a");
         router.mark_error("key-b");
         assert!(router.next_key().is_none());
@@ -279,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_clear_cooldown() {
-        let router = CredentialRouter::new(vec!["key-a".into()], Duration::from_secs(60));
+        let router = CredentialRouter::new(vec!["key-a".into()], Duration::from_mins(1));
         router.mark_error("key-a");
         assert!(router.next_key().is_none());
         router.clear_cooldown("key-a");
@@ -288,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_single_key() {
-        let router = CredentialRouter::new(vec!["only-key".into()], Duration::from_secs(60));
+        let router = CredentialRouter::new(vec!["only-key".into()], Duration::from_mins(1));
         assert_eq!(router.next_key().unwrap(), "only-key");
         assert_eq!(router.next_key().unwrap(), "only-key");
     }
@@ -314,7 +310,7 @@ mod tests {
     fn test_fill_first_always_picks_first_ready() {
         let router = CredentialRouter::new(
             vec!["key-a".into(), "key-b".into(), "key-c".into()],
-            Duration::from_secs(60),
+            Duration::from_mins(1),
         )
         .with_strategy(RoutingStrategy::FillFirst);
 
@@ -328,7 +324,7 @@ mod tests {
     fn test_fill_first_skips_cooled() {
         let router = CredentialRouter::new(
             vec!["key-a".into(), "key-b".into(), "key-c".into()],
-            Duration::from_secs(60),
+            Duration::from_mins(1),
         )
         .with_strategy(RoutingStrategy::FillFirst);
 
@@ -381,7 +377,7 @@ mod tests {
 
     #[test]
     fn test_clear_cooldown_restores_blocked() {
-        let router = CredentialRouter::new(vec!["key-a".into()], Duration::from_secs(60));
+        let router = CredentialRouter::new(vec!["key-a".into()], Duration::from_mins(1));
         router.mark_blocked("key-a");
         assert!(router.next_key().is_none());
         router.clear_cooldown("key-a");
@@ -390,7 +386,7 @@ mod tests {
 
     #[test]
     fn test_clear_cooldown_restores_disabled() {
-        let router = CredentialRouter::new(vec!["key-a".into()], Duration::from_secs(60));
+        let router = CredentialRouter::new(vec!["key-a".into()], Duration::from_mins(1));
         router.mark_disabled("key-a");
         assert!(router.next_key().is_none());
         router.clear_cooldown("key-a");
@@ -425,10 +421,8 @@ mod tests {
 
     #[test]
     fn test_all_blocked_returns_none() {
-        let router = CredentialRouter::new(
-            vec!["key-a".into(), "key-b".into()],
-            Duration::from_secs(60),
-        );
+        let router =
+            CredentialRouter::new(vec!["key-a".into(), "key-b".into()], Duration::from_mins(1));
         router.mark_blocked("key-a");
         router.mark_blocked("key-b");
         assert!(router.next_key().is_none());
@@ -443,7 +437,7 @@ mod tests {
                 "key-c".into(),
                 "key-d".into(),
             ],
-            Duration::from_secs(60),
+            Duration::from_mins(1),
         )
         .with_strategy(RoutingStrategy::FillFirst);
 

@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 /// Cached profiles expire after 7 days.
+// `Duration::from_days` is not yet a const fn on stable.
+#[allow(clippy::duration_suboptimal_units)]
 const PROFILE_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
 
 // ── Baseline defaults ───────────────────────────────────────────────

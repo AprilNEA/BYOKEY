@@ -79,6 +79,8 @@ jobs:
         working-directory: desktop
     steps:
       - uses: actions/checkout@v4
+      - name: Install protoc
+        run: brew install protobuf
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy

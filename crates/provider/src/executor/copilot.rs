@@ -51,11 +51,14 @@ static ACCOUNT_TRACKER: LazyLock<Mutex<AccountTracker>> = LazyLock::new(|| {
     })
 });
 
+// `Duration::from_mins` is not yet a const fn on stable.
 /// How often to re-compare quotas across accounts.
-const REBALANCE_INTERVAL: Duration = Duration::from_secs(300); // 5 min
+#[allow(clippy::duration_suboptimal_units)]
+const REBALANCE_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// Quota cache TTL — avoid re-fetching within this window.
-const QUOTA_CACHE_TTL: Duration = Duration::from_secs(300);
+#[allow(clippy::duration_suboptimal_units)]
+const QUOTA_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 
 /// Default GitHub Copilot Chat Completions API base URL.
 const DEFAULT_BASE_URL: &str = "https://api.githubcopilot.com";
@@ -191,7 +194,7 @@ impl CopilotExecutor {
             let secs = (expires_at_unix - now_unix).max(0).cast_unsigned();
             Duration::from_secs(secs)
         } else {
-            Duration::from_secs(1500) // default ~25 min
+            Duration::from_mins(25) // default TTL
         };
 
         let default_base = self.base_url.as_deref().unwrap_or(DEFAULT_BASE_URL);

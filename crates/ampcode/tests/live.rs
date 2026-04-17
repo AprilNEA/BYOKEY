@@ -15,6 +15,7 @@ async fn live_client() -> AmpcodeClient {
 }
 
 #[tokio::test]
+#[ignore = "requires amp CLI login at ~/.local/share/amp/secrets.json"]
 async fn live_balance() {
     let client = live_client().await;
 
@@ -64,6 +65,7 @@ async fn live_balance() {
 }
 
 #[tokio::test]
+#[ignore = "requires amp CLI local thread files at ~/.local/share/amp/threads"]
 async fn live_local_threads() {
     let summaries = ampcode::local::list_thread_summaries().await.unwrap();
     println!("{} local threads found", summaries.len());
@@ -95,6 +97,7 @@ async fn live_local_threads() {
 }
 
 #[tokio::test]
+#[ignore = "requires amp CLI login at ~/.local/share/amp/secrets.json"]
 async fn live_github_auth_status() {
     let client = live_client().await;
     match client.github_auth_status().await {

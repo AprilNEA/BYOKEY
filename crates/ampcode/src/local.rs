@@ -107,7 +107,7 @@ pub fn scan_summaries_sync(dir: &Path) -> Vec<ThreadSummary> {
             read_summary(&entry.path())
         })
         .collect();
-    summaries.sort_unstable_by(|a, b| b.created.cmp(&a.created));
+    summaries.sort_unstable_by_key(|s| std::cmp::Reverse(s.created));
     summaries
 }
 
