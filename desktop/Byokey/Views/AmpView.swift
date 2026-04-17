@@ -40,6 +40,10 @@ struct AmpView: View {
     /// Which provider routes each model family. nil = Amp Official (default).
     @State private var routing: [String: String] = [:]  // family.id → provider id
 
+    /// Cache of pinned account IDs loaded from settings.json.
+    /// Key = family.id, value = account_id string.
+    @State private var pinnedAccounts: [String: String] = [:]
+
     private var proxyURL: String {
         "\(appEnv.baseURL.absoluteString)/amp"
     }
@@ -278,31 +282,18 @@ struct AmpView: View {
         // account pinning to the config format.  Do NOT fall through to the live
         // active account: that would make the picker reflect the router's runtime
         // decision instead of the user's stored preference.
-        if let pinnedAccountId = pinnedAccountId(for: providerId) {
-            return .account(providerId: providerId, accountId: pinnedAccountId)
+        if let accountId = pinnedAccountId(for: family.id) {
+            return .account(providerId: providerId, accountId: accountId)
         }
         return .provider(id: providerId)
     }
 
-    /// Returns the explicitly-pinned account ID for a provider, if one was
+    /// Returns the explicitly-pinned account ID for a family, if one was
     /// saved to settings.json.  Returns nil when the user chose "active account
     /// (default)" — i.e. only the provider is pinned, not a specific account.
-    private func pinnedAccountId(for providerId: String) -> String? {
-        guard let data = try? Data(contentsOf: configURL),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let providers = json["providers"] as? [String: Any]
-        else { return nil }
-
-        for family in modelFamilies {
-            if let conf = providers[family.id] as? [String: Any],
-               let backend = conf["backend"] as? String,
-               backend == providerId,
-               let accountId = conf["account_id"] as? String
-            {
-                return accountId
-            }
-        }
-        return nil
+    /// Reads from the in-memory cache populated by `loadRouting()`; no disk I/O.
+    private func pinnedAccountId(for familyId: String) -> String? {
+        pinnedAccounts[familyId]
     }
 
     private func displayLabel(for choice: RoutingChoice, family: ModelFamily) -> (String, Color) {
@@ -342,6 +333,14 @@ struct AmpView: View {
                let backend = conf["backend"] as? String
             {
                 routing[family.id] = backend
+                if let accountId = conf["account_id"] as? String {
+                    pinnedAccounts[family.id] = accountId
+                } else {
+                    pinnedAccounts.removeValue(forKey: family.id)
+                }
+            } else {
+                routing.removeValue(forKey: family.id)
+                pinnedAccounts.removeValue(forKey: family.id)
             }
         }
     }
@@ -408,6 +407,9 @@ struct AmpView: View {
         ) {
             try? data.write(to: configURL, options: .atomic)
         }
+
+        // Refresh in-memory cache to keep pinnedAccounts in sync.
+        loadRouting()
     }
 
     // MARK: - Quick Action Cards

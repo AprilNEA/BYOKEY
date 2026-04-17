@@ -1,8 +1,5 @@
 .PHONY: build build-release desktop desktop-build desktop-run clean openapi
 
-# Resolve the Byokey.app bundle path from Xcode's DerivedData once and reuse.
-BYOKEY_APP := $(shell find ~/Library/Developer/Xcode/DerivedData/Byokey-*/Build/Products/Debug -name '*.app' -maxdepth 1 2>/dev/null | head -1)
-
 # Build the byokey binary (debug)
 build:
 	cargo build

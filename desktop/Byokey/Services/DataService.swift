@@ -2,6 +2,7 @@ import Connect
 import Foundation
 
 @Observable
+@MainActor
 final class DataService {
     // MARK: - Shared State
 

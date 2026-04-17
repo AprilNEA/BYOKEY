@@ -93,6 +93,10 @@ if [ -z "${CARGO}" ]; then
     fi
 fi
 
+# Split CARGO into an array so multi-word shims ("mise exec -- cargo") and
+# paths with spaces both work. Array-expansion preserves word boundaries.
+read -r -a CARGO_CMD <<< "${CARGO}"
+
 cd "${RUST_DIR}"
 
 if [ "${CONFIGURATION}" = "Release" ]; then
@@ -109,15 +113,20 @@ if [ "${CONFIGURATION}" = "Release" ]; then
             X86_TARGET="x86_64-apple-darwin"
 
             for T in "${ARM_TARGET}" "${X86_TARGET}"; do
-                if ! ${CARGO} target list --installed 2>/dev/null | grep -qx "${T}"; then
-                    echo "note: rust target ${T} not installed — running 'rustup target add ${T}'"
-                    rustup target add "${T}"
+                if ! rustup target list --installed 2>/dev/null | grep -qx "${T}"; then
+                    if command -v rustup >/dev/null 2>&1; then
+                        echo "note: rust target ${T} not installed — running 'rustup target add ${T}'"
+                        rustup target add "${T}"
+                    else
+                        echo "warning: target ${T} missing and rustup not on PATH;" >&2
+                        echo "         install it via your toolchain manager (e.g. 'mise exec -- rustup target add ${T}')" >&2
+                    fi
                 fi
             done
 
             echo "building byokey (release, universal: ${ARM_TARGET} + ${X86_TARGET})…"
-            ${CARGO} build --release --target "${ARM_TARGET}" --bin byokey
-            ${CARGO} build --release --target "${X86_TARGET}" --bin byokey
+            "${CARGO_CMD[@]}" build --release --target "${ARM_TARGET}" --bin byokey
+            "${CARGO_CMD[@]}" build --release --target "${X86_TARGET}" --bin byokey
 
             ARM_BIN="${RUST_DIR}/target/${ARM_TARGET}/release/byokey"
             X86_BIN="${RUST_DIR}/target/${X86_TARGET}/release/byokey"
@@ -128,13 +137,13 @@ if [ "${CONFIGURATION}" = "Release" ]; then
             ;;
         *)
             echo "building byokey (release, ${RUST_TARGET})…"
-            ${CARGO} build --release --target "${RUST_TARGET}" --bin byokey
+            "${CARGO_CMD[@]}" build --release --target "${RUST_TARGET}" --bin byokey
             SRC="${RUST_DIR}/target/${RUST_TARGET}/release/byokey"
             ;;
     esac
 else
     echo "building byokey (debug)…"
-    ${CARGO} build --bin byokey
+    "${CARGO_CMD[@]}" build --bin byokey
     SRC="${RUST_DIR}/target/${RUST_PROFILE}/byokey"
 fi
 

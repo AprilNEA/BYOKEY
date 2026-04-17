@@ -7,6 +7,7 @@ struct ThreadsView: View {
     @State private var selectedID: String?
     @State private var detail: AmpThreadDetail?
     @State private var isLoadingDetail = false
+    @State private var isLoadingThreads = true
     @State private var detailError: String?
 
     var body: some View {
@@ -44,17 +45,25 @@ struct ThreadsView: View {
 
     private func loadThreads() async {
         // Initial load on appear, then refresh every 30 seconds.
+        isLoadingThreads = true
         await dataService.reloadAmpThreads()
-        repeat {
-            try? await Task.sleep(for: .seconds(30))
-            await dataService.reloadAmpThreads()
-        } while !Task.isCancelled
+        isLoadingThreads = false
+        do {
+            repeat {
+                try await Task.sleep(for: .seconds(30))
+                await dataService.reloadAmpThreads()
+            } while !Task.isCancelled
+        } catch is CancellationError {
+            // Task was cancelled — exit cleanly.
+        } catch {
+            // Unexpected error from sleep; exit loop.
+        }
     }
 
     @ViewBuilder
     private var content: some View {
         if pm.isReachable {
-            if dataService.ampThreads.isEmpty, dataService.isLoading {
+            if dataService.ampThreads.isEmpty, isLoadingThreads {
                 ProgressView("Loading threads…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if dataService.ampThreads.isEmpty {

@@ -61,7 +61,6 @@ struct AppShell<Detail: View>: View {
                 VStack(spacing: 0) {
                     detail()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .clipShape(.rect(cornerRadius: DetailContainer.cornerRadius))
 
                     if showLog {
                         Divider()
@@ -100,6 +99,7 @@ private struct DetailContainer: ViewModifier {
                 RoundedRectangle(cornerRadius: Self.cornerRadius)
                     .strokeBorder(strokeColor, lineWidth: 0.5)
             }
+            .clipShape(.rect(cornerRadius: Self.cornerRadius))
             .shadow(color: shadowColor, radius: 14, x: 0, y: 4)
     }
 

@@ -285,6 +285,11 @@ impl stat::StatusService for StatusServiceImpl {
         };
         let to = req.to.unwrap_or_else(now_seconds);
         let from = req.from.unwrap_or(to - THIRTY_DAYS_SECS);
+        if from > to {
+            return Err(ConnectError::invalid_argument(
+                "from must be less than or equal to to",
+            ));
+        }
         let totals = store
             .totals_by_account(Some(from), Some(to))
             .await
@@ -344,12 +349,11 @@ impl stat::StatusService for StatusServiceImpl {
         _ctx: Context,
         _: OwnedView<stat::SetRoutingPolicyRequestView<'static>>,
     ) -> Result<(stat::SetRoutingPolicyResponse, Context), ConnectError> {
-        // Server-side mutation of settings.json lands in a follow-up; the
-        // config file is currently the source of truth and is edited by the
-        // desktop client or by hand. Returning Unimplemented keeps the
-        // contract explicit.
+        // TODO(slice-7): wire to ConfigWatcher hot-reload
+        // Server-side mutation of settings.json is not yet implemented.
+        // Edit settings.json directly until hot-reload is wired up.
         Err(ConnectError::unimplemented(
-            "SetRoutingPolicy — edit settings.json directly for now",
+            "SetRoutingPolicy is not yet implemented; edit settings.json directly",
         ))
     }
 

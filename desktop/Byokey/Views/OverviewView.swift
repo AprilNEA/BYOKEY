@@ -6,6 +6,7 @@ struct OverviewView: View {
     @Environment(AppEnvironment.self) private var appEnv
     @Environment(DataService.self) private var dataService
     @State private var copiedEndpoint = false
+    @State private var clipboardTimer: Task<Void, Never>?
     @State private var range: UsageRange = .day
 
     var body: some View {
@@ -26,6 +27,10 @@ struct OverviewView: View {
             }
         }
         .task(id: range) { await reloadHistory() }
+        .onDisappear {
+            clipboardTimer?.cancel()
+            clipboardTimer = nil
+        }
     }
 
     // MARK: - Server Control
@@ -80,7 +85,8 @@ struct OverviewView: View {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(appEnv.baseURL.absoluteString, forType: .string)
                     copiedEndpoint = true
-                    Task {
+                    clipboardTimer?.cancel()
+                    clipboardTimer = Task {
                         try? await Task.sleep(for: .seconds(1.5))
                         copiedEndpoint = false
                     }
@@ -426,8 +432,8 @@ private struct UsageHistoryChart: View {
             AxisMarks(position: .trailing) { value in
                 AxisGridLine()
                 AxisValueLabel {
-                    if let v = value.as(Int.self) {
-                        Text(formatTokens(UInt64(v)))
+                    if let d = value.as(Double.self), d >= 0 {
+                        Text(formatTokens(UInt64(d.rounded())))
                             .font(.system(size: 9))
                     }
                 }

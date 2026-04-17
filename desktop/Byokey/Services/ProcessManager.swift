@@ -219,6 +219,8 @@ final class ProcessManager {
         if proc.isRunning {
             kill(proc.processIdentifier, SIGKILL)
         }
+        // Nil out the handle so deinit doesn't re-signal a dead/recycled PID.
+        process = nil
     }
 
     deinit {
@@ -226,6 +228,8 @@ final class ProcessManager {
             NotificationCenter.default.removeObserver(observer)
         }
         shouldAutoRestart = false
+        // Only terminate if the handle is still live; terminateSynchronously()
+        // already nils it out, so this path is reached only on abnormal teardown.
         process?.terminate()
         healthTask?.cancel()
     }
