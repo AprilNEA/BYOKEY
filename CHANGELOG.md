@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/AprilNEA/BYOKEY/compare/v0.11.0...v0.12.0) - 2026-04-17
+
+### Added
+
+- *(desktop)* Surge-style floating card container for all tab content
+- loadwise-backed account selector foundation
+- per-account usage tracking
+- *(desktop)* threads browser, overview usage chart, amp account picker
+- add `ampcode` crate — unofficial Rust client for Ampcode
+- merge amp router into main listener, migrate management to ConnectRPC
+- sync with upstream, add VersionStore, update fingerprints
+
+### Fixed
+
+- *(ci)* unblock release-plz against historical loadwise path-deps
+- *(ci)* unblock Test, Clippy, and Desktop (macOS) jobs
+- *(desktop)* swap menu bar icon from server.rack to key.fill
+- address review-loop round 4 findings
+- address review-loop round 3 findings
+- address review-loop round 2 findings
+- address review-loop round 1 findings
+- *(desktop)* make card top/bottom margins actually symmetric
+- *(desktop)* equalise visible top/bottom margins on detail card
+- *(desktop)* replace SwiftUI List sidebar in Threads with plain column
+- *(desktop)* Threads layout, add delete-account confirmation
+- *(desktop)* kill daemon on app termination (Cmd+Q, File → Quit)
+- *(desktop)* always build rust binary in Xcode Debug phase
+- address review findings — error mappings, hasSnapshot guards, docs
+- *(desktop)* wire connect-swift + swift-protobuf SPM deps, fix build errors
+- *(ci)* update rustls-webpki/rand, ignore unfixable audit advisories
+- *(proxy)* strip unsupported params for codex OAuth, generalize device code prompt
+
+### Other
+
+- add light/dark screenshots to README
+- add Simplified Chinese README under docs/
+- *(proto)* split ManagementService into Status, Accounts, Amp
+- replace shields.io badges with <kbd> tags for auth flow labels
+- replace auth flow labels with shield badges
+- use branded provider icons with dark mode support
+- fix ugly Supported Providers table layout
+- use real registered model IDs in Supported Providers tables
+- sync README/CONTRIBUTING/AGENTS with post-v0.11.0 refactors
+- integrate origin/master (v0.11.0 release, PR #58, #69)
+- extract AuthCmd struct and reorganize CLI actions module
+- *(amp)* remove ad-blocking feature and extract shared proxy utilities
+- *(serve)* drop TLS, add socket activation, fix shutdown hang
+- add request-correlated logging and daemon control socket
+- *(provider)* migrate Kiro + OpenAI-compat providers to aigw
+- *(store)* migrate to sea-orm v2 + sea-orm-migration
+
 ## [0.11.0](https://github.com/AprilNEA/BYOKEY/compare/v0.10.0...v0.11.0) - 2026-04-09
 
 ### Fixed
