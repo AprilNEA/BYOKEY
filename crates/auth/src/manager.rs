@@ -233,11 +233,13 @@ impl AuthManager {
                 if let Some(active) = accts.iter().find(|a| a.is_active) {
                     Some(active.account_id.clone())
                 } else {
+                    let fallback = accts[0].account_id.clone();
                     tracing::warn!(
                         provider = ?provider,
+                        account_id = %fallback,
                         "no active account marked; defaulting to first account in the list"
                     );
-                    Some(accts[0].account_id.clone())
+                    Some(fallback)
                 }
             }
             Ok(_) => None,

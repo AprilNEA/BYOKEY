@@ -104,6 +104,9 @@ fn clamp_to_u32(n: usize) -> u32 {
 }
 
 const THIRTY_DAYS_SECS: i64 = 30 * 24 * 3600;
+// Largest time range a single `GetUsageByAccount` request can ask for.
+// Prevents adversarial queries that would scan the entire usage table.
+const MAX_USAGE_RANGE_SECS: i64 = 365 * 24 * 3600;
 
 fn policy_strategy_to_proto(kind: byokey_config::PolicyStrategyKind) -> stat::RoutingStrategy {
     use byokey_config::PolicyStrategyKind as K;
@@ -291,6 +294,14 @@ impl stat::StatusService for StatusServiceImpl {
             return Err(ConnectError::invalid_argument(
                 "from must be less than or equal to to",
             ));
+        }
+        // Reject unbounded ranges so adversarial clients can't force a
+        // full-table scan by requesting, e.g., epoch-0-to-now.
+        if to.saturating_sub(from) > MAX_USAGE_RANGE_SECS {
+            return Err(ConnectError::invalid_argument(format!(
+                "requested range exceeds maximum of {} days",
+                MAX_USAGE_RANGE_SECS / 86_400
+            )));
         }
         let totals = store
             .totals_by_account(Some(from), Some(to))

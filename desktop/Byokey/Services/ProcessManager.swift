@@ -109,7 +109,12 @@ final class ProcessManager {
                 self.isReachable = false
                 self.process = nil
 
-                if p.terminationStatus != 0 {
+                // Only surface an error dialog when the process died
+                // unexpectedly. User-initiated stop() and app-quit
+                // (terminateSynchronously) both flip shouldAutoRestart off
+                // before terminating, so a non-zero exit in that state is
+                // expected (SIGTERM/SIGKILL both exit non-zero on macOS).
+                if self.shouldAutoRestart, p.terminationStatus != 0 {
                     let tail = self.logs.suffix(5).map { AnsiParser.strip($0) }.joined(separator: "\n")
                     self.errorMessage = tail.isEmpty ? "Process exited with code \(p.terminationStatus)" : tail
                     self.showError = true
