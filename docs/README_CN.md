@@ -22,6 +22,13 @@
 
 </div>
 
+<p align="center">
+    <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="./public/screenshot-dark.png">
+        <img src="./public/screenshot-light.png" alt="BYOKEY 截图" width="860"/>
+    </picture>
+</p>
+
 ```
 订阅                                              工具
 
