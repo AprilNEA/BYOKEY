@@ -59,19 +59,52 @@ struct AppShell<Detail: View>: View {
                     .frame(width: 200)
 
                 VStack(spacing: 0) {
-                    GeometryReader { _ in
-                        detail()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
+                    detail()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipShape(.rect(cornerRadius: DetailContainer.cornerRadius))
 
                     if showLog {
                         Divider()
+                            .padding(.horizontal, 12)
                         LogPanel()
                     }
                 }
+                .modifier(DetailContainer())
+                .padding(EdgeInsets(top: 12, leading: 0, bottom: 12, trailing: 12))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+}
+
+/// Surge-style floating "card" container around the detail pane: rounded
+/// rectangle with an elevated fill and a hairline stroke, sitting on the
+/// window's canvas background with a small inset on every edge. Applied at
+/// the shell level so every tab's content gets the treatment without each
+/// view having to know about it.
+private struct DetailContainer: ViewModifier {
+    static let cornerRadius: CGFloat = 14
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                Color.surfacePrimary,
+                in: .rect(cornerRadius: Self.cornerRadius)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: Self.cornerRadius)
+                    .strokeBorder(strokeColor, lineWidth: 0.5)
+            }
+            .shadow(color: shadowColor, radius: 14, x: 0, y: 4)
+    }
+
+    private var strokeColor: Color {
+        colorScheme == .dark ? .white.opacity(0.07) : .black.opacity(0.08)
+    }
+
+    private var shadowColor: Color {
+        colorScheme == .dark ? .black.opacity(0.35) : .black.opacity(0.05)
     }
 }
 
