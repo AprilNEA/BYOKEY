@@ -6,6 +6,7 @@ enum SidebarItem: String, Identifiable, CaseIterable {
     case accounts = "Accounts"
     case models = "Models"
     case amp = "Amp"
+    case threads = "Threads"
     case usage = "Usage"
     case settings = "Settings"
 
@@ -18,6 +19,7 @@ enum SidebarItem: String, Identifiable, CaseIterable {
         case .accounts: "person.2"
         case .models: "cpu"
         case .amp: "bolt.fill"
+        case .threads: "bubble.left.and.bubble.right"
         case .usage: "chart.bar"
         case .settings: "gearshape"
         }
@@ -27,7 +29,7 @@ enum SidebarItem: String, Identifiable, CaseIterable {
         switch self {
         case .activity, .overview: nil
         case .accounts, .models: "Provider"
-        case .amp: "Agent"
+        case .amp, .threads: "Agent"
         case .usage, .settings: "Proxy"
         }
     }
@@ -50,16 +52,7 @@ struct AppShell<Detail: View>: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.98, green: 0.96, blue: 0.98),
-                    Color(red: 0.95, green: 0.96, blue: 1.0),
-                    Color(red: 0.93, green: 0.95, blue: 1.0),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            CanvasBackground()
 
             HStack(spacing: 0) {
                 SidebarView(selection: $selection, showLog: $showLog)
@@ -117,7 +110,8 @@ struct DetailPage<Accessory: View, Content: View>: View {
             content()
         }
         .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: 1100, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -125,6 +119,7 @@ private struct SidebarView: View {
     @Binding var selection: SidebarItem?
     @Binding var showLog: Bool
     @Environment(ProcessManager.self) private var pm
+    @Environment(AppEnvironment.self) private var appEnv
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -141,7 +136,9 @@ private struct SidebarView: View {
                 }
 
                 Button {
-                    selection = item
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        selection = item
+                    }
                 } label: {
                     Label {
                         Text(item.rawValue)
@@ -166,6 +163,9 @@ private struct SidebarView: View {
 
             Spacer()
 
+            Divider()
+                .padding(.horizontal, 20)
+
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     showLog.toggle()
@@ -188,12 +188,69 @@ private struct SidebarView: View {
                 }
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 24)
-                .padding(.vertical, 12)
+                .padding(.vertical, 10)
             }
             .buttonStyle(.plain)
+
+            Divider()
+                .padding(.horizontal, 20)
+
+            DaemonStatusRow()
         }
         .font(.system(size: 14))
         .padding(.top, 44)
+    }
+}
+
+// MARK: - Daemon Status
+
+private struct DaemonStatusRow: View {
+    @Environment(ProcessManager.self) private var pm
+    @Environment(AppEnvironment.self) private var appEnv
+
+    private var status: (dot: StatusDot.Status, label: String, tone: Color) {
+        if pm.isReachable {
+            return (.active, "Connected", .green)
+        }
+        if pm.isRunning {
+            return (.warning, "Starting…", .orange)
+        }
+        return (.error, "Disconnected", .secondary)
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            StatusDot(status.dot, size: 7)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(status.label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(status.tone == .secondary ? Color.secondary : status.tone)
+
+                Text(verbatim: "127.0.0.1:\(appEnv.port)")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer()
+
+            Button {
+                if pm.isRunning {
+                    pm.stop()
+                } else {
+                    pm.start()
+                }
+            } label: {
+                Image(systemName: pm.isRunning ? "stop.circle" : "play.circle")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .buttonStyle(.plain)
+            .help(pm.isRunning ? "Stop daemon" : "Start daemon")
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
     }
 }
 

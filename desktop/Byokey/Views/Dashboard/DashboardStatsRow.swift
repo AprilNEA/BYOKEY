@@ -9,26 +9,24 @@ struct DashboardStatsRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             requestsCard
-                .frame(maxHeight: .infinity, alignment: .top)
             tokenCard(
                 title: "INPUT TOKENS",
                 value: UInt64(usage?.inputTokens ?? 0),
                 color: .indigo,
                 points: tokenTimeSeries(\.inputTokens)
             )
-            .frame(maxHeight: .infinity, alignment: .top)
             tokenCard(
                 title: "OUTPUT TOKENS",
                 value: UInt64(usage?.outputTokens ?? 0),
                 color: .cyan,
                 points: tokenTimeSeries(\.outputTokens)
             )
-            .frame(maxHeight: .infinity, alignment: .top)
         }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var requestsCard: some View {
-        Card("REQUESTS") {
+        Card("REQUESTS", fillHeight: true) {
             HeroNumber(value: UInt64(usage?.totalRequests ?? 0))
 
             HStack(spacing: 16) {
@@ -57,7 +55,7 @@ struct DashboardStatsRow: View {
         title: String, value: UInt64, color: Color,
         points: [(date: Date, value: UInt64)]
     ) -> some View {
-        Card(title) {
+        Card(title, fillHeight: true) {
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 let (num, unit) = formatTokenParts(value)
                 Text(num)

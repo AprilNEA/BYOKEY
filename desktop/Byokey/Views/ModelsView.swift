@@ -74,10 +74,7 @@ struct ModelsView: View {
                 .formStyle(.grouped)
                 .scrollContentBackground(.hidden)
             } else if pm.isRunning {
-                Spacer()
-                HStack { Spacer(); ProgressView().controlSize(.large); Spacer() }
-                Text("Waiting for server…").foregroundStyle(.secondary)
-                Spacer()
+                ServerStartingView()
             } else {
                 Spacer()
                 ContentUnavailableView(
@@ -99,7 +96,7 @@ struct ModelsView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(.white.opacity(0.6), in: .rect(cornerRadius: 8))
+        .background(Color.surfaceSecondary, in: .rect(cornerRadius: 8))
         .frame(maxWidth: 220)
     }
 

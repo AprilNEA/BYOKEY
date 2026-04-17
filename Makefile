@@ -1,4 +1,4 @@
-.PHONY: build build-release desktop clean openapi
+.PHONY: build build-release desktop desktop-build desktop-run clean openapi
 
 # Build the byokey binary (debug)
 build:
@@ -18,6 +18,14 @@ openapi: build
 # Build the binary then open the Xcode project
 desktop: build openapi
 	open desktop/Byokey.xcodeproj
+
+# Build the desktop app without Xcode
+desktop-build:
+	xcodebuild -project desktop/Byokey.xcodeproj -scheme Byokey -configuration Debug build
+
+# Build and launch the desktop app
+desktop-run: desktop-build
+	@open "$$(find ~/Library/Developer/Xcode/DerivedData/Byokey-*/Build/Products/Debug -name '*.app' -maxdepth 1 | head -1)"
 
 clean:
 	cargo clean

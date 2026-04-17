@@ -25,10 +25,7 @@ struct GeneralView: View {
                     }
                 }
             } else if pm.isRunning {
-                Spacer()
-                HStack { Spacer(); ProgressView().controlSize(.large); Spacer() }
-                Text("Waiting for server…").foregroundStyle(.secondary)
-                Spacer()
+                ServerStartingView()
             } else {
                 Spacer()
                 ContentUnavailableView(

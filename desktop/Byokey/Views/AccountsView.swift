@@ -10,8 +10,16 @@ struct AccountsView: View {
     var body: some View {
         DetailPage("Accounts") {
             if pm.isReachable {
-                if dataService.providerAccounts.isEmpty, dataService.isLoading {
-                    loadingState
+                if dataService.providerAccounts.isEmpty {
+                    if dataService.isLoading {
+                        loadingState
+                    } else {
+                        ContentUnavailableView(
+                            "No providers available",
+                            systemImage: "person.crop.circle.badge.questionmark",
+                            description: Text("The server returned no provider list. Check that the proxy is running and reachable.")
+                        )
+                    }
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 10) {
@@ -36,10 +44,7 @@ struct AccountsView: View {
                     .background(.red.opacity(0.08), in: .rect(cornerRadius: 10))
                 }
             } else if pm.isRunning {
-                Spacer()
-                HStack { Spacer(); ProgressView().controlSize(.large); Spacer() }
-                Text("Waiting for server…").foregroundStyle(.secondary)
-                Spacer()
+                ServerStartingView()
             } else {
                 Spacer()
                 ContentUnavailableView(
@@ -157,8 +162,7 @@ struct AccountsView: View {
             .buttonStyle(.plain)
             .disabled(loginInProgress != nil)
         }
-        .background(.white.opacity(isHovered ? 0.92 : 0.85), in: .rect(cornerRadius: 14))
-        .shadow(color: .black.opacity(isHovered ? 0.07 : 0.04), radius: isHovered ? 12 : 8, x: 0, y: 2)
+        .cardSurface(isHovered: isHovered)
         .animation(.easeOut(duration: 0.15), value: isHovered)
         .onHover { hovering in
             hoveredProvider = hovering ? provider.id : nil
@@ -300,6 +304,7 @@ private struct AccountRow: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(account.isActive)
+                .accessibilityLabel(account.isActive ? "Active account" : "Set as active account")
 
                 // Name
                 Text(displayName)

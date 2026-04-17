@@ -11,15 +11,17 @@ final class DataService {
     private(set) var history: Byokey_Status_GetUsageHistoryResponse?
     private(set) var rateLimits: Byokey_Status_GetRateLimitsResponse?
     private(set) var models: [ModelEntry] = []
+    private(set) var ampThreads: [AmpThreadSummary] = []
     private(set) var isLoading = false
 
     var isServerReachable = false {
         didSet {
             if isServerReachable, !oldValue {
                 startPolling()
-            } else if !isServerReachable {
+            } else if !isServerReachable, oldValue {
                 stopPolling()
-                clearAll()
+                // Keep last-known data visible during transient disconnects so
+                // UI doesn't flicker. Call `clearAll()` explicitly for a hard reset.
             }
         }
     }
@@ -44,10 +46,13 @@ final class DataService {
     private var statusClient: Byokey_Status_StatusServiceClient!
     @ObservationIgnored
     private var accountsClient: Byokey_Accounts_AccountsServiceClient!
+    @ObservationIgnored
+    private var ampClient: Byokey_Amp_AmpServiceClient!
 
     init() {
         statusClient = Byokey_Status_StatusServiceClient(client: proto)
         accountsClient = Byokey_Accounts_AccountsServiceClient(client: proto)
+        ampClient = Byokey_Amp_AmpServiceClient(client: proto)
     }
 
     // MARK: - Polling
@@ -85,6 +90,27 @@ final class DataService {
         }
     }
 
+    // MARK: - Amp Threads
+
+    func reloadAmpThreads(limit: UInt32 = 200, hasMessages: Bool = true) async {
+        var req = Byokey_Amp_ListThreadsRequest()
+        req.limit = limit
+        req.hasMessages_p = hasMessages
+        if let msg = (await ampClient.listThreads(request: req)).message,
+           msg.threads != ampThreads
+        {
+            ampThreads = msg.threads
+        }
+    }
+
+    func fetchThread(id: String) async -> AmpThreadDetail? {
+        var req = Byokey_Amp_GetThreadRequest()
+        req.id = id
+        let resp = await ampClient.getThread(request: req)
+        guard let msg = resp.message, msg.hasThread else { return nil }
+        return msg.thread
+    }
+
     // MARK: - Mutations
 
     func activateAccount(provider: String, accountId: String) async throws {
@@ -108,29 +134,35 @@ final class DataService {
     // MARK: - Private
 
     private func fetchAll() async {
-        isLoading = true
-        defer { isLoading = false }
+        // Only show loading state on the first load to prevent flickering on every poll tick.
+        let isFirstLoad = providers.isEmpty && providerAccounts.isEmpty
+        if isFirstLoad { isLoading = true }
+        defer { if isFirstLoad { isLoading = false } }
 
-        if let msg = (await statusClient.getStatus(request: .init())).message {
+        // On every field: only reassign when the new value differs from the current one,
+        // AND never clobber a previously-successful value with nil/[] on a transient failure.
+        if let msg = (await statusClient.getStatus(request: .init())).message,
+           msg.providers != providers
+        {
             providers = msg.providers
-        } else {
-            providers = []
         }
 
-        if let msg = (await accountsClient.listAccounts(request: .init())).message {
+        if let msg = (await accountsClient.listAccounts(request: .init())).message,
+           msg.providers != providerAccounts
+        {
             providerAccounts = msg.providers
         }
 
-        if let msg = (await statusClient.getUsage(request: .init())).message {
+        if let msg = (await statusClient.getUsage(request: .init())).message,
+           msg != usage
+        {
             usage = msg
-        } else {
-            usage = nil
         }
 
-        if let msg = (await statusClient.getRateLimits(request: .init())).message {
+        if let msg = (await statusClient.getRateLimits(request: .init())).message,
+           msg != rateLimits
+        {
             rateLimits = msg
-        } else {
-            rateLimits = nil
         }
 
         await fetchModels()
@@ -139,11 +171,13 @@ final class DataService {
         var histReq = Byokey_Status_GetUsageHistoryRequest()
         histReq.from = now - 86400
         histReq.to = now
-        if let msg = (await statusClient.getUsageHistory(request: histReq)).message {
+        if let msg = (await statusClient.getUsageHistory(request: histReq)).message,
+           msg != history
+        {
             history = msg
-        } else {
-            history = nil
         }
+
+        await reloadAmpThreads()
     }
 
     private func fetchModels() async {
@@ -151,9 +185,11 @@ final class DataService {
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             let resp = try JSONDecoder().decode(ModelsResponse.self, from: data)
-            models = resp.data
+            if resp.data.map(\.id) != models.map(\.id) {
+                models = resp.data
+            }
         } catch {
-            models = []
+            // Preserve last-known models on transient failure.
         }
     }
 
@@ -164,5 +200,6 @@ final class DataService {
         history = nil
         rateLimits = nil
         models = []
+        ampThreads = []
     }
 }

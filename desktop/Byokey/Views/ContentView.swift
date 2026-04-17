@@ -28,6 +28,7 @@ struct ContentView: View {
         case .accounts:  AccountsView()
         case .models:    ModelsView()
         case .amp:       AmpView()
+        case .threads:   ThreadsView()
         case .usage:     UsageView()
         case .settings:  SettingsView()
         case nil:        Text("Select a page")

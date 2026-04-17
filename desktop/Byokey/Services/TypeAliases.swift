@@ -10,6 +10,17 @@ typealias ProviderRateLimits = Byokey_Status_ProviderRateLimits
 typealias AccountRateLimit = Byokey_Status_AccountRateLimit
 typealias ProtoRateLimitSnapshot = Byokey_Status_RateLimitSnapshot
 
+// MARK: - Amp service
+typealias AmpThreadSummary = Byokey_Amp_ThreadSummary
+typealias AmpThreadDetail = Byokey_Amp_ThreadDetail
+typealias AmpMessage = Byokey_Amp_Message
+typealias AmpContentBlock = Byokey_Amp_ContentBlock
+typealias AmpToolUse = Byokey_Amp_ToolUse
+typealias AmpToolResult = Byokey_Amp_ToolResult
+typealias AmpToolRun = Byokey_Amp_ToolRun
+typealias AmpUsage = Byokey_Amp_Usage
+typealias AmpMessageState = Byokey_Amp_MessageState
+
 // MARK: - REST-only types (v1/models — not in proto)
 
 struct ModelsResponse: Decodable {

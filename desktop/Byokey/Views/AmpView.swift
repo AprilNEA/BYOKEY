@@ -17,6 +17,15 @@ private let modelFamilies: [ModelFamily] = [
     .init(id: "gemini", name: "Gemini", examples: "2.5-pro · flash", icon: "provider-gemini", color: .blue),
 ]
 
+// MARK: - Routing Choice
+
+/// A single entry the user can pick from the per-family dropdown.
+private enum RoutingChoice: Hashable {
+    case ampOfficial                                   // passthrough, no interception
+    case provider(id: String)                          // route via provider, use its active account
+    case account(providerId: String, accountId: String)// route via provider, pin specific account
+}
+
 // MARK: - View
 
 struct AmpView: View {
@@ -28,7 +37,7 @@ struct AmpView: View {
     @State private var resultMessage: ResultMessage?
     @State private var injectionStatus: InjectionStatus = .unknown
 
-    /// Which provider routes each model family. nil = native (default).
+    /// Which provider routes each model family. nil = Amp Official (default).
     @State private var routing: [String: String] = [:]  // family.id → provider id
 
     private var proxyURL: String {
@@ -37,9 +46,10 @@ struct AmpView: View {
 
     var body: some View {
         DetailPage("Amp") {
+            if pm.isReachable {
             VStack(spacing: 20) {
                 // ── Model Routing ────────────────────────────
-                sectionHeader("MODEL ROUTING", subtitle: "Choose which Provider handles each model family")
+                sectionHeader("MODEL ROUTING", subtitle: "Pick which provider account handles each model family. Changes apply live.")
 
                 HStack(alignment: .top, spacing: 12) {
                     ForEach(modelFamilies) { family in
@@ -78,9 +88,21 @@ struct AmpView: View {
 
                 if let result = resultMessage {
                     resultBanner(result)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
                 Spacer(minLength: 0)
+            }
+            } else if pm.isRunning {
+                ServerStartingView()
+            } else {
+                Spacer()
+                ContentUnavailableView(
+                    "Server Not Running",
+                    systemImage: "bolt.fill",
+                    description: Text("Enable the proxy server to configure Amp.")
+                )
+                Spacer()
             }
         }
         .onAppear {
@@ -92,37 +114,15 @@ struct AmpView: View {
     // MARK: - Section Header
 
     private func sectionHeader(_ title: String, subtitle: String?) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(Color.accentColor.opacity(0.8))
-                .kerning(0.8)
-            if let subtitle {
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        SectionLabel(title, subtitle: subtitle)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Model Routing Card
 
     private func modelRoutingCard(_ family: ModelFamily) -> some View {
-        // routing values: nil = Amp Official (passthrough), "claude"/"copilot"/etc = specific provider
-        let selectedId = routing[family.id]
-        let isAmpOfficial = selectedId == nil
-        let selectedProvider = selectedId.flatMap { id in
-            dataService.providers.first { $0.id == id }
-        }
-        let isActive = isAmpOfficial || selectedProvider?.authStatus == .valid
-
-        // Display name for the current selection
-        let displayName: String = if isAmpOfficial {
-            "Amp Official"
-        } else {
-            selectedProvider?.displayName ?? selectedId ?? family.name
-        }
+        let current = currentChoice(family: family)
+        let (label, accent) = displayLabel(for: current, family: family)
 
         return VStack(alignment: .leading, spacing: 12) {
             // Model family header
@@ -144,46 +144,80 @@ struct AmpView: View {
                 }
             }
 
-            // Provider picker
+            // Provider + account picker
             Menu {
                 // Amp Official (passthrough — no interception)
                 Button {
-                    setRouting(family: family.id, provider: nil)
+                    Task { await apply(choice: .ampOfficial, family: family.id) }
                 } label: {
                     HStack {
                         Text("Amp Official")
-                        if isAmpOfficial { Image(systemName: "checkmark") }
+                        if case .ampOfficial = current { Image(systemName: "checkmark") }
                     }
                 }
 
-                Divider()
-
-                // All providers (including the native one for this family)
+                // One submenu per provider
                 ForEach(dataService.providers.filter { $0.id != "amp" }, id: \.id) { provider in
-                    Button {
-                        setRouting(family: family.id, provider: provider.id)
-                    } label: {
-                        HStack {
-                            Circle()
-                                .fill(provider.authStatus == .valid ? .green : .gray)
-                                .frame(width: 6, height: 6)
-                            Text(provider.displayName)
-                            if provider.id == selectedId {
-                                Image(systemName: "checkmark")
+                    let accounts = dataService.providerAccounts
+                        .first(where: { $0.id == provider.id })?
+                        .accounts ?? []
+
+                    if accounts.isEmpty {
+                        // No accounts — show as disabled-ish button that still routes to active default
+                        Button {
+                            Task { await apply(choice: .provider(id: provider.id), family: family.id) }
+                        } label: {
+                            providerMenuLabel(provider: provider, current: current)
+                        }
+                    } else {
+                        Menu {
+                            // "Default / Active" option
+                            Button {
+                                Task { await apply(choice: .provider(id: provider.id), family: family.id) }
+                            } label: {
+                                HStack {
+                                    Text("Active account (default)")
+                                    if case .provider(let pid) = current, pid == provider.id {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
                             }
+                            Divider()
+                            ForEach(accounts, id: \.accountID) { account in
+                                Button {
+                                    Task {
+                                        await apply(
+                                            choice: .account(providerId: provider.id, accountId: account.accountID),
+                                            family: family.id
+                                        )
+                                    }
+                                } label: {
+                                    HStack {
+                                        accountStatusDot(account)
+                                        Text(accountDisplayName(account))
+                                        if case .account(let pid, let aid) = current,
+                                           pid == provider.id, aid == account.accountID
+                                        {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
+                        } label: {
+                            providerMenuLabel(provider: provider, current: current)
                         }
                     }
                 }
             } label: {
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(isActive ? .green : .gray.opacity(0.3))
+                        .fill(accent)
                         .frame(width: 6, height: 6)
 
-                    Text(displayName)
+                    Text(label)
                         .font(.system(size: 11))
-                        .foregroundStyle(isAmpOfficial ? .secondary : .primary)
                         .lineLimit(1)
+                        .foregroundStyle(accent == .secondary ? .secondary : .primary)
 
                     Spacer()
 
@@ -199,8 +233,72 @@ struct AmpView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(.white.opacity(0.85), in: .rect(cornerRadius: 14))
-        .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
+        .cardSurface()
+    }
+
+    @ViewBuilder
+    private func providerMenuLabel(provider: Byokey_Status_ProviderStatus, current: RoutingChoice) -> some View {
+        HStack {
+            Circle()
+                .fill(provider.authStatus == .valid ? .green : .gray)
+                .frame(width: 6, height: 6)
+            Text(provider.displayName)
+            if case .provider(let pid) = current, pid == provider.id {
+                Image(systemName: "checkmark")
+            }
+            if case .account(let pid, _) = current, pid == provider.id {
+                Image(systemName: "checkmark")
+            }
+        }
+    }
+
+    private func accountStatusDot(_ account: Byokey_Accounts_AccountDetail) -> some View {
+        let color: Color = switch account.tokenState {
+        case .valid: .green
+        case .expired: .orange
+        default: .red
+        }
+        return Circle().fill(color).frame(width: 5, height: 5)
+    }
+
+    private func accountDisplayName(_ account: Byokey_Accounts_AccountDetail) -> String {
+        if account.hasLabel, !account.label.isEmpty {
+            return account.label
+        }
+        return account.accountID
+    }
+
+    // MARK: - Current Choice & Display
+
+    private func currentChoice(family: ModelFamily) -> RoutingChoice {
+        guard let providerId = routing[family.id] else { return .ampOfficial }
+        // If this provider has an active account, show it as pinned; otherwise show as provider-default.
+        let activeAccount = dataService.providerAccounts
+            .first(where: { $0.id == providerId })?
+            .accounts.first(where: { $0.isActive })
+        if let activeAccount {
+            return .account(providerId: providerId, accountId: activeAccount.accountID)
+        }
+        return .provider(id: providerId)
+    }
+
+    private func displayLabel(for choice: RoutingChoice, family: ModelFamily) -> (String, Color) {
+        switch choice {
+        case .ampOfficial:
+            return ("Amp Official", .secondary)
+        case .provider(let id):
+            let provider = dataService.providers.first(where: { $0.id == id })
+            let name = provider?.displayName ?? id
+            return ("\(name) (active)", provider?.authStatus == .valid ? .green : .gray)
+        case .account(let pid, let aid):
+            let provider = dataService.providers.first(where: { $0.id == pid })
+            let name = provider?.displayName ?? pid
+            let account = dataService.providerAccounts
+                .first(where: { $0.id == pid })?
+                .accounts.first(where: { $0.accountID == aid })
+            let accLabel = account.map { accountDisplayName($0) } ?? aid
+            return ("\(name) / \(accLabel)", provider?.authStatus == .valid ? .green : .gray)
+        }
     }
 
     // MARK: - Routing Config
@@ -225,7 +323,29 @@ struct AmpView: View {
         }
     }
 
-    private func setRouting(family: String, provider: String?) {
+    private func apply(choice: RoutingChoice, family: String) async {
+        switch choice {
+        case .ampOfficial:
+            writeBackend(family: family, provider: nil)
+            resultMessage = .init(text: "Routing cleared. Requests will pass through to Amp.", isError: false)
+        case .provider(let providerId):
+            writeBackend(family: family, provider: providerId)
+            resultMessage = .init(text: "Routing updated. Using provider's active account.", isError: false)
+        case .account(let providerId, let accountId):
+            writeBackend(family: family, provider: providerId)
+            do {
+                try await dataService.activateAccount(provider: providerId, accountId: accountId)
+                resultMessage = .init(text: "Routing updated. Account activated.", isError: false)
+            } catch {
+                resultMessage = .init(
+                    text: "Routing saved but activation failed: \(error.localizedDescription)",
+                    isError: true
+                )
+            }
+        }
+    }
+
+    private func writeBackend(family: String, provider: String?) {
         routing[family] = provider
 
         var raw: [String: Any] = [:]
@@ -255,11 +375,6 @@ struct AmpView: View {
         ) {
             try? data.write(to: configURL, options: .atomic)
         }
-
-        resultMessage = .init(
-            text: "Routing updated. Restart the server to apply.",
-            isError: false
-        )
     }
 
     // MARK: - Quick Action Cards
@@ -321,8 +436,7 @@ struct AmpView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(.white.opacity(0.85), in: .rect(cornerRadius: 12))
-        .shadow(color: .black.opacity(0.03), radius: 6, y: 2)
+        .cardSurface(cornerRadius: 12)
     }
 
     private func resultBanner(_ result: ResultMessage) -> some View {
