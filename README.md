@@ -1,3 +1,9 @@
+<h4 align="right"><strong>English</strong> | <a href="./docs/README_CN.md">简体中文</a></h4>
+
+<p align="center">
+    <img src="./docs/public/icon.png" width=138/>
+</p>
+
 <div align="center">
 
 # BYOKEY

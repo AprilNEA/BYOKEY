@@ -1,3 +1,9 @@
+<h4 align="right"><a href="../README.md">English</a> | <strong>简体中文</strong></h4>
+
+<p align="center">
+    <img src="./public/icon.png" width=138/>
+</p>
+
 <div align="center">
 
 # BYOKEY
@@ -10,7 +16,7 @@
 &nbsp;
 [![crates.io](https://img.shields.io/crates/v/byokey?style=flat-square&labelColor=000&color=444)](https://crates.io/crates/byokey)
 &nbsp;
-[![license](https://img.shields.io/badge/license-MIT%20%7C%20Apache--2.0-444?style=flat-square&labelColor=000)](LICENSE-MIT)
+[![license](https://img.shields.io/badge/license-MIT%20%7C%20Apache--2.0-444?style=flat-square&labelColor=000)](../LICENSE-MIT)
 &nbsp;
 [![rust](https://img.shields.io/badge/rust-1.85+-444?style=flat-square&labelColor=000&logo=rust&logoColor=fff)](https://www.rust-lang.org)
 
@@ -266,8 +272,8 @@ providers:
 
 ## 贡献
 
-请参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解构建命令、架构细节和编码规范。
+请参阅 [CONTRIBUTING.md](../CONTRIBUTING.md) 了解构建命令、架构细节和编码规范。
 
 ## 许可证
 
-双协议授权，任选其一：[MIT](LICENSE-MIT) 或 [Apache-2.0](LICENSE-APACHE)。
+双协议授权，任选其一：[MIT](../LICENSE-MIT) 或 [Apache-2.0](../LICENSE-APACHE)。
