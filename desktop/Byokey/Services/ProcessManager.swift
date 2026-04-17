@@ -13,6 +13,21 @@ final class ProcessManager {
     private var healthTask: Task<Void, Never>?
     private var shouldAutoRestart = true
     private(set) var currentPort = AppEnvironment.defaultPort
+    private var terminationObserver: NSObjectProtocol?
+
+    init() {
+        // Stop the daemon synchronously when the app terminates (Cmd+Q,
+        // File → Quit, Dock → Quit, menu bar Quit). @Observable deinit
+        // isn't guaranteed to run on app exit, so we hook the
+        // NSApplication lifecycle directly.
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.terminateSynchronously()
+        }
+    }
 
     /// Bundled binary in release; cargo target directory in development.
     static var binaryURL: URL {
@@ -183,7 +198,33 @@ final class ProcessManager {
         logs.removeAll()
     }
 
+    /// Synchronous shutdown used on `NSApplication.willTerminateNotification`.
+    ///
+    /// Must complete before the process image is torn down, otherwise the
+    /// child daemon becomes orphaned. SIGTERMs the child, waits up to 2 s
+    /// for it to exit, and escalates to SIGKILL if it hangs.
+    func terminateSynchronously() {
+        shouldAutoRestart = false
+        healthTask?.cancel()
+        guard let proc = process, proc.isRunning else { return }
+
+        proc.terminate()
+
+        // Wait briefly for graceful shutdown. waitUntilExit would block
+        // indefinitely, so we poll with a 2 s cap before escalating.
+        let deadline = Date().addingTimeInterval(2)
+        while proc.isRunning, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        if proc.isRunning {
+            kill(proc.processIdentifier, SIGKILL)
+        }
+    }
+
     deinit {
+        if let observer = terminationObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
         shouldAutoRestart = false
         process?.terminate()
         healthTask?.cancel()
