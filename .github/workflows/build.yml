@@ -10,6 +10,9 @@ permissions:
 jobs:
   build:
     name: ${{ matrix.target }}
+    # Only build for the root byokey tag (v*). Skip per-crate tags like
+    # byokey-proto-v* or byokey-daemon-v* that release-plz may emit.
+    if: startsWith(github.event.release.tag_name, 'v')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -242,7 +245,7 @@ jobs:
   update-homebrew:
     name: Update Homebrew
     needs: build
-    if: always() && github.event_name == 'release' && !cancelled()
+    if: always() && github.event_name == 'release' && !cancelled() && startsWith(github.event.release.tag_name, 'v')
     runs-on: ubuntu-latest
     steps:
       - name: Generate token
