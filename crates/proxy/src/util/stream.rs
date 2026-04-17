@@ -23,6 +23,7 @@ pub(crate) fn tap_usage_stream<P: UsageParser>(
     usage: Arc<UsageRecorder>,
     model: String,
     provider: String,
+    account_id: String,
     parser: P,
 ) -> ByteStream {
     struct State<P> {
@@ -31,6 +32,7 @@ pub(crate) fn tap_usage_stream<P: UsageParser>(
         usage: Arc<UsageRecorder>,
         model: String,
         provider: String,
+        account_id: String,
         parser: P,
     }
 
@@ -41,6 +43,7 @@ pub(crate) fn tap_usage_stream<P: UsageParser>(
             usage,
             model,
             provider,
+            account_id,
             parser,
         },
         |mut s| async move {
@@ -64,15 +67,18 @@ pub(crate) fn tap_usage_stream<P: UsageParser>(
                     tracing::error!(
                         model = %s.model,
                         provider = %s.provider,
+                        account_id = %s.account_id,
                         error = %e,
                         "tap_usage_stream: upstream SSE stream yielded error"
                     );
-                    s.usage.record_failure(&s.model, &s.provider);
+                    s.usage
+                        .record_failure_for(&s.model, &s.provider, &s.account_id);
                     Err(e)
                 }
                 None => {
                     let (input, output) = s.parser.finish();
-                    s.usage.record_success(&s.model, &s.provider, input, output);
+                    s.usage
+                        .record_success_for(&s.model, &s.provider, &s.account_id, input, output);
                     Ok(None)
                 }
             }

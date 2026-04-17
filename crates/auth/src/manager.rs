@@ -225,6 +225,25 @@ impl AuthManager {
         }
     }
 
+    /// Retrieve a valid token alongside the account ID that served it.
+    ///
+    /// Combines [`get_token`](Self::get_token) and
+    /// [`active_account_id`](Self::active_account_id). Use this instead of
+    /// `get_token` when the caller needs to attribute the request to a
+    /// specific OAuth account (e.g. for usage tracking).
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`get_token`](Self::get_token).
+    pub async fn get_token_with_account(
+        self: &Arc<Self>,
+        provider: &ProviderId,
+    ) -> Result<(String, OAuthToken)> {
+        let account_id = self.active_account_id(provider).await;
+        let token = self.get_token(provider).await?;
+        Ok((account_id, token))
+    }
+
     /// Load all tokens for a provider (for round-robin rotation).
     ///
     /// # Errors

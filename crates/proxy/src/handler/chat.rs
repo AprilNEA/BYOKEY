@@ -98,13 +98,21 @@ pub async fn chat_completions(
     }
 
     let model_name = suffix.model.clone();
+    // Executor-based chat path currently does its own account rotation;
+    // the specific account isn't surfaced back, so attribute to
+    // DEFAULT_ACCOUNT until we plumb it through the executor trait.
+    let account_id = byokey_types::DEFAULT_ACCOUNT;
     match executor.chat_completion(request).await {
         Ok(ProviderResponse::Complete(json)) => {
             let (input_tok, output_tok) =
                 extract_usage(&json, "/usage/prompt_tokens", "/usage/completion_tokens");
-            state
-                .usage
-                .record_success(&model_name, &provider, input_tok, output_tok);
+            state.usage.record_success_for(
+                &model_name,
+                &provider,
+                account_id,
+                input_tok,
+                output_tok,
+            );
             tracing::debug!(model = %model_name, "chat completion complete");
             Ok(Json(json).into_response())
         }
@@ -115,13 +123,16 @@ pub async fn chat_completions(
                 state.usage.clone(),
                 model_name,
                 provider.clone(),
+                account_id.to_string(),
                 OpenAIParser::new(),
             );
             let mapped = tapped.map_err(|e| std::io::Error::other(e.to_string()));
             Ok(sse_response(StatusCode::OK, mapped))
         }
         Err(e) => {
-            state.usage.record_failure(&model_name, &provider);
+            state
+                .usage
+                .record_failure_for(&model_name, &provider, account_id);
             Err(ApiError::from(e))
         }
     }

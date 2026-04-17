@@ -79,15 +79,15 @@ pub async fn codex_responses_passthrough(
         .unwrap_or("unknown")
         .to_string();
 
-    let (is_oauth, token) = if let Some(key) = api_key {
-        (false, key)
+    let (is_oauth, token, account_id) = if let Some(key) = api_key {
+        (false, key, byokey_types::DEFAULT_ACCOUNT.to_string())
     } else {
-        let tok = state
+        let (account_id, tok) = state
             .auth
-            .get_token(&ProviderId::Codex)
+            .get_token_with_account(&ProviderId::Codex)
             .await
             .map_err(ApiError::from)?;
-        (true, tok.access_token)
+        (true, tok.access_token, account_id)
     };
 
     // chatgpt.com/backend-api/codex/responses rejects sampling and limit
@@ -175,6 +175,7 @@ pub async fn codex_responses_passthrough(
             &state.usage,
             &model_name,
             provider,
+            &account_id,
         ));
     }
 
@@ -205,6 +206,7 @@ pub async fn codex_responses_passthrough(
             state.usage.clone(),
             model_name.clone(),
             provider.to_string(),
+            account_id.clone(),
             CodexParser::new(),
         );
         let stream_model = model_name;
@@ -225,7 +227,7 @@ pub async fn codex_responses_passthrough(
         let (input, output) = extract_usage(&json, "/usage/input_tokens", "/usage/output_tokens");
         state
             .usage
-            .record_success(&model_name, provider, input, output);
+            .record_success_for(&model_name, provider, &account_id, input, output);
         Ok((status, axum::Json(json)).into_response())
     }
 }
@@ -253,7 +255,7 @@ pub async fn codex_responses_passthrough(
 ///
 /// Panics if `axum::Response::builder` somehow fails to build a valid SSE
 /// response (only possible if the constant headers above are malformed).
-#[allow(clippy::implicit_hasher)] // Axum extractors fix the HashMap hasher.
+#[allow(clippy::implicit_hasher, clippy::too_many_lines)] // Axum extractors fix the HashMap hasher; long due to auth+SSE branching.
 pub async fn gemini_native_passthrough(
     State(state): State<Arc<AppState>>,
     Path(action): Path<String>,
@@ -301,16 +303,25 @@ pub async fn gemini_native_passthrough(
     };
 
     // API key → `x-goog-api-key`; OAuth token → `Authorization: Bearer`.
-    let (auth_name, auth_value): (&'static str, String) = if let Some(key) = api_key {
-        ("x-goog-api-key", key)
-    } else {
-        let token = state
-            .auth
-            .get_token(&ProviderId::Gemini)
-            .await
-            .map_err(ApiError::from)?;
-        ("authorization", format!("Bearer {}", token.access_token))
-    };
+    let (auth_name, auth_value, account_id): (&'static str, String, String) =
+        if let Some(key) = api_key {
+            (
+                "x-goog-api-key",
+                key,
+                byokey_types::DEFAULT_ACCOUNT.to_string(),
+            )
+        } else {
+            let (account_id, token) = state
+                .auth
+                .get_token_with_account(&ProviderId::Gemini)
+                .await
+                .map_err(ApiError::from)?;
+            (
+                "authorization",
+                format!("Bearer {}", token.access_token),
+                account_id,
+            )
+        };
 
     let resp = state
         .http
@@ -332,6 +343,7 @@ pub async fn gemini_native_passthrough(
             &state.usage,
             model_name,
             provider,
+            &account_id,
         ));
     }
 
@@ -347,6 +359,7 @@ pub async fn gemini_native_passthrough(
             state.usage.clone(),
             model_name.to_string(),
             provider.to_string(),
+            account_id,
             GeminiParser::new(),
         );
         let mapped = tapped.map_err(|e| std::io::Error::other(e.to_string()));
@@ -363,7 +376,7 @@ pub async fn gemini_native_passthrough(
         );
         state
             .usage
-            .record_success(model_name, provider, input, output);
+            .record_success_for(model_name, provider, &account_id, input, output);
         Ok((status, axum::Json(json)).into_response())
     }
 }
@@ -421,12 +434,17 @@ async fn gemini_native_via_backend(
         })?;
 
     let provider_name = backend_id.to_string();
+    // Backend executors do their own account rotation; the specific account
+    // isn't surfaced here yet, so attribute to DEFAULT_ACCOUNT for now.
+    let account_id = byokey_types::DEFAULT_ACCOUNT;
 
     // Send through the backend executor.
     let provider_resp = match executor.chat_completion(chat_request).await {
         Ok(r) => r,
         Err(e) => {
-            state.usage.record_failure(model, &provider_name);
+            state
+                .usage
+                .record_failure_for(model, &provider_name, account_id);
             return Err(ApiError::from(e));
         }
     };
@@ -445,7 +463,7 @@ async fn gemini_native_via_backend(
                 .unwrap_or(0);
             state
                 .usage
-                .record_success(model, &provider_name, input, output);
+                .record_success_for(model, &provider_name, account_id, input, output);
 
             let gemini_resp: Value = byokey_translate::OpenAIResponseToGemini {
                 body: &openai_resp,
@@ -462,6 +480,7 @@ async fn gemini_native_via_backend(
                 state.usage.clone(),
                 model.to_string(),
                 provider_name,
+                account_id.to_string(),
                 GeminiParser::new(),
             );
             let model_owned = model.to_string();

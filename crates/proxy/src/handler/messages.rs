@@ -235,6 +235,7 @@ use byokey_provider::executor::claude::build_fingerprint_headers;
     model = %body.0.get("model").and_then(serde_json::Value::as_str).unwrap_or("-"),
     stream = body.0.get("stream").and_then(serde_json::Value::as_bool).unwrap_or(false),
 ))]
+#[allow(clippy::too_many_lines)] // Single-pass handler — keeping one function boundary is clearer than splitting.
 pub async fn anthropic_messages(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -279,16 +280,21 @@ pub async fn anthropic_messages(
         byokey_provider::cloak::remap_tool_names_request(&mut body);
     }
 
-    // Resolve auth credential + mode.
-    let (credential, auth_mode) = if let Some(key) = api_key {
-        (key, AuthMode::ApiKey)
+    // Resolve auth credential + mode, capturing the account_id used for
+    // per-account usage attribution.
+    let (credential, auth_mode, account_id) = if let Some(key) = api_key {
+        (
+            key,
+            AuthMode::ApiKey,
+            byokey_types::DEFAULT_ACCOUNT.to_string(),
+        )
     } else {
-        let token = state
+        let (account_id, token) = state
             .auth
-            .get_token(&ProviderId::Claude)
+            .get_token_with_account(&ProviderId::Claude)
             .await
             .map_err(ApiError::from)?;
-        (token.access_token, AuthMode::Bearer)
+        (token.access_token, AuthMode::Bearer, account_id)
     };
 
     // Build Transport — handles auth header, version, beta, and fingerprint.
@@ -347,7 +353,16 @@ pub async fn anthropic_messages(
         .await
         .map_err(|e| ApiError(ByokError::from(e)))?;
 
-    forward_response(resp, stream, &state.usage, &model_name, "claude", is_oauth).await
+    forward_response(
+        resp,
+        stream,
+        &state.usage,
+        &model_name,
+        "claude",
+        &account_id,
+        is_oauth,
+    )
+    .await
 }
 
 /// Build a Copilot Messages API request with standard headers.
@@ -473,8 +488,19 @@ async fn copilot_messages(
 
         match resp {
             Ok(r) if r.status().is_success() => {
-                return forward_response(r, stream, &state.usage, &model_name, "copilot", false)
-                    .await;
+                // Copilot does its own account rotation inside CopilotExecutor;
+                // the specific account isn't easily exposed here yet, so we
+                // attribute to DEFAULT_ACCOUNT for now.
+                return forward_response(
+                    r,
+                    stream,
+                    &state.usage,
+                    &model_name,
+                    "copilot",
+                    byokey_types::DEFAULT_ACCOUNT,
+                    false,
+                )
+                .await;
             }
             Ok(r) => {
                 let status = r.status().as_u16();
@@ -511,7 +537,9 @@ async fn copilot_messages(
         attempts = max_attempts,
         "all copilot accounts exhausted for messages request"
     );
-    state.usage.record_failure(&model_name, "copilot");
+    state
+        .usage
+        .record_failure_for(&model_name, "copilot", byokey_types::DEFAULT_ACCOUNT);
     Err(last_err
         .unwrap_or_else(|| ApiError(ByokError::Auth("no copilot accounts available".into()))))
 }
@@ -523,6 +551,7 @@ async fn forward_response(
     usage: &Arc<UsageRecorder>,
     model: &str,
     provider: &str,
+    account_id: &str,
     reverse_remap_tools: bool,
 ) -> Result<Response, ApiError> {
     let status = resp.status();
@@ -533,7 +562,7 @@ async fn forward_response(
             body = %text,
             "anthropic upstream error (non-retryable)"
         );
-        usage.record_failure(model, provider);
+        usage.record_failure_for(model, provider, account_id);
         return Err(ApiError::from(ByokError::Upstream {
             status: status.as_u16(),
             body: text,
@@ -570,6 +599,7 @@ async fn forward_response(
             usage.clone(),
             model.to_string(),
             provider.to_string(),
+            account_id.to_string(),
             AnthropicParser::new(),
         );
         let mapped = tapped.map_err(|e| std::io::Error::other(e.to_string()));
@@ -583,7 +613,7 @@ async fn forward_response(
             byokey_provider::cloak::reverse_remap_tool_names_response(&mut json);
         }
         let (input, output) = extract_usage(&json, "/usage/input_tokens", "/usage/output_tokens");
-        usage.record_success(model, provider, input, output);
+        usage.record_success_for(model, provider, account_id, input, output);
         Ok((upstream_status, axum::Json(json)).into_response())
     }
 }
