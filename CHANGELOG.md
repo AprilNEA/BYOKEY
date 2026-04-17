@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1](https://github.com/AprilNEA/BYOKEY/compare/v1.0.0...v1.0.1) - 2026-04-17
+
+### Fixed
+
+- *(release-plz)* suppress individual tags for byokey-proto and ampcode
+
 ## [1.0.0](https://github.com/AprilNEA/BYOKEY/compare/v0.11.0...v1.0.0) - 2026-04-18
 
 First stable release. API surface (HTTP proxy endpoints, CLI commands,
