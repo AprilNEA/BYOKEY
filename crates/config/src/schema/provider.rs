@@ -72,6 +72,44 @@ pub enum KeyRoutingStrategy {
     Priority,
 }
 
+/// A single routing-policy entry that scopes a load-balancing strategy to a
+/// (provider, optional family) pair. Backed by the `byokey-provider`
+/// `AccountSelector`, which wraps the `loadwise` strategy set.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoutingPolicyEntry {
+    /// Provider this policy applies to (e.g. `"claude"`).
+    pub provider: ProviderId,
+    /// Optional family context (`"claude"`, `"codex"`, `"gemini"`).
+    /// `None` applies the policy to every request for the provider.
+    #[serde(default)]
+    pub family: Option<String>,
+    /// Strategy used when multiple accounts are available.
+    #[serde(default)]
+    pub strategy: PolicyStrategyKind,
+    /// Accounts participating in the pool. Empty means every configured
+    /// account for the provider.
+    #[serde(default)]
+    pub accounts: Vec<String>,
+    /// Optional per-account weights keyed by `account_id`.
+    #[serde(default)]
+    pub weights: std::collections::HashMap<String, u32>,
+}
+
+/// Config-level mirror of `byokey_provider::StrategyKind`.
+///
+/// Duplicated here so the config crate doesn't depend on `byokey-provider`
+/// (the DAG forbids it). Conversion is a straight `From` impl in `provider`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyStrategyKind {
+    #[default]
+    RoundRobin,
+    WeightedRoundRobin,
+    Random,
+    WeightedRandom,
+    Priority,
+}
+
 /// Configuration for a single provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {

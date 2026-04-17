@@ -62,6 +62,56 @@ enum Byokey_Status_AuthStatus: SwiftProtobuf.Enum, Swift.CaseIterable {
 
 }
 
+enum Byokey_Status_RoutingStrategy: SwiftProtobuf.Enum, Swift.CaseIterable {
+  typealias RawValue = Int
+  case unspecified // = 0
+  case roundRobin // = 1
+  case weightedRoundRobin // = 2
+  case random // = 3
+  case weightedRandom // = 4
+  case priority // = 5
+  case UNRECOGNIZED(Int)
+
+  init() {
+    self = .unspecified
+  }
+
+  init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .roundRobin
+    case 2: self = .weightedRoundRobin
+    case 3: self = .random
+    case 4: self = .weightedRandom
+    case 5: self = .priority
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .roundRobin: return 1
+    case .weightedRoundRobin: return 2
+    case .random: return 3
+    case .weightedRandom: return 4
+    case .priority: return 5
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  static let allCases: [Byokey_Status_RoutingStrategy] = [
+    .unspecified,
+    .roundRobin,
+    .weightedRoundRobin,
+    .random,
+    .weightedRandom,
+    .priority,
+  ]
+
+}
+
 struct Byokey_Status_GetStatusRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -425,12 +475,95 @@ struct Byokey_Status_RateLimitSnapshot: Sendable {
   init() {}
 }
 
+struct Byokey_Status_ListRoutingPoliciesRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+struct Byokey_Status_ListRoutingPoliciesResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var policies: [Byokey_Status_RoutingPolicy] = []
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+struct Byokey_Status_RoutingPolicy: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var provider: String = String()
+
+  /// Empty string means "applies to all families for this provider".
+  var family: String = String()
+
+  var strategy: Byokey_Status_RoutingStrategy = .unspecified
+
+  /// Empty means "use every configured account for the provider".
+  var accounts: [String] = []
+
+  /// Per-account weights keyed by account_id.
+  var weights: Dictionary<String,UInt32> = [:]
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+struct Byokey_Status_SetRoutingPolicyRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var policy: Byokey_Status_RoutingPolicy {
+    get {_policy ?? Byokey_Status_RoutingPolicy()}
+    set {_policy = newValue}
+  }
+  /// Returns true if `policy` has been explicitly set.
+  var hasPolicy: Bool {self._policy != nil}
+  /// Clears the value of `policy`. Subsequent reads from it will return its default value.
+  mutating func clearPolicy() {self._policy = nil}
+
+  /// If true, delete the (provider, family) policy instead of upserting.
+  var remove: Bool = false
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+
+  fileprivate var _policy: Byokey_Status_RoutingPolicy? = nil
+}
+
+struct Byokey_Status_SetRoutingPolicyResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate let _protobuf_package = "byokey.status"
 
 extension Byokey_Status_AuthStatus: SwiftProtobuf._ProtoNameProviding {
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AUTH_STATUS_UNSPECIFIED\0\u{1}AUTH_STATUS_VALID\0\u{1}AUTH_STATUS_EXPIRED\0\u{1}AUTH_STATUS_NOT_CONFIGURED\0")
+}
+
+extension Byokey_Status_RoutingStrategy: SwiftProtobuf._ProtoNameProviding {
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ROUTING_STRATEGY_UNSPECIFIED\0\u{1}ROUTING_STRATEGY_ROUND_ROBIN\0\u{1}ROUTING_STRATEGY_WEIGHTED_ROUND_ROBIN\0\u{1}ROUTING_STRATEGY_RANDOM\0\u{1}ROUTING_STRATEGY_WEIGHTED_RANDOM\0\u{1}ROUTING_STRATEGY_PRIORITY\0")
 }
 
 extension Byokey_Status_GetStatusRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
@@ -1144,6 +1277,163 @@ extension Byokey_Status_RateLimitSnapshot: SwiftProtobuf.Message, SwiftProtobuf.
   static func ==(lhs: Byokey_Status_RateLimitSnapshot, rhs: Byokey_Status_RateLimitSnapshot) -> Bool {
     if lhs.headers != rhs.headers {return false}
     if lhs.capturedAt != rhs.capturedAt {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Byokey_Status_ListRoutingPoliciesRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".ListRoutingPoliciesRequest"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Byokey_Status_ListRoutingPoliciesRequest, rhs: Byokey_Status_ListRoutingPoliciesRequest) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Byokey_Status_ListRoutingPoliciesResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".ListRoutingPoliciesResponse"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}policies\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.policies) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.policies.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.policies, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Byokey_Status_ListRoutingPoliciesResponse, rhs: Byokey_Status_ListRoutingPoliciesResponse) -> Bool {
+    if lhs.policies != rhs.policies {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Byokey_Status_RoutingPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".RoutingPolicy"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}provider\0\u{1}family\0\u{1}strategy\0\u{1}accounts\0\u{1}weights\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.provider) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.family) }()
+      case 3: try { try decoder.decodeSingularEnumField(value: &self.strategy) }()
+      case 4: try { try decoder.decodeRepeatedStringField(value: &self.accounts) }()
+      case 5: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufUInt32>.self, value: &self.weights) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.provider.isEmpty {
+      try visitor.visitSingularStringField(value: self.provider, fieldNumber: 1)
+    }
+    if !self.family.isEmpty {
+      try visitor.visitSingularStringField(value: self.family, fieldNumber: 2)
+    }
+    if self.strategy != .unspecified {
+      try visitor.visitSingularEnumField(value: self.strategy, fieldNumber: 3)
+    }
+    if !self.accounts.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.accounts, fieldNumber: 4)
+    }
+    if !self.weights.isEmpty {
+      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufUInt32>.self, value: self.weights, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Byokey_Status_RoutingPolicy, rhs: Byokey_Status_RoutingPolicy) -> Bool {
+    if lhs.provider != rhs.provider {return false}
+    if lhs.family != rhs.family {return false}
+    if lhs.strategy != rhs.strategy {return false}
+    if lhs.accounts != rhs.accounts {return false}
+    if lhs.weights != rhs.weights {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Byokey_Status_SetRoutingPolicyRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".SetRoutingPolicyRequest"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}policy\0\u{1}remove\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._policy) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.remove) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._policy {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    if self.remove != false {
+      try visitor.visitSingularBoolField(value: self.remove, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Byokey_Status_SetRoutingPolicyRequest, rhs: Byokey_Status_SetRoutingPolicyRequest) -> Bool {
+    if lhs._policy != rhs._policy {return false}
+    if lhs.remove != rhs.remove {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Byokey_Status_SetRoutingPolicyResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".SetRoutingPolicyResponse"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Byokey_Status_SetRoutingPolicyResponse, rhs: Byokey_Status_SetRoutingPolicyResponse) -> Bool {
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

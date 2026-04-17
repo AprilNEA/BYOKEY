@@ -9,7 +9,7 @@ pub use model::ModelAlias;
 pub use payload::{PayloadFilterRule, PayloadRule, PayloadRules};
 pub use provider::{
     ApiKeyEntry, ClaudeHeaderDefaults, CloakConfig, CodexHeaderDefaults, KeyRoutingStrategy,
-    ProviderConfig,
+    PolicyStrategyKind, ProviderConfig, RoutingPolicyEntry,
 };
 pub use runtime::{LogConfig, LogFormat, StreamingConfig};
 
@@ -56,6 +56,11 @@ pub struct Config {
     /// Payload rules for modifying request bodies.
     #[serde(default)]
     pub payload: PayloadRules,
+    /// Per-(provider, optional family) routing policies for load-balancing
+    /// across multiple accounts. Consumed by `byokey-provider`'s
+    /// `AccountSelector` at request time.
+    #[serde(default)]
+    pub routing_policies: Vec<RoutingPolicyEntry>,
     /// Logging configuration.
     #[serde(default)]
     pub log: LogConfig,
@@ -73,6 +78,7 @@ impl Default for Config {
             excluded_models: HashMap::new(),
             streaming: StreamingConfig::default(),
             payload: PayloadRules::default(),
+            routing_policies: Vec::new(),
             log: LogConfig::default(),
         }
     }

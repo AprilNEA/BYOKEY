@@ -17,6 +17,7 @@ pub mod http_util;
 pub mod registry;
 pub mod retry;
 pub mod routing;
+pub mod selector;
 pub mod stream_bridge;
 pub mod versions;
 
@@ -33,6 +34,7 @@ pub use registry::{
     thinking_support,
 };
 pub use routing::{CredentialRouter, RoutingStrategy};
+pub use selector::{AccountNode, AccountSelector, RoutingPolicy, StrategyKind};
 pub use versions::VersionStore;
 
 /// Claude fingerprint constants shared with the proxy crate's `/v1/messages` handler.

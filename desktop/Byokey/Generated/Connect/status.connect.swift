@@ -25,6 +25,12 @@ internal protocol Byokey_Status_StatusServiceClientInterface: Sendable {
 
     @available(iOS 13, *)
     func `getRateLimits`(request: Byokey_Status_GetRateLimitsRequest, headers: Connect.Headers) async -> ResponseMessage<Byokey_Status_GetRateLimitsResponse>
+
+    @available(iOS 13, *)
+    func `listRoutingPolicies`(request: Byokey_Status_ListRoutingPoliciesRequest, headers: Connect.Headers) async -> ResponseMessage<Byokey_Status_ListRoutingPoliciesResponse>
+
+    @available(iOS 13, *)
+    func `setRoutingPolicy`(request: Byokey_Status_SetRoutingPolicyRequest, headers: Connect.Headers) async -> ResponseMessage<Byokey_Status_SetRoutingPolicyResponse>
 }
 
 /// Concrete implementation of `Byokey_Status_StatusServiceClientInterface`.
@@ -60,6 +66,16 @@ internal final class Byokey_Status_StatusServiceClient: Byokey_Status_StatusServ
         return await self.client.unary(path: "/byokey.status.StatusService/GetRateLimits", idempotencyLevel: .noSideEffects, request: request, headers: headers)
     }
 
+    @available(iOS 13, *)
+    internal func `listRoutingPolicies`(request: Byokey_Status_ListRoutingPoliciesRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Byokey_Status_ListRoutingPoliciesResponse> {
+        return await self.client.unary(path: "/byokey.status.StatusService/ListRoutingPolicies", idempotencyLevel: .noSideEffects, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    internal func `setRoutingPolicy`(request: Byokey_Status_SetRoutingPolicyRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Byokey_Status_SetRoutingPolicyResponse> {
+        return await self.client.unary(path: "/byokey.status.StatusService/SetRoutingPolicy", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
     internal enum Metadata {
         internal enum Methods {
             internal static let getStatus = Connect.MethodSpec(name: "GetStatus", service: "byokey.status.StatusService", type: .unary)
@@ -67,6 +83,8 @@ internal final class Byokey_Status_StatusServiceClient: Byokey_Status_StatusServ
             internal static let getUsageHistory = Connect.MethodSpec(name: "GetUsageHistory", service: "byokey.status.StatusService", type: .unary)
             internal static let getUsageByAccount = Connect.MethodSpec(name: "GetUsageByAccount", service: "byokey.status.StatusService", type: .unary)
             internal static let getRateLimits = Connect.MethodSpec(name: "GetRateLimits", service: "byokey.status.StatusService", type: .unary)
+            internal static let listRoutingPolicies = Connect.MethodSpec(name: "ListRoutingPolicies", service: "byokey.status.StatusService", type: .unary)
+            internal static let setRoutingPolicy = Connect.MethodSpec(name: "SetRoutingPolicy", service: "byokey.status.StatusService", type: .unary)
         }
     }
 }

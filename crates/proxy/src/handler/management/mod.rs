@@ -103,6 +103,17 @@ fn clamp_to_u32(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
+fn policy_strategy_to_proto(kind: byokey_config::PolicyStrategyKind) -> stat::RoutingStrategy {
+    use byokey_config::PolicyStrategyKind as K;
+    match kind {
+        K::RoundRobin => stat::RoutingStrategy::ROUTING_STRATEGY_ROUND_ROBIN,
+        K::WeightedRoundRobin => stat::RoutingStrategy::ROUTING_STRATEGY_WEIGHTED_ROUND_ROBIN,
+        K::Random => stat::RoutingStrategy::ROUTING_STRATEGY_RANDOM,
+        K::WeightedRandom => stat::RoutingStrategy::ROUTING_STRATEGY_WEIGHTED_RANDOM,
+        K::Priority => stat::RoutingStrategy::ROUTING_STRATEGY_PRIORITY,
+    }
+}
+
 #[allow(clippy::cast_possible_wrap)]
 fn now_seconds() -> i64 {
     std::time::SystemTime::now()
@@ -294,6 +305,47 @@ impl stat::StatusService for StatusServiceImpl {
                 ..Default::default()
             },
             ctx,
+        ))
+    }
+
+    async fn list_routing_policies(
+        &self,
+        ctx: Context,
+        _: OwnedView<stat::ListRoutingPoliciesRequestView<'static>>,
+    ) -> Result<(stat::ListRoutingPoliciesResponse, Context), ConnectError> {
+        let snapshot = self.0.config.load();
+        let policies = snapshot
+            .routing_policies
+            .iter()
+            .map(|entry| stat::RoutingPolicy {
+                provider: entry.provider.to_string(),
+                family: entry.family.clone().unwrap_or_default(),
+                strategy: policy_strategy_to_proto(entry.strategy).into(),
+                accounts: entry.accounts.clone(),
+                weights: entry.weights.clone(),
+                ..Default::default()
+            })
+            .collect();
+        Ok((
+            stat::ListRoutingPoliciesResponse {
+                policies,
+                ..Default::default()
+            },
+            ctx,
+        ))
+    }
+
+    async fn set_routing_policy(
+        &self,
+        _ctx: Context,
+        _: OwnedView<stat::SetRoutingPolicyRequestView<'static>>,
+    ) -> Result<(stat::SetRoutingPolicyResponse, Context), ConnectError> {
+        // Server-side mutation of settings.json lands in a follow-up; the
+        // config file is currently the source of truth and is edited by the
+        // desktop client or by hand. Returning Unimplemented keeps the
+        // contract explicit.
+        Err(ConnectError::unimplemented(
+            "SetRoutingPolicy — edit settings.json directly for now",
         ))
     }
 

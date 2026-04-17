@@ -17,6 +17,10 @@ service StatusService {
   rpc GetRateLimits(GetRateLimitsRequest) returns (GetRateLimitsResponse) {
     option idempotency_level = NO_SIDE_EFFECTS;
   }
+  rpc ListRoutingPolicies(ListRoutingPoliciesRequest) returns (ListRoutingPoliciesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc SetRoutingPolicy(SetRoutingPolicyRequest) returns (SetRoutingPolicyResponse);
 }
 
 message GetStatusRequest {}
@@ -129,3 +133,37 @@ message RateLimitSnapshot {
   // Unix timestamp (seconds since epoch).
   uint64 captured_at = 2;
 }
+
+message ListRoutingPoliciesRequest {}
+
+message ListRoutingPoliciesResponse {
+  repeated RoutingPolicy policies = 1;
+}
+
+message RoutingPolicy {
+  string provider = 1;
+  // Empty string means "applies to all families for this provider".
+  string family = 2;
+  RoutingStrategy strategy = 3;
+  // Empty means "use every configured account for the provider".
+  repeated string accounts = 4;
+  // Per-account weights keyed by account_id.
+  map<string, uint32> weights = 5;
+}
+
+enum RoutingStrategy {
+  ROUTING_STRATEGY_UNSPECIFIED = 0;
+  ROUTING_STRATEGY_ROUND_ROBIN = 1;
+  ROUTING_STRATEGY_WEIGHTED_ROUND_ROBIN = 2;
+  ROUTING_STRATEGY_RANDOM = 3;
+  ROUTING_STRATEGY_WEIGHTED_RANDOM = 4;
+  ROUTING_STRATEGY_PRIORITY = 5;
+}
+
+message SetRoutingPolicyRequest {
+  RoutingPolicy policy = 1;
+  // If true, delete the (provider, family) policy instead of upserting.
+  bool remove = 2;
+}
+
+message SetRoutingPolicyResponse {}
