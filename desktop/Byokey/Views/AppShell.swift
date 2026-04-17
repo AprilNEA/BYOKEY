@@ -70,13 +70,13 @@ struct AppShell<Detail: View>: View {
                     }
                 }
                 .modifier(DetailContainer())
-                // `.windowStyle(.hiddenTitleBar)` lets content flow under the
-                // traffic-light region (~28pt). Use 40pt on top so the visible
-                // gap below the traffic lights equals the 12pt gap at the
-                // bottom of the window.
-                .padding(EdgeInsets(top: 40, leading: 0, bottom: 12, trailing: 12))
+                .padding(EdgeInsets(top: 12, leading: 0, bottom: 12, trailing: 12))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Extend the HStack under the hidden title bar so the card's
+            // top padding is measured from the actual window edge, not from
+            // the title-bar safe area (which would double the top inset).
+            .ignoresSafeArea(.all, edges: .top)
         }
     }
 }
