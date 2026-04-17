@@ -61,6 +61,7 @@ struct ThreadsView: View {
                     )
                     .frame(minWidth: 240, idealWidth: 300, maxWidth: 420)
                     .frame(maxHeight: .infinity)
+                    .background(Color.surfaceSecondary.opacity(0.5))
 
                     ThreadDetailPane(
                         detail: detail,
@@ -107,58 +108,97 @@ private struct ThreadList: View {
     @Binding var selectedID: String?
 
     var body: some View {
-        List(selection: $selectedID) {
-            ForEach(threads, id: \.id) { t in
-                ThreadRow(thread: t)
-                    .tag(t.id)
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(threads, id: \.id) { t in
+                    ThreadRow(
+                        thread: t,
+                        isSelected: selectedID == t.id
+                    ) {
+                        selectedID = t.id
+                    }
+                }
             }
+            .padding(.vertical, 4)
         }
-        .listStyle(.sidebar)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
 private struct ThreadRow: View {
     let thread: AmpThreadSummary
+    let isSelected: Bool
+    let onTap: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(thread.title.isEmpty ? "Untitled" : thread.title)
-                .font(.system(size: 13, weight: .medium))
-                .lineLimit(2)
-                .foregroundStyle(thread.title.isEmpty ? .secondary : .primary)
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(thread.title.isEmpty ? "Untitled" : thread.title)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .foregroundStyle(titleColor)
 
-            HStack(spacing: 6) {
-                Text(formatDate(thread.created))
-                Text("·")
-                Text("\(thread.messageCount) msg")
-                if thread.hasLastModel, !thread.lastModel.isEmpty {
+                HStack(spacing: 6) {
+                    Text(formatDate(thread.created))
                     Text("·")
-                    Text(shortModel(thread.lastModel))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-            }
-            .font(.system(size: 10))
-            .foregroundStyle(.tertiary)
-            .monospacedDigit()
-
-            if thread.hasTotalInputTokens || thread.hasTotalOutputTokens {
-                HStack(spacing: 10) {
-                    if thread.hasTotalInputTokens {
-                        Label(formatTokens(thread.totalInputTokens), systemImage: "arrow.down")
-                            .labelStyle(.titleAndIcon)
-                    }
-                    if thread.hasTotalOutputTokens {
-                        Label(formatTokens(thread.totalOutputTokens), systemImage: "arrow.up")
-                            .labelStyle(.titleAndIcon)
+                    Text("\(thread.messageCount) msg")
+                    if thread.hasLastModel, !thread.lastModel.isEmpty {
+                        Text("·")
+                        Text(shortModel(thread.lastModel))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
                 }
-                .font(.system(size: 9, design: .rounded))
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 10))
+                .foregroundStyle(secondaryColor)
                 .monospacedDigit()
+
+                if thread.hasTotalInputTokens || thread.hasTotalOutputTokens {
+                    HStack(spacing: 10) {
+                        if thread.hasTotalInputTokens {
+                            Label(formatTokens(thread.totalInputTokens), systemImage: "arrow.down")
+                                .labelStyle(.titleAndIcon)
+                        }
+                        if thread.hasTotalOutputTokens {
+                            Label(formatTokens(thread.totalOutputTokens), systemImage: "arrow.up")
+                                .labelStyle(.titleAndIcon)
+                        }
+                    }
+                    .font(.system(size: 9, design: .rounded))
+                    .foregroundStyle(secondaryColor)
+                    .monospacedDigit()
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(rowBackground, in: .rect(cornerRadius: 6))
+            .padding(.horizontal, 6)
         }
-        .padding(.vertical, 3)
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+    }
+
+    private var titleColor: Color {
+        if isSelected { return .white }
+        return thread.title.isEmpty ? .secondary : .primary
+    }
+
+    private var secondaryColor: Color {
+        isSelected ? .white.opacity(0.7) : .secondary.opacity(0.7)
+    }
+
+    private var rowBackground: Color {
+        if isSelected {
+            return Color.accentColor
+        }
+        if isHovered {
+            return Color.primary.opacity(0.06)
+        }
+        return .clear
     }
 
     private func formatDate(_ ms: UInt64) -> String {
