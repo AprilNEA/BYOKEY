@@ -11,6 +11,9 @@ service StatusService {
   rpc GetUsageHistory(GetUsageHistoryRequest) returns (GetUsageHistoryResponse) {
     option idempotency_level = NO_SIDE_EFFECTS;
   }
+  rpc GetUsageByAccount(GetUsageByAccountRequest) returns (GetUsageByAccountResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
   rpc GetRateLimits(GetRateLimitsRequest) returns (GetRateLimitsResponse) {
     option idempotency_level = NO_SIDE_EFFECTS;
   }
@@ -82,6 +85,26 @@ message UsageBucket {
   uint64 request_count = 3;
   uint64 input_tokens = 4;
   uint64 output_tokens = 5;
+}
+
+message GetUsageByAccountRequest {
+  optional int64 from = 1;
+  optional int64 to = 2;
+}
+
+message GetUsageByAccountResponse {
+  repeated AccountUsageRow rows = 1;
+  optional string error = 2;
+}
+
+message AccountUsageRow {
+  string provider = 1;
+  string account_id = 2;
+  string model = 3;
+  uint64 request_count = 4;
+  uint64 success_count = 5;
+  uint64 input_tokens = 6;
+  uint64 output_tokens = 7;
 }
 
 message GetRateLimitsRequest {}

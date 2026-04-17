@@ -209,6 +209,22 @@ impl AuthManager {
         self.store.set_active(provider, account_id).await
     }
 
+    /// Return the currently-active account ID for a provider, or
+    /// [`byokey_types::DEFAULT_ACCOUNT`] if no accounts are configured or the
+    /// store doesn't support multi-account.
+    ///
+    /// Handlers use this to attribute usage records to the OAuth account that
+    /// actually served the request.
+    pub async fn active_account_id(&self, provider: &ProviderId) -> String {
+        match self.store.list_accounts(provider).await {
+            Ok(accts) => accts.into_iter().find(|a| a.is_active).map_or_else(
+                || byokey_types::DEFAULT_ACCOUNT.to_string(),
+                |a| a.account_id,
+            ),
+            Err(_) => byokey_types::DEFAULT_ACCOUNT.to_string(),
+        }
+    }
+
     /// Load all tokens for a provider (for round-robin rotation).
     ///
     /// # Errors

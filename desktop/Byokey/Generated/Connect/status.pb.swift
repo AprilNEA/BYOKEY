@@ -271,6 +271,84 @@ struct Byokey_Status_UsageBucket: Sendable {
   init() {}
 }
 
+struct Byokey_Status_GetUsageByAccountRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var from: Int64 {
+    get {_from ?? 0}
+    set {_from = newValue}
+  }
+  /// Returns true if `from` has been explicitly set.
+  var hasFrom: Bool {self._from != nil}
+  /// Clears the value of `from`. Subsequent reads from it will return its default value.
+  mutating func clearFrom() {self._from = nil}
+
+  var to: Int64 {
+    get {_to ?? 0}
+    set {_to = newValue}
+  }
+  /// Returns true if `to` has been explicitly set.
+  var hasTo: Bool {self._to != nil}
+  /// Clears the value of `to`. Subsequent reads from it will return its default value.
+  mutating func clearTo() {self._to = nil}
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+
+  fileprivate var _from: Int64? = nil
+  fileprivate var _to: Int64? = nil
+}
+
+struct Byokey_Status_GetUsageByAccountResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var rows: [Byokey_Status_AccountUsageRow] = []
+
+  var error: String {
+    get {_error ?? String()}
+    set {_error = newValue}
+  }
+  /// Returns true if `error` has been explicitly set.
+  var hasError: Bool {self._error != nil}
+  /// Clears the value of `error`. Subsequent reads from it will return its default value.
+  mutating func clearError() {self._error = nil}
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+
+  fileprivate var _error: String? = nil
+}
+
+struct Byokey_Status_AccountUsageRow: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var provider: String = String()
+
+  var accountID: String = String()
+
+  var model: String = String()
+
+  var requestCount: UInt64 = 0
+
+  var successCount: UInt64 = 0
+
+  var inputTokens: UInt64 = 0
+
+  var outputTokens: UInt64 = 0
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
 struct Byokey_Status_GetRateLimitsRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -339,6 +417,7 @@ struct Byokey_Status_RateLimitSnapshot: Sendable {
 
   var headers: Dictionary<String,String> = [:]
 
+  /// Unix timestamp (seconds since epoch).
   var capturedAt: UInt64 = 0
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -762,6 +841,144 @@ extension Byokey_Status_UsageBucket: SwiftProtobuf.Message, SwiftProtobuf._Messa
     if lhs.periodStart != rhs.periodStart {return false}
     if lhs.model != rhs.model {return false}
     if lhs.requestCount != rhs.requestCount {return false}
+    if lhs.inputTokens != rhs.inputTokens {return false}
+    if lhs.outputTokens != rhs.outputTokens {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Byokey_Status_GetUsageByAccountRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".GetUsageByAccountRequest"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}from\0\u{1}to\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularInt64Field(value: &self._from) }()
+      case 2: try { try decoder.decodeSingularInt64Field(value: &self._to) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._from {
+      try visitor.visitSingularInt64Field(value: v, fieldNumber: 1)
+    } }()
+    try { if let v = self._to {
+      try visitor.visitSingularInt64Field(value: v, fieldNumber: 2)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Byokey_Status_GetUsageByAccountRequest, rhs: Byokey_Status_GetUsageByAccountRequest) -> Bool {
+    if lhs._from != rhs._from {return false}
+    if lhs._to != rhs._to {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Byokey_Status_GetUsageByAccountResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".GetUsageByAccountResponse"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}rows\0\u{1}error\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.rows) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self._error) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.rows.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.rows, fieldNumber: 1)
+    }
+    try { if let v = self._error {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 2)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Byokey_Status_GetUsageByAccountResponse, rhs: Byokey_Status_GetUsageByAccountResponse) -> Bool {
+    if lhs.rows != rhs.rows {return false}
+    if lhs._error != rhs._error {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Byokey_Status_AccountUsageRow: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".AccountUsageRow"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}provider\0\u{3}account_id\0\u{1}model\0\u{3}request_count\0\u{3}success_count\0\u{3}input_tokens\0\u{3}output_tokens\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.provider) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.accountID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.model) }()
+      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.requestCount) }()
+      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.successCount) }()
+      case 6: try { try decoder.decodeSingularUInt64Field(value: &self.inputTokens) }()
+      case 7: try { try decoder.decodeSingularUInt64Field(value: &self.outputTokens) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.provider.isEmpty {
+      try visitor.visitSingularStringField(value: self.provider, fieldNumber: 1)
+    }
+    if !self.accountID.isEmpty {
+      try visitor.visitSingularStringField(value: self.accountID, fieldNumber: 2)
+    }
+    if !self.model.isEmpty {
+      try visitor.visitSingularStringField(value: self.model, fieldNumber: 3)
+    }
+    if self.requestCount != 0 {
+      try visitor.visitSingularUInt64Field(value: self.requestCount, fieldNumber: 4)
+    }
+    if self.successCount != 0 {
+      try visitor.visitSingularUInt64Field(value: self.successCount, fieldNumber: 5)
+    }
+    if self.inputTokens != 0 {
+      try visitor.visitSingularUInt64Field(value: self.inputTokens, fieldNumber: 6)
+    }
+    if self.outputTokens != 0 {
+      try visitor.visitSingularUInt64Field(value: self.outputTokens, fieldNumber: 7)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Byokey_Status_AccountUsageRow, rhs: Byokey_Status_AccountUsageRow) -> Bool {
+    if lhs.provider != rhs.provider {return false}
+    if lhs.accountID != rhs.accountID {return false}
+    if lhs.model != rhs.model {return false}
+    if lhs.requestCount != rhs.requestCount {return false}
+    if lhs.successCount != rhs.successCount {return false}
     if lhs.inputTokens != rhs.inputTokens {return false}
     if lhs.outputTokens != rhs.outputTokens {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}

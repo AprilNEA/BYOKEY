@@ -1,7 +1,7 @@
 //! In-memory usage statistics for request/token tracking, with optional
 //! persistent backing via [`UsageStore`].
 
-use byokey_types::{UsageRecord, UsageStore};
+use byokey_types::{DEFAULT_ACCOUNT, UsageRecord, UsageStore};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -157,6 +157,10 @@ impl UsageRecorder {
     }
 
     /// Record a successful request with token counts.
+    ///
+    /// Uses [`DEFAULT_ACCOUNT`] as the account attribution; call
+    /// [`record_success_for`](Self::record_success_for) when the specific
+    /// OAuth account is known.
     pub fn record_success(
         &self,
         model: &str,
@@ -164,15 +168,46 @@ impl UsageRecorder {
         input_tokens: u64,
         output_tokens: u64,
     ) {
+        self.record_success_for(
+            model,
+            provider,
+            DEFAULT_ACCOUNT,
+            input_tokens,
+            output_tokens,
+        );
+    }
+
+    /// Record a successful request with token counts, attributing it to a
+    /// specific account.
+    pub fn record_success_for(
+        &self,
+        model: &str,
+        provider: &str,
+        account_id: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) {
         self.stats
             .record_success(model, input_tokens, output_tokens);
-        self.persist(model, provider, input_tokens, output_tokens, true);
+        self.persist(
+            model,
+            provider,
+            account_id,
+            input_tokens,
+            output_tokens,
+            true,
+        );
     }
 
     /// Record a failed request.
     pub fn record_failure(&self, model: &str, provider: &str) {
+        self.record_failure_for(model, provider, DEFAULT_ACCOUNT);
+    }
+
+    /// Record a failed request, attributing it to a specific account.
+    pub fn record_failure_for(&self, model: &str, provider: &str, account_id: &str) {
         self.stats.record_failure(model);
-        self.persist(model, provider, 0, 0, false);
+        self.persist(model, provider, account_id, 0, 0, false);
     }
 
     /// Take a snapshot of in-memory stats.
@@ -214,6 +249,7 @@ impl UsageRecorder {
         &self,
         model: &str,
         provider: &str,
+        account_id: &str,
         input_tokens: u64,
         output_tokens: u64,
         success: bool,
@@ -222,6 +258,7 @@ impl UsageRecorder {
             let record = UsageRecord {
                 model: model.to_string(),
                 provider: provider.to_string(),
+                account_id: account_id.to_string(),
                 input_tokens,
                 output_tokens,
                 success,

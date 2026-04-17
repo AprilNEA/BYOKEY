@@ -1,7 +1,7 @@
 //! [`UsageStore`] implementation for [`SqliteTokenStore`].
 
 use async_trait::async_trait;
-use byokey_types::{Result, UsageBucket, UsageRecord, UsageStore};
+use byokey_types::{AccountUsageTotal, Result, UsageBucket, UsageRecord, UsageStore};
 use sea_orm::{ConnectionTrait, Statement};
 
 use super::{SqliteTokenStore, now_unix};
@@ -12,11 +12,12 @@ impl UsageStore for SqliteTokenStore {
         #[allow(clippy::cast_possible_wrap)]
         let stmt = Statement::from_sql_and_values(
             self.connection().get_database_backend(),
-            "INSERT INTO usage_records (model, provider, input_tokens, output_tokens, success, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO usage_records (model, provider, account_id, input_tokens, output_tokens, success, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
             vec![
                 rec.model.clone().into(),
                 rec.provider.clone().into(),
+                rec.account_id.clone().into(),
                 (rec.input_tokens as i64).into(),
                 (rec.output_tokens as i64).into(),
                 i32::from(rec.success).into(),
@@ -27,6 +28,7 @@ impl UsageStore for SqliteTokenStore {
             tracing::warn!(
                 model = %rec.model,
                 provider = %rec.provider,
+                account_id = %rec.account_id,
                 error = %e,
                 "usage insert failed — billing record lost"
             );
@@ -147,6 +149,55 @@ impl UsageStore for SqliteTokenStore {
         }
         Ok(buckets)
     }
+
+    async fn totals_by_account(
+        &self,
+        from: Option<i64>,
+        to: Option<i64>,
+    ) -> Result<Vec<AccountUsageTotal>> {
+        let (where_clause, values) = match (from, to) {
+            (Some(f), Some(t)) => (
+                "WHERE created_at >= ? AND created_at < ?".to_string(),
+                vec![f.into(), t.into()],
+            ),
+            (Some(f), None) => ("WHERE created_at >= ?".to_string(), vec![f.into()]),
+            (None, Some(t)) => ("WHERE created_at < ?".to_string(), vec![t.into()]),
+            (None, None) => (String::new(), vec![]),
+        };
+
+        let sql = format!(
+            "SELECT provider,
+                    account_id,
+                    model,
+                    COUNT(*)                                          AS request_count,
+                    SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END)      AS success_count,
+                    SUM(input_tokens)                                 AS input_tokens,
+                    SUM(output_tokens)                                AS output_tokens
+             FROM usage_records
+             {where_clause}
+             GROUP BY provider, account_id, model
+             ORDER BY provider, account_id, model"
+        );
+
+        let stmt =
+            Statement::from_sql_and_values(self.connection().get_database_backend(), &sql, values);
+        let rows = self.connection().query_all_raw(stmt).await?;
+
+        let mut totals = Vec::with_capacity(rows.len());
+        for row in &rows {
+            #[allow(clippy::cast_sign_loss)]
+            totals.push(AccountUsageTotal {
+                provider: row.try_get_by_index::<String>(0).unwrap_or_default(),
+                account_id: row.try_get_by_index::<String>(1).unwrap_or_default(),
+                model: row.try_get_by_index::<String>(2).unwrap_or_default(),
+                request_count: row.try_get_by_index::<i64>(3).unwrap_or(0) as u64,
+                success_count: row.try_get_by_index::<i64>(4).unwrap_or(0) as u64,
+                input_tokens: row.try_get_by_index::<i64>(5).unwrap_or(0) as u64,
+                output_tokens: row.try_get_by_index::<i64>(6).unwrap_or(0) as u64,
+            });
+        }
+        Ok(totals)
+    }
 }
 
 #[cfg(test)]
@@ -163,6 +214,7 @@ mod tests {
         s.record(&UsageRecord {
             model: "gpt-4o".into(),
             provider: "codex".into(),
+            account_id: "default".into(),
             input_tokens: 100,
             output_tokens: 50,
             success: true,
@@ -172,6 +224,7 @@ mod tests {
         s.record(&UsageRecord {
             model: "gpt-4o".into(),
             provider: "codex".into(),
+            account_id: "default".into(),
             input_tokens: 200,
             output_tokens: 100,
             success: true,
@@ -194,6 +247,7 @@ mod tests {
         s.record(&UsageRecord {
             model: "claude-opus-4-5".into(),
             provider: "claude".into(),
+            account_id: "default".into(),
             input_tokens: 10,
             output_tokens: 5,
             success: true,

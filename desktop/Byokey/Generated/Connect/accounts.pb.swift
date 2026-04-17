@@ -120,6 +120,7 @@ struct Byokey_Accounts_AccountDetail: Sendable {
 
   var tokenState: Byokey_Accounts_TokenState = .unspecified
 
+  /// Unix timestamp (seconds since epoch).
   var expiresAt: UInt64 {
     get {_expiresAt ?? 0}
     set {_expiresAt = newValue}

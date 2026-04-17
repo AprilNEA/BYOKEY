@@ -119,6 +119,7 @@ struct AccountsView: View {
                         AccountRow(
                             account: account,
                             providerName: provider.displayName,
+                            usage: accountStats(providerId: provider.id, accountId: account.accountID),
                             rateLimitHeaders: rateLimitHeaders(providerId: provider.id, accountId: account.accountID),
                             onActivate: {
                                 Task { await activateAccount(provider: provider.id, accountId: account.accountID) }
@@ -195,17 +196,22 @@ struct AccountsView: View {
 
     // MARK: - Data Helpers
 
-    private struct ProviderAggregateStats {
-        var requests: UInt64 = 0
-        var success: UInt64 = 0
-        var inputTokens: UInt64 = 0
-        var outputTokens: UInt64 = 0
-    }
-
     private func providerStats(for providerId: String) -> ProviderAggregateStats? {
-        guard let modelStats = dataService.usage?.models else { return nil }
+        // Prefer precise per-account aggregation when available.
+        let rows = dataService.accountUsage.filter { $0.provider == providerId }
+        if !rows.isEmpty {
+            var agg = ProviderAggregateStats()
+            for r in rows {
+                agg.requests += r.requestCount
+                agg.success += r.successCount
+                agg.inputTokens += r.inputTokens
+                agg.outputTokens += r.outputTokens
+            }
+            return agg.requests > 0 ? agg : nil
+        }
 
-        // Build model → provider mapping from the models list
+        // Fallback: model-level stats mapped back through `models`.
+        guard let modelStats = dataService.usage?.models else { return nil }
         let modelToProvider: [String: String] = Dictionary(
             dataService.models.map { ($0.id, $0.owned_by) },
             uniquingKeysWith: { first, _ in first }
@@ -219,6 +225,22 @@ struct AccountsView: View {
                 agg.inputTokens += stats.inputTokens
                 agg.outputTokens += stats.outputTokens
             }
+        }
+        return agg.requests > 0 ? agg : nil
+    }
+
+    /// Per-account aggregate (summed across all models for this account).
+    private func accountStats(providerId: String, accountId: String) -> ProviderAggregateStats? {
+        let rows = dataService.accountUsage.filter {
+            $0.provider == providerId && $0.accountID == accountId
+        }
+        guard !rows.isEmpty else { return nil }
+        var agg = ProviderAggregateStats()
+        for r in rows {
+            agg.requests += r.requestCount
+            agg.success += r.successCount
+            agg.inputTokens += r.inputTokens
+            agg.outputTokens += r.outputTokens
         }
         return agg.requests > 0 ? agg : nil
     }
@@ -266,11 +288,21 @@ struct AccountsView: View {
     }
 }
 
+// MARK: - Per-(provider, account) aggregate usage
+
+struct ProviderAggregateStats: Equatable {
+    var requests: UInt64 = 0
+    var success: UInt64 = 0
+    var inputTokens: UInt64 = 0
+    var outputTokens: UInt64 = 0
+}
+
 // MARK: - Account Row
 
 private struct AccountRow: View {
     let account: Byokey_Accounts_AccountDetail
     let providerName: String
+    let usage: ProviderAggregateStats?
     let rateLimitHeaders: [String: String]?
     let onActivate: () -> Void
     let onRemove: () -> Void
@@ -369,11 +401,42 @@ private struct AccountRow: View {
             }
             .onHover { hovering in isHovered = hovering }
 
+            // Compact per-account usage strip
+            if let usage, usage.requests > 0 {
+                HStack(spacing: 12) {
+                    usageStat("Req", "\(usage.requests)")
+                    usageStat("In", formatTokens(usage.inputTokens))
+                    usageStat("Out", formatTokens(usage.outputTokens))
+                    if usage.requests > 0 {
+                        usageStat(
+                            "OK",
+                            "\(Int(Double(usage.success) / Double(usage.requests) * 100))%"
+                        )
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 44)
+                .padding(.bottom, 8)
+            }
+
             // Expanded rate limit detail
             if isExpanded, let headers = rateLimitHeaders {
                 rateLimitDetail(headers)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
+        }
+    }
+
+    private func usageStat(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 3) {
+            Text(label)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .textCase(.uppercase)
+            Text(value)
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
         }
     }
 

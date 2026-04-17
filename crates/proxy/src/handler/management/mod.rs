@@ -254,6 +254,49 @@ impl stat::StatusService for StatusServiceImpl {
         ))
     }
 
+    async fn get_usage_by_account(
+        &self,
+        ctx: Context,
+        request: OwnedView<stat::GetUsageByAccountRequestView<'static>>,
+    ) -> Result<(stat::GetUsageByAccountResponse, Context), ConnectError> {
+        let req = request.to_owned_message();
+        let Some(store) = self.0.usage.store() else {
+            return Ok((
+                stat::GetUsageByAccountResponse {
+                    rows: Vec::new(),
+                    error: Some("no persistent usage store configured".into()),
+                    ..Default::default()
+                },
+                ctx,
+            ));
+        };
+        let totals = store
+            .totals_by_account(req.from, req.to)
+            .await
+            .map_err(|e| ConnectError::internal(e.to_string()))?;
+        let rows = totals
+            .into_iter()
+            .map(|t| stat::AccountUsageRow {
+                provider: t.provider,
+                account_id: t.account_id,
+                model: t.model,
+                request_count: t.request_count,
+                success_count: t.success_count,
+                input_tokens: t.input_tokens,
+                output_tokens: t.output_tokens,
+                ..Default::default()
+            })
+            .collect();
+        Ok((
+            stat::GetUsageByAccountResponse {
+                rows,
+                error: None,
+                ..Default::default()
+            },
+            ctx,
+        ))
+    }
+
     async fn get_rate_limits(
         &self,
         ctx: Context,

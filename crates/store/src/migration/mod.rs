@@ -19,6 +19,7 @@ mod m20260415_000002_migrate_legacy_tokens;
 mod m20260415_000003_create_conversations;
 mod m20260415_000004_create_messages;
 mod m20260415_000005_create_usage_records;
+mod m20260417_000006_add_usage_account_id;
 
 pub struct Migrator;
 
@@ -31,6 +32,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260415_000003_create_conversations::Migration),
             Box::new(m20260415_000004_create_messages::Migration),
             Box::new(m20260415_000005_create_usage_records::Migration),
+            Box::new(m20260417_000006_add_usage_account_id::Migration),
         ]
     }
 }

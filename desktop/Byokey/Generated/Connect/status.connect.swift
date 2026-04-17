@@ -21,6 +21,9 @@ internal protocol Byokey_Status_StatusServiceClientInterface: Sendable {
     func `getUsageHistory`(request: Byokey_Status_GetUsageHistoryRequest, headers: Connect.Headers) async -> ResponseMessage<Byokey_Status_GetUsageHistoryResponse>
 
     @available(iOS 13, *)
+    func `getUsageByAccount`(request: Byokey_Status_GetUsageByAccountRequest, headers: Connect.Headers) async -> ResponseMessage<Byokey_Status_GetUsageByAccountResponse>
+
+    @available(iOS 13, *)
     func `getRateLimits`(request: Byokey_Status_GetRateLimitsRequest, headers: Connect.Headers) async -> ResponseMessage<Byokey_Status_GetRateLimitsResponse>
 }
 
@@ -48,6 +51,11 @@ internal final class Byokey_Status_StatusServiceClient: Byokey_Status_StatusServ
     }
 
     @available(iOS 13, *)
+    internal func `getUsageByAccount`(request: Byokey_Status_GetUsageByAccountRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Byokey_Status_GetUsageByAccountResponse> {
+        return await self.client.unary(path: "/byokey.status.StatusService/GetUsageByAccount", idempotencyLevel: .noSideEffects, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     internal func `getRateLimits`(request: Byokey_Status_GetRateLimitsRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Byokey_Status_GetRateLimitsResponse> {
         return await self.client.unary(path: "/byokey.status.StatusService/GetRateLimits", idempotencyLevel: .noSideEffects, request: request, headers: headers)
     }
@@ -57,6 +65,7 @@ internal final class Byokey_Status_StatusServiceClient: Byokey_Status_StatusServ
             internal static let getStatus = Connect.MethodSpec(name: "GetStatus", service: "byokey.status.StatusService", type: .unary)
             internal static let getUsage = Connect.MethodSpec(name: "GetUsage", service: "byokey.status.StatusService", type: .unary)
             internal static let getUsageHistory = Connect.MethodSpec(name: "GetUsageHistory", service: "byokey.status.StatusService", type: .unary)
+            internal static let getUsageByAccount = Connect.MethodSpec(name: "GetUsageByAccount", service: "byokey.status.StatusService", type: .unary)
             internal static let getRateLimits = Connect.MethodSpec(name: "GetRateLimits", service: "byokey.status.StatusService", type: .unary)
         }
     }

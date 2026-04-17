@@ -12,6 +12,7 @@ final class DataService {
     private(set) var rateLimits: Byokey_Status_GetRateLimitsResponse?
     private(set) var models: [ModelEntry] = []
     private(set) var ampThreads: [AmpThreadSummary] = []
+    private(set) var accountUsage: [AccountUsageRow] = []
     private(set) var isLoading = false
 
     var isServerReachable = false {
@@ -177,6 +178,12 @@ final class DataService {
             history = msg
         }
 
+        if let msg = (await statusClient.getUsageByAccount(request: .init())).message,
+           msg.rows != accountUsage
+        {
+            accountUsage = msg.rows
+        }
+
         await reloadAmpThreads()
     }
 
@@ -201,5 +208,6 @@ final class DataService {
         rateLimits = nil
         models = []
         ampThreads = []
+        accountUsage = []
     }
 }

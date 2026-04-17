@@ -9,6 +9,7 @@ typealias RateLimitsResponse = Byokey_Status_GetRateLimitsResponse
 typealias ProviderRateLimits = Byokey_Status_ProviderRateLimits
 typealias AccountRateLimit = Byokey_Status_AccountRateLimit
 typealias ProtoRateLimitSnapshot = Byokey_Status_RateLimitSnapshot
+typealias AccountUsageRow = Byokey_Status_AccountUsageRow
 
 // MARK: - Amp service
 typealias AmpThreadSummary = Byokey_Amp_ThreadSummary

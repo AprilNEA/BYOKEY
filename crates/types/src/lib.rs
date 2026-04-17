@@ -18,7 +18,7 @@ pub use provider::ThinkingCapability;
 pub use ratelimit::{RateLimitSnapshot, RateLimitStore};
 pub use token::{AccountInfo, OAuthToken, TokenState};
 pub use traits::{
-    ByteStream, ChatHistoryStore, ConversationSummary, MessageRecord, ProviderExecutor,
-    ProviderResponse, RequestTranslator, ResponseTranslator, TokenStore, UsageBucket, UsageRecord,
-    UsageStore,
+    AccountUsageTotal, ByteStream, ChatHistoryStore, ConversationSummary, DEFAULT_ACCOUNT,
+    MessageRecord, ProviderExecutor, ProviderResponse, RequestTranslator, ResponseTranslator,
+    TokenStore, UsageBucket, UsageRecord, UsageStore,
 };

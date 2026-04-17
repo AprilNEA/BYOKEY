@@ -151,6 +151,10 @@ pub trait ChatHistoryStore: Send + Sync {
 pub struct UsageRecord {
     pub model: String,
     pub provider: String,
+    /// Account identifier. Use [`DEFAULT_ACCOUNT`] for API-key flows or when
+    /// the caller can't determine the specific OAuth account that served the
+    /// request.
+    pub account_id: String,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub success: bool,
@@ -162,6 +166,18 @@ pub struct UsageBucket {
     pub period_start: i64,
     pub model: String,
     pub request_count: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+/// Per-(provider, account, model) cumulative usage for a time range.
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
+pub struct AccountUsageTotal {
+    pub provider: String,
+    pub account_id: String,
+    pub model: String,
+    pub request_count: u64,
+    pub success_count: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
 }
@@ -184,6 +200,19 @@ pub trait UsageStore: Send + Sync {
 
     /// Get cumulative totals, optionally within a time range.
     async fn totals(&self, from: Option<i64>, to: Option<i64>) -> Result<Vec<UsageBucket>>;
+
+    /// Cumulative usage grouped by (provider, `account_id`, model), optionally
+    /// within a time range.
+    ///
+    /// Returns an empty vector by default; backends that track `account_id`
+    /// override this.
+    async fn totals_by_account(
+        &self,
+        _from: Option<i64>,
+        _to: Option<i64>,
+    ) -> Result<Vec<AccountUsageTotal>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Translates an `OpenAI`-format request into a provider's native format.
