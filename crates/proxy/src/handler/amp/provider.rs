@@ -90,12 +90,14 @@ pub async fn codex_responses_passthrough(
         (true, tok.access_token, account_id)
     };
 
-    // chatgpt.com/backend-api/codex/responses rejects sampling and limit
-    // parameters that the public OpenAI Responses API accepts.
+    // chatgpt.com/backend-api/codex/responses rejects sampling, limit, and
+    // stream parameters that the public OpenAI Responses API accepts.
+    // AmpCode sends `stream_options` which Codex rejects with HTTP 400.
     if is_oauth && let Some(obj) = body.as_object_mut() {
         obj.remove("max_output_tokens");
         obj.remove("temperature");
         obj.remove("top_p");
+        obj.remove("stream_options");
     }
 
     let upstream_url = if is_oauth {
