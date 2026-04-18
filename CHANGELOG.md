@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0](https://github.com/AprilNEA/BYOKEY/compare/v1.0.0...v2.0.0) - 2026-04-18
+
+### Added
+
+- *(accounts)* add dialog with 3 authentication methods
+
+### Fixed
+
+- round-2 review fixes — login flow, proto, Swift polish
+- *(desktop)* streaming login error handling, clean up dead state
+- *(ci)* skip build + homebrew update for per-crate release tags
+- *(release-plz)* suppress individual tags for byokey-proto and ampcode
+
+### Other
+
+- round-3 review polish
+- tighten security exit code, workspace-pin streaming deps, add tests
+- *(desktop)* migrate CLIRunner to ConnectRPC
+
 ### Added
 - `AccountsService.AddApiKey` and `AccountsService.ImportClaudeCode` RPCs.
 - `AccountsService.Login` server-streaming RPC with live `LoginEvent` progress.
