@@ -1,5 +1,10 @@
 [workspace]
 # Conventional commits are used for changelog generation.
+# semver_check is disabled workspace-wide: internal crates (byokey-*, ampcode)
+# have no external library consumers — git_release_enable = false on all of
+# them — so cargo-semver-checks only produces noisy major bumps. Version bumps
+# are driven by conventional-commit prefixes (feat/fix/!) alone.
+semver_check = false
 
 # Root binary crate — public release artefact.
 # git_tag_name produces v0.1.0 instead of the default byokey-v0.1.0.
