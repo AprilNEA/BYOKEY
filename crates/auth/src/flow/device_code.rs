@@ -81,12 +81,15 @@ pub async fn run<P: DeviceCodeFlow>(
         code = %dc.user_code,
         "visit URL and enter verification code"
     );
-    println!("{}", device_code_prompt(&dc));
+    if events.is_none() {
+        println!("{}", device_code_prompt(&dc));
+    }
     open_browser(&dc.verification_uri);
     emit(
         events,
         LoginProgress::OpenedBrowser {
-            url: device_code_prompt(&dc),
+            url: dc.verification_uri.clone(),
+            user_code: Some(dc.user_code.clone()),
         },
     )
     .await;
@@ -105,7 +108,9 @@ pub async fn run<P: DeviceCodeFlow>(
             PollResult::Success(tok) => {
                 emit(events, LoginProgress::Exchanging).await;
                 save_login_token(auth, &provider_id, tok, account).await?;
-                println!("{provider_id} login successful");
+                if events.is_none() {
+                    println!("{provider_id} login successful");
+                }
                 tracing::info!(provider = %provider_id, "login successful");
                 return Ok(());
             }

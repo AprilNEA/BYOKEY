@@ -12,7 +12,9 @@ service AmpService {
   }
   // Rewrites ~/.config/amp/settings.json to point `amp.url` at the byokey
   // proxy URL. Idempotent: repeat calls converge to the same file contents.
-  rpc InjectUrl(InjectUrlRequest) returns (InjectUrlResponse);
+  rpc InjectUrl(InjectUrlRequest) returns (InjectUrlResponse) {
+    option idempotency_level = IDEMPOTENT;
+  }
 }
 
 message ListThreadsRequest {

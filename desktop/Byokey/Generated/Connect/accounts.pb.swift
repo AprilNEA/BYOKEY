@@ -381,12 +381,23 @@ struct Byokey_Accounts_LoginEvent: Sendable {
   /// Clears the value of `error`. Subsequent reads from it will return its default value.
   mutating func clearError() {self._error = nil}
 
+  /// For device-code flows, the verification code the user must enter at `message` (URL).
+  var userCode: String {
+    get {_userCode ?? String()}
+    set {_userCode = newValue}
+  }
+  /// Returns true if `userCode` has been explicitly set.
+  var hasUserCode: Bool {self._userCode != nil}
+  /// Clears the value of `userCode`. Subsequent reads from it will return its default value.
+  mutating func clearUserCode() {self._userCode = nil}
+
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
   init() {}
 
   fileprivate var _message: String? = nil
   fileprivate var _error: String? = nil
+  fileprivate var _userCode: String? = nil
 }
 
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
@@ -841,7 +852,7 @@ extension Byokey_Accounts_LoginRequest: SwiftProtobuf.Message, SwiftProtobuf._Me
 
 extension Byokey_Accounts_LoginEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".LoginEvent"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}message\0\u{1}error\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}message\0\u{1}error\0\u{3}user_code\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -852,6 +863,7 @@ extension Byokey_Accounts_LoginEvent: SwiftProtobuf.Message, SwiftProtobuf._Mess
       case 1: try { try decoder.decodeSingularEnumField(value: &self.stage) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self._message) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self._error) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self._userCode) }()
       default: break
       }
     }
@@ -871,6 +883,9 @@ extension Byokey_Accounts_LoginEvent: SwiftProtobuf.Message, SwiftProtobuf._Mess
     try { if let v = self._error {
       try visitor.visitSingularStringField(value: v, fieldNumber: 3)
     } }()
+    try { if let v = self._userCode {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 4)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -878,6 +893,7 @@ extension Byokey_Accounts_LoginEvent: SwiftProtobuf.Message, SwiftProtobuf._Mess
     if lhs.stage != rhs.stage {return false}
     if lhs._message != rhs._message {return false}
     if lhs._error != rhs._error {return false}
+    if lhs._userCode != rhs._userCode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

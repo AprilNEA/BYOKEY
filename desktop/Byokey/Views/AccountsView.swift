@@ -11,7 +11,6 @@ private struct PendingRemoval: Identifiable {
 struct AccountsView: View {
     @Environment(ProcessManager.self) private var pm
     @Environment(DataService.self) private var dataService
-    @State private var loginInProgress: String?
     @State private var errorMessage: String?
     @State private var hoveredProvider: String?
     @State private var pendingRemoval: PendingRemoval?
@@ -96,10 +95,6 @@ struct AccountsView: View {
                 onDismiss: { addSheetProvider = nil },
                 onComplete: {
                     addSheetProvider = nil
-                    Task {
-                        try? await Task.sleep(for: .milliseconds(500))
-                        await dataService.reloadAccounts()
-                    }
                 },
                 onError: { message in
                     errorMessage = message
@@ -329,16 +324,6 @@ struct AccountsView: View {
         }
     }
 
-    private func login(provider: String) async {
-        loginInProgress = provider
-        errorMessage = nil
-        do {
-            try await dataService.login(provider: provider) { _ in }
-        } catch {
-            errorMessage = "Login failed: \(error.localizedDescription)"
-        }
-        loginInProgress = nil
-    }
 }
 
 private struct AddSheetTarget: Identifiable {
@@ -570,13 +555,15 @@ private struct AddAccountSheet: View {
                     label: trimmedLabel.isEmpty ? nil : trimmedLabel
                 )
             }
+            isSubmitting = false
+            loginProgress = nil
             onComplete()
         } catch {
+            isSubmitting = false
+            loginProgress = nil
             localError = error.localizedDescription
             onError(error.localizedDescription)
         }
-        isSubmitting = false
-        loginProgress = nil
     }
 
     private static func progressMessage(for event: Byokey_Accounts_LoginEvent) -> String? {
@@ -584,9 +571,13 @@ private struct AddAccountSheet: View {
         case .started:
             return "Starting login…"
         case .openedBrowser:
-            return event.message.isEmpty
-                ? "Waiting for browser callback…"
-                : "Opened: \(event.message)"
+            if event.message.isEmpty {
+                return "Waiting for browser callback…"
+            }
+            if !event.userCode.isEmpty {
+                return "Open \(event.message) — enter code: \(event.userCode)"
+            }
+            return "Opened: \(event.message)"
         case .gotCode:
             return "Got authorization code"
         case .exchanging:

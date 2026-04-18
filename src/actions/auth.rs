@@ -33,12 +33,15 @@ impl AuthCmd {
         account: Option<String>,
         label: Option<String>,
     ) -> Result<()> {
+        if api_key.trim().is_empty() {
+            anyhow::bail!("api_key cannot be empty");
+        }
         let account_id = account
             .as_deref()
             .unwrap_or(byokey_types::DEFAULT_ACCOUNT)
             .to_string();
         let token = OAuthToken {
-            access_token: api_key,
+            access_token: api_key.trim().to_string(),
             refresh_token: None,
             expires_at: None,
             token_type: Some("api-key".to_string()),
@@ -69,9 +72,9 @@ impl AuthCmd {
             })?;
         let provider = ProviderId::Claude;
         let account_id = account.as_deref().unwrap_or("claude-code").to_string();
-        let label = label.or_else(|| Some("Claude Code".to_string()));
+        let label = label.unwrap_or_else(|| "Claude Code".to_string());
         self.auth
-            .save_token_for(&provider, &account_id, label.as_deref(), token)
+            .save_token_for(&provider, &account_id, Some(label.as_str()), token)
             .await
             .map_err(|e| anyhow::anyhow!("save Claude Code token: {e}"))?;
         println!("{provider}: imported Claude Code credentials to account '{account_id}'");

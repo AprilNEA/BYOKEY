@@ -23,10 +23,16 @@ pub enum LoginProgress {
     /// The flow has begun (credentials fetched, about to open the browser
     /// or request a device code).
     Started,
-    /// Browser opened (or device code shown). For Authorization Code flows
-    /// `url` is the OAuth authorization URL; for Device Code flows it is
-    /// the verification URL with a human-readable code appended.
-    OpenedBrowser { url: String },
+    /// Browser opened for OAuth Auth Code flow (`url` is the authorization URL),
+    /// or device-code verification page opened (`url` is the bare verification URI).
+    /// For device-code flows, `user_code` carries the short code the user must enter.
+    OpenedBrowser {
+        url: String,
+        user_code: Option<String>,
+    },
+    /// OAuth callback received; about to exchange the code (Auth Code flow only —
+    /// Device Code flow has no distinct "got code" stage).
+    GotCode,
     /// Received the callback / poll response. About to exchange the code
     /// for a token.
     Exchanging,

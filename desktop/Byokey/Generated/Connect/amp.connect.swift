@@ -43,7 +43,7 @@ internal final class Byokey_Amp_AmpServiceClient: Byokey_Amp_AmpServiceClientInt
 
     @available(iOS 13, *)
     internal func `injectURL`(request: Byokey_Amp_InjectUrlRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Byokey_Amp_InjectUrlResponse> {
-        return await self.client.unary(path: "/byokey.amp.AmpService/InjectUrl", idempotencyLevel: .unknown, request: request, headers: headers)
+        return await self.client.unary(path: "/byokey.amp.AmpService/InjectUrl", idempotencyLevel: .idempotent, request: request, headers: headers)
     }
 
     internal enum Metadata {

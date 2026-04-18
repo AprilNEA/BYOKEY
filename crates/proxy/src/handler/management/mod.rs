@@ -529,7 +529,7 @@ impl acct::AccountsService for AccountsServiceImpl {
             .account_id
             .unwrap_or_else(|| byokey_types::DEFAULT_ACCOUNT.to_string());
         let token = byokey_types::OAuthToken {
-            access_token: req.api_key,
+            access_token: req.api_key.trim().to_string(),
             refresh_token: None,
             expires_at: None,
             token_type: Some("api-key".to_string()),
@@ -564,10 +564,10 @@ impl acct::AccountsService for AccountsServiceImpl {
             })?;
         let pid = byokey_types::ProviderId::Claude;
         let account_id = req.account_id.unwrap_or_else(|| "claude-code".to_string());
-        let label = req.label.or_else(|| Some("Claude Code".to_string()));
+        let label = req.label.unwrap_or_else(|| "Claude Code".to_string());
         self.0
             .auth
-            .save_token_for(&pid, &account_id, label.as_deref(), token)
+            .save_token_for(&pid, &account_id, Some(label.as_str()), token)
             .await
             .map_err(|e| byok_to_connect_error(&e))?;
         Ok((
@@ -618,6 +618,7 @@ impl acct::AccountsService for AccountsServiceImpl {
 
             loop {
                 tokio::select! {
+                    biased;
                     Some(p) = progress_rx.recv() => {
                         let ev = progress_to_pb(&p);
                         if event_tx_drive.send(Ok(ev)).await.is_err() { return; }
@@ -653,18 +654,21 @@ impl acct::AccountsService for AccountsServiceImpl {
 
 fn progress_to_pb(p: &byokey_auth::flow::LoginProgress) -> acct::LoginEvent {
     use byokey_auth::flow::LoginProgress as P;
-    let (stage, message) = match p {
-        P::Started => (acct::LoginStage::LOGIN_STAGE_STARTED, None),
-        P::OpenedBrowser { url } => (
+    let (stage, message, user_code) = match p {
+        P::Started => (acct::LoginStage::LOGIN_STAGE_STARTED, None, None),
+        P::OpenedBrowser { url, user_code } => (
             acct::LoginStage::LOGIN_STAGE_OPENED_BROWSER,
             Some(url.clone()),
+            user_code.clone(),
         ),
-        P::Exchanging => (acct::LoginStage::LOGIN_STAGE_EXCHANGING, None),
+        P::GotCode => (acct::LoginStage::LOGIN_STAGE_GOT_CODE, None, None),
+        P::Exchanging => (acct::LoginStage::LOGIN_STAGE_EXCHANGING, None, None),
     };
     acct::LoginEvent {
         stage: stage.into(),
         message,
         error: None,
+        user_code,
         ..Default::default()
     }
 }
@@ -877,5 +881,56 @@ impl amp_pb::AmpService for AmpServiceImpl {
             },
             ctx,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use byokey_auth::flow::LoginProgress;
+
+    #[test]
+    fn progress_to_pb_started() {
+        let ev = progress_to_pb(&LoginProgress::Started);
+        assert_eq!(ev.stage, acct::LoginStage::LOGIN_STAGE_STARTED);
+        assert!(ev.message.is_none());
+        assert!(ev.user_code.is_none());
+    }
+
+    #[test]
+    fn progress_to_pb_opened_browser_auth_code() {
+        let ev = progress_to_pb(&LoginProgress::OpenedBrowser {
+            url: "https://example.com/auth".into(),
+            user_code: None,
+        });
+        assert_eq!(ev.stage, acct::LoginStage::LOGIN_STAGE_OPENED_BROWSER);
+        assert_eq!(ev.message.as_deref(), Some("https://example.com/auth"));
+        assert!(ev.user_code.is_none());
+    }
+
+    #[test]
+    fn progress_to_pb_opened_browser_device_code() {
+        let ev = progress_to_pb(&LoginProgress::OpenedBrowser {
+            url: "https://github.com/login/device".into(),
+            user_code: Some("ABCD-1234".into()),
+        });
+        assert_eq!(ev.stage, acct::LoginStage::LOGIN_STAGE_OPENED_BROWSER);
+        assert_eq!(
+            ev.message.as_deref(),
+            Some("https://github.com/login/device")
+        );
+        assert_eq!(ev.user_code.as_deref(), Some("ABCD-1234"));
+    }
+
+    #[test]
+    fn progress_to_pb_got_code() {
+        let ev = progress_to_pb(&LoginProgress::GotCode);
+        assert_eq!(ev.stage, acct::LoginStage::LOGIN_STAGE_GOT_CODE);
+    }
+
+    #[test]
+    fn progress_to_pb_exchanging() {
+        let ev = progress_to_pb(&LoginProgress::Exchanging);
+        assert_eq!(ev.stage, acct::LoginStage::LOGIN_STAGE_EXCHANGING);
     }
 }

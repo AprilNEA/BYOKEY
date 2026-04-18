@@ -179,18 +179,28 @@ final class DataService {
         let stream = accountsClient.login(headers: [:])
         try stream.send(req)
         var terminalError: String?
+        var sawTerminal = false
+
         for await result in stream.results() {
             switch result {
-            case .headers, .complete:
+            case .headers:
                 continue
             case .message(let event):
                 onEvent(event)
-                if event.stage == .failed {
-                    terminalError = event.error.isEmpty
-                        ? "login failed"
-                        : event.error
+                if event.stage == .done {
+                    sawTerminal = true
+                } else if event.stage == .failed {
+                    sawTerminal = true
+                    terminalError = event.error.isEmpty ? "login failed" : event.error
+                }
+            case .complete(let code, let error, _):
+                if code != .ok, terminalError == nil {
+                    terminalError = error?.localizedDescription ?? "login transport error (code: \(code))"
                 }
             }
+        }
+        if terminalError == nil && !sawTerminal {
+            terminalError = "login stream ended without terminal event"
         }
         if let terminalError {
             throw NSError(

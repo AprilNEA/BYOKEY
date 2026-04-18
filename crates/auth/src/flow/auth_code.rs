@@ -65,6 +65,13 @@ pub async fn run<P: AuthCodeFlow>(
     account: Option<&str>,
     events: Option<&mpsc::Sender<LoginProgress>>,
 ) -> Result<()> {
+    tracing::info!(provider = %provider.provider_name(), "starting OAuth login");
+    if events.is_none() {
+        eprintln!(
+            "[login] fetching credentials for {}...",
+            provider.provider_name()
+        );
+    }
     emit(events, LoginProgress::Started).await;
     let creds = crate::credentials::fetch(provider.provider_name(), http).await?;
 
@@ -77,19 +84,34 @@ pub async fn run<P: AuthCodeFlow>(
     let auth_url = provider.build_auth_url(&creds.client_id, &challenge, &state);
 
     let listeners = callback::bind_callback(provider.callback_port()).await?;
+    if events.is_none() {
+        eprintln!(
+            "[login] opening browser for {}...",
+            provider.provider_name()
+        );
+    }
     open_browser(&auth_url);
     emit(
         events,
         LoginProgress::OpenedBrowser {
             url: auth_url.clone(),
+            user_code: None,
         },
     )
     .await;
+    tracing::info!(provider = %provider.provider_name(), "waiting for OAuth callback");
+    if events.is_none() {
+        eprintln!("[login] waiting for OAuth callback...");
+    }
     let params = callback::accept_callback(listeners).await?;
 
     verify_state(&params, &state)?;
     let code = extract_code(&params)?;
-
+    tracing::info!(provider = %provider.provider_name(), "received OAuth code, exchanging");
+    if events.is_none() {
+        eprintln!("[login] received OAuth code, exchanging for token...");
+    }
+    emit(events, LoginProgress::GotCode).await;
     emit(events, LoginProgress::Exchanging).await;
     let tok = provider
         .exchange_code(http, &creds, code, &verifier, &state)

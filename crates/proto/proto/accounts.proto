@@ -89,6 +89,8 @@ message LoginEvent {
   optional string message = 2;
   // Present on `FAILED` events.
   optional string error = 3;
+  // For device-code flows, the verification code the user must enter at `message` (URL).
+  optional string user_code = 4;
 }
 
 enum LoginStage {
