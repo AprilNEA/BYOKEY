@@ -80,10 +80,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # build_suffix makes CFBundleVersion unique per arch so Sparkle's
+          # generate_appcast does not reject the DMGs as duplicates
+          # ("SUSparkleErrorDomain Code=1002"). Sparkle 2 filters by embedded
+          # binary architecture before comparing versions, so arm64 users
+          # never see the x86_64 variant offered as an update.
           - arch: arm64
             rust_target: aarch64-apple-darwin
+            build_suffix: "1"
           - arch: x86_64
             rust_target: x86_64-apple-darwin
+            build_suffix: "2"
 
     steps:
       - uses: actions/checkout@v4
@@ -134,7 +141,7 @@ jobs:
             ARCHS="${{ matrix.arch }}" \
             ONLY_ACTIVE_ARCH=NO \
             MARKETING_VERSION="$VERSION" \
-            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}.${{ matrix.build_suffix }}" \
             CODE_SIGN_STYLE=Manual \
             "CODE_SIGN_IDENTITY=Developer ID Application" \
             DEVELOPMENT_TEAM=8U3ZJ258K9 \
