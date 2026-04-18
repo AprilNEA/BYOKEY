@@ -16,7 +16,7 @@ exclude = ["desktop/src-tauri"]
 
 [workspace.package]
 edition = "2024"
-version = "1.0.0"
+version = "1.1.0"
 authors = ["AprilNEA <github@sku.moe>"]
 description = "Bring Your Own Keys — AI subscription-to-API proxy gateway"
 license = "MIT OR Apache-2.0"
@@ -28,16 +28,16 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Workspace crates
-byokey-types = { version = "1.0.0", path = "crates/types" }
-byokey-config = { version = "1.0.0", path = "crates/config" }
-byokey-store = { version = "1.0.0", path = "crates/store" }
-byokey-auth = { version = "1.0.0", path = "crates/auth" }
-byokey-translate = { version = "1.0.0", path = "crates/translate" }
-byokey-provider = { version = "1.0.0", path = "crates/provider" }
-byokey-proto = { version = "1.0.0", path = "crates/proto" }
-byokey-proxy = { version = "1.0.0", path = "crates/proxy" }
-byokey-daemon = { version = "1.0.0", path = "crates/daemon" }
-ampcode = { version = "0.1.0", path = "crates/ampcode" }
+byokey-types = { version = "1.1.0", path = "crates/types" }
+byokey-config = { version = "1.1.0", path = "crates/config" }
+byokey-store = { version = "1.1.0", path = "crates/store" }
+byokey-auth = { version = "1.1.0", path = "crates/auth" }
+byokey-translate = { version = "1.1.0", path = "crates/translate" }
+byokey-provider = { version = "1.1.0", path = "crates/provider" }
+byokey-proto = { version = "1.1.0", path = "crates/proto" }
+byokey-proxy = { version = "1.1.0", path = "crates/proxy" }
+byokey-daemon = { version = "1.1.0", path = "crates/daemon" }
+ampcode = { version = "0.1.1", path = "crates/ampcode" }
 loadwise-core = "0.1.0"
 aigw = { version = "0.4.0", default-features = false, features = ["anthropic", "anthropic-claude-code", "openai", "openai-compat"] }
 aigw-core = "0.4.0"
