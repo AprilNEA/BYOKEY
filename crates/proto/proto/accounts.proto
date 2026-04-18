@@ -7,6 +7,12 @@ service AccountsService {
   }
   rpc RemoveAccount(RemoveAccountRequest) returns (RemoveAccountResponse);
   rpc ActivateAccount(ActivateAccountRequest) returns (ActivateAccountResponse);
+  rpc AddApiKey(AddApiKeyRequest) returns (AddApiKeyResponse);
+  rpc ImportClaudeCode(ImportClaudeCodeRequest) returns (ImportClaudeCodeResponse);
+  // Server-streaming OAuth login. Emits progress events until the flow
+  // completes or fails. Clients should keep the stream open to receive
+  // `OPENED_BROWSER` → `GOT_CODE` → `EXCHANGING` → `DONE` transitions.
+  rpc Login(LoginRequest) returns (stream LoginEvent);
 }
 
 message ListAccountsRequest {}
@@ -50,3 +56,47 @@ message ActivateAccountRequest {
 }
 
 message ActivateAccountResponse {}
+
+message AddApiKeyRequest {
+  string provider = 1;
+  string api_key = 2;
+  optional string account_id = 3;
+  optional string label = 4;
+}
+
+message AddApiKeyResponse {
+  string account_id = 1;
+}
+
+message ImportClaudeCodeRequest {
+  optional string account_id = 1;
+  optional string label = 2;
+}
+
+message ImportClaudeCodeResponse {
+  string account_id = 1;
+}
+
+message LoginRequest {
+  string provider = 1;
+  optional string account_id = 2;
+}
+
+message LoginEvent {
+  LoginStage stage = 1;
+  // Human-readable detail — e.g. the authorization URL to show in
+  // the UI when stage == OPENED_BROWSER.
+  optional string message = 2;
+  // Present on `FAILED` events.
+  optional string error = 3;
+}
+
+enum LoginStage {
+  LOGIN_STAGE_UNSPECIFIED = 0;
+  LOGIN_STAGE_STARTED = 1;
+  LOGIN_STAGE_OPENED_BROWSER = 2;
+  LOGIN_STAGE_GOT_CODE = 3;
+  LOGIN_STAGE_EXCHANGING = 4;
+  LOGIN_STAGE_DONE = 5;
+  LOGIN_STAGE_FAILED = 6;
+}

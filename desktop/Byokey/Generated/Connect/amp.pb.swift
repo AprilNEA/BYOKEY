@@ -518,6 +518,46 @@ struct Byokey_Amp_Relationship: Sendable {
   fileprivate var _role: String? = nil
 }
 
+struct Byokey_Amp_InjectUrlRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Explicit URL override. When unset, the server resolves the URL from
+  /// its own config (`amp.url` or `http://{host}:{port}`).
+  var url: String {
+    get {_url ?? String()}
+    set {_url = newValue}
+  }
+  /// Returns true if `url` has been explicitly set.
+  var hasURL: Bool {self._url != nil}
+  /// Clears the value of `url`. Subsequent reads from it will return its default value.
+  mutating func clearURL() {self._url = nil}
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+
+  fileprivate var _url: String? = nil
+}
+
+struct Byokey_Amp_InjectUrlResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var resolvedURL: String = String()
+
+  var settingsPath: String = String()
+
+  /// Number of extra settings merged in from the byokey config.
+  var extrasMerged: UInt32 = 0
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate let _protobuf_package = "byokey.amp"
@@ -1229,6 +1269,80 @@ extension Byokey_Amp_Relationship: SwiftProtobuf.Message, SwiftProtobuf._Message
     if lhs.threadID != rhs.threadID {return false}
     if lhs.relType != rhs.relType {return false}
     if lhs._role != rhs._role {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Byokey_Amp_InjectUrlRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".InjectUrlRequest"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}url\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self._url) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._url {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Byokey_Amp_InjectUrlRequest, rhs: Byokey_Amp_InjectUrlRequest) -> Bool {
+    if lhs._url != rhs._url {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Byokey_Amp_InjectUrlResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".InjectUrlResponse"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}resolved_url\0\u{3}settings_path\0\u{3}extras_merged\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.resolvedURL) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.settingsPath) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.extrasMerged) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.resolvedURL.isEmpty {
+      try visitor.visitSingularStringField(value: self.resolvedURL, fieldNumber: 1)
+    }
+    if !self.settingsPath.isEmpty {
+      try visitor.visitSingularStringField(value: self.settingsPath, fieldNumber: 2)
+    }
+    if self.extrasMerged != 0 {
+      try visitor.visitSingularUInt32Field(value: self.extrasMerged, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Byokey_Amp_InjectUrlResponse, rhs: Byokey_Amp_InjectUrlResponse) -> Bool {
+    if lhs.resolvedURL != rhs.resolvedURL {return false}
+    if lhs.settingsPath != rhs.settingsPath {return false}
+    if lhs.extrasMerged != rhs.extrasMerged {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

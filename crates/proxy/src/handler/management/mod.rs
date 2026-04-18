@@ -511,6 +511,162 @@ impl acct::AccountsService for AccountsServiceImpl {
             .map_err(|e| byok_to_connect_error(&e))?;
         Ok((acct::ActivateAccountResponse::default(), ctx))
     }
+
+    async fn add_api_key(
+        &self,
+        ctx: Context,
+        request: OwnedView<acct::AddApiKeyRequestView<'static>>,
+    ) -> Result<(acct::AddApiKeyResponse, Context), ConnectError> {
+        let req = request.to_owned_message();
+        let pid: byokey_types::ProviderId = req
+            .provider
+            .parse()
+            .map_err(|e: byokey_types::ByokError| byok_to_connect_error(&e))?;
+        if req.api_key.trim().is_empty() {
+            return Err(ConnectError::invalid_argument("api_key cannot be empty"));
+        }
+        let account_id = req
+            .account_id
+            .unwrap_or_else(|| byokey_types::DEFAULT_ACCOUNT.to_string());
+        let token = byokey_types::OAuthToken {
+            access_token: req.api_key,
+            refresh_token: None,
+            expires_at: None,
+            token_type: Some("api-key".to_string()),
+        };
+        self.0
+            .auth
+            .save_token_for(&pid, &account_id, req.label.as_deref(), token)
+            .await
+            .map_err(|e| byok_to_connect_error(&e))?;
+        Ok((
+            acct::AddApiKeyResponse {
+                account_id,
+                ..Default::default()
+            },
+            ctx,
+        ))
+    }
+
+    async fn import_claude_code(
+        &self,
+        ctx: Context,
+        request: OwnedView<acct::ImportClaudeCodeRequestView<'static>>,
+    ) -> Result<(acct::ImportClaudeCodeResponse, Context), ConnectError> {
+        let req = request.to_owned_message();
+        let token = byokey_auth::provider::claude_code::load_token()
+            .await
+            .map_err(|e| byok_to_connect_error(&e))?
+            .ok_or_else(|| {
+                ConnectError::failed_precondition(
+                    "no Claude Code credentials found — is Claude Code logged in on this machine?",
+                )
+            })?;
+        let pid = byokey_types::ProviderId::Claude;
+        let account_id = req.account_id.unwrap_or_else(|| "claude-code".to_string());
+        let label = req.label.or_else(|| Some("Claude Code".to_string()));
+        self.0
+            .auth
+            .save_token_for(&pid, &account_id, label.as_deref(), token)
+            .await
+            .map_err(|e| byok_to_connect_error(&e))?;
+        Ok((
+            acct::ImportClaudeCodeResponse {
+                account_id,
+                ..Default::default()
+            },
+            ctx,
+        ))
+    }
+
+    async fn login(
+        &self,
+        ctx: Context,
+        request: OwnedView<acct::LoginRequestView<'static>>,
+    ) -> Result<
+        (
+            std::pin::Pin<
+                Box<dyn futures_util::Stream<Item = Result<acct::LoginEvent, ConnectError>> + Send>,
+            >,
+            Context,
+        ),
+        ConnectError,
+    > {
+        use futures_util::StreamExt as _;
+        use tokio_stream::wrappers::ReceiverStream;
+
+        let req = request.to_owned_message();
+        let pid: byokey_types::ProviderId = req
+            .provider
+            .parse()
+            .map_err(|e: byokey_types::ByokError| byok_to_connect_error(&e))?;
+        let account = req.account_id;
+
+        let (progress_tx, progress_rx) =
+            tokio::sync::mpsc::channel::<byokey_auth::flow::LoginProgress>(8);
+        let (event_tx, event_rx) =
+            tokio::sync::mpsc::channel::<Result<acct::LoginEvent, ConnectError>>(16);
+
+        let auth = self.0.auth.clone();
+        let event_tx_drive = event_tx.clone();
+        tokio::spawn(async move {
+            let mut progress_rx = progress_rx;
+            let account_ref = account.as_deref();
+            let login_fut =
+                byokey_auth::flow::login_with_events(&pid, &auth, account_ref, Some(progress_tx));
+            tokio::pin!(login_fut);
+
+            loop {
+                tokio::select! {
+                    Some(p) = progress_rx.recv() => {
+                        let ev = progress_to_pb(&p);
+                        if event_tx_drive.send(Ok(ev)).await.is_err() { return; }
+                    }
+                    res = &mut login_fut => {
+                        // Drain any remaining progress events before emitting terminal.
+                        while let Ok(p) = progress_rx.try_recv() {
+                            let ev = progress_to_pb(&p);
+                            let _ = event_tx_drive.send(Ok(ev)).await;
+                        }
+                        let terminal = match res {
+                            Ok(()) => acct::LoginEvent {
+                                stage: acct::LoginStage::LOGIN_STAGE_DONE.into(),
+                                ..Default::default()
+                            },
+                            Err(e) => acct::LoginEvent {
+                                stage: acct::LoginStage::LOGIN_STAGE_FAILED.into(),
+                                error: Some(e.to_string()),
+                                ..Default::default()
+                            },
+                        };
+                        let _ = event_tx_drive.send(Ok(terminal)).await;
+                        return;
+                    }
+                }
+            }
+        });
+
+        let stream = ReceiverStream::new(event_rx).boxed();
+        Ok((stream, ctx))
+    }
+}
+
+fn progress_to_pb(p: &byokey_auth::flow::LoginProgress) -> acct::LoginEvent {
+    use byokey_auth::flow::LoginProgress as P;
+    let (stage, message) = match p {
+        P::Started => (acct::LoginStage::LOGIN_STAGE_STARTED, None),
+        P::OpenedBrowser { url } => (
+            acct::LoginStage::LOGIN_STAGE_OPENED_BROWSER,
+            Some(url.clone()),
+        ),
+        P::Exchanging => (acct::LoginStage::LOGIN_STAGE_EXCHANGING, None),
+    };
+    acct::LoginEvent {
+        stage: stage.into(),
+        message,
+        error: None,
+        ..Default::default()
+    }
 }
 
 // ═══════════════════════ AmpService ══════════════════════════════
@@ -680,6 +836,43 @@ impl amp_pb::AmpService for AmpServiceImpl {
         Ok((
             amp_pb::GetThreadResponse {
                 thread: MessageField::some(to_pb_detail(detail)),
+                ..Default::default()
+            },
+            ctx,
+        ))
+    }
+
+    async fn inject_url(
+        &self,
+        ctx: Context,
+        request: OwnedView<amp_pb::InjectUrlRequestView<'static>>,
+    ) -> Result<(amp_pb::InjectUrlResponse, Context), ConnectError> {
+        let req = request.to_owned_message();
+        let snapshot = self.0.config.load();
+        let resolved_url =
+            snapshot
+                .amp
+                .resolve_url(req.url.as_deref(), &snapshot.host, snapshot.port);
+        let settings_path = byokey_config::AmpConfig::default_settings_path()
+            .ok_or_else(|| ConnectError::internal("cannot determine HOME directory"))?;
+
+        let amp_cfg = snapshot.amp.clone();
+        let settings_path_for_spawn = settings_path.clone();
+        let resolved_url_for_spawn = resolved_url.clone();
+        #[allow(clippy::result_large_err)]
+        let extras = tokio::task::spawn_blocking(move || {
+            amp_cfg
+                .inject(&resolved_url_for_spawn, &settings_path_for_spawn)
+                .map_err(|e| ConnectError::internal(format!("inject failed: {e}")))
+        })
+        .await
+        .map_err(|e| ConnectError::internal(format!("spawn_blocking failed: {e}")))??;
+
+        Ok((
+            amp_pb::InjectUrlResponse {
+                resolved_url,
+                settings_path: settings_path.display().to_string(),
+                extras_merged: clamp_to_u32(extras),
                 ..Default::default()
             },
             ctx,

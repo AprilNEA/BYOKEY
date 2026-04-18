@@ -10,6 +10,9 @@ service AmpService {
   rpc GetThread(GetThreadRequest) returns (GetThreadResponse) {
     option idempotency_level = NO_SIDE_EFFECTS;
   }
+  // Rewrites ~/.config/amp/settings.json to point `amp.url` at the byokey
+  // proxy URL. Idempotent: repeat calls converge to the same file contents.
+  rpc InjectUrl(InjectUrlRequest) returns (InjectUrlResponse);
 }
 
 message ListThreadsRequest {
@@ -107,4 +110,17 @@ message Relationship {
   string thread_id = 1;
   string rel_type = 2;
   optional string role = 3;
+}
+
+message InjectUrlRequest {
+  // Explicit URL override. When unset, the server resolves the URL from
+  // its own config (`amp.url` or `http://{host}:{port}`).
+  optional string url = 1;
+}
+
+message InjectUrlResponse {
+  string resolved_url = 1;
+  string settings_path = 2;
+  // Number of extra settings merged in from the byokey config.
+  uint32 extras_merged = 3;
 }

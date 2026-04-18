@@ -62,6 +62,60 @@ enum Byokey_Accounts_TokenState: SwiftProtobuf.Enum, Swift.CaseIterable {
 
 }
 
+enum Byokey_Accounts_LoginStage: SwiftProtobuf.Enum, Swift.CaseIterable {
+  typealias RawValue = Int
+  case unspecified // = 0
+  case started // = 1
+  case openedBrowser // = 2
+  case gotCode // = 3
+  case exchanging // = 4
+  case done // = 5
+  case failed // = 6
+  case UNRECOGNIZED(Int)
+
+  init() {
+    self = .unspecified
+  }
+
+  init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .started
+    case 2: self = .openedBrowser
+    case 3: self = .gotCode
+    case 4: self = .exchanging
+    case 5: self = .done
+    case 6: self = .failed
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .started: return 1
+    case .openedBrowser: return 2
+    case .gotCode: return 3
+    case .exchanging: return 4
+    case .done: return 5
+    case .failed: return 6
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  static let allCases: [Byokey_Accounts_LoginStage] = [
+    .unspecified,
+    .started,
+    .openedBrowser,
+    .gotCode,
+    .exchanging,
+    .done,
+    .failed,
+  ]
+
+}
+
 struct Byokey_Accounts_ListAccountsRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -186,12 +240,165 @@ struct Byokey_Accounts_ActivateAccountResponse: Sendable {
   init() {}
 }
 
+struct Byokey_Accounts_AddApiKeyRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var provider: String = String()
+
+  var apiKey: String = String()
+
+  var accountID: String {
+    get {_accountID ?? String()}
+    set {_accountID = newValue}
+  }
+  /// Returns true if `accountID` has been explicitly set.
+  var hasAccountID: Bool {self._accountID != nil}
+  /// Clears the value of `accountID`. Subsequent reads from it will return its default value.
+  mutating func clearAccountID() {self._accountID = nil}
+
+  var label: String {
+    get {_label ?? String()}
+    set {_label = newValue}
+  }
+  /// Returns true if `label` has been explicitly set.
+  var hasLabel: Bool {self._label != nil}
+  /// Clears the value of `label`. Subsequent reads from it will return its default value.
+  mutating func clearLabel() {self._label = nil}
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+
+  fileprivate var _accountID: String? = nil
+  fileprivate var _label: String? = nil
+}
+
+struct Byokey_Accounts_AddApiKeyResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var accountID: String = String()
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+struct Byokey_Accounts_ImportClaudeCodeRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var accountID: String {
+    get {_accountID ?? String()}
+    set {_accountID = newValue}
+  }
+  /// Returns true if `accountID` has been explicitly set.
+  var hasAccountID: Bool {self._accountID != nil}
+  /// Clears the value of `accountID`. Subsequent reads from it will return its default value.
+  mutating func clearAccountID() {self._accountID = nil}
+
+  var label: String {
+    get {_label ?? String()}
+    set {_label = newValue}
+  }
+  /// Returns true if `label` has been explicitly set.
+  var hasLabel: Bool {self._label != nil}
+  /// Clears the value of `label`. Subsequent reads from it will return its default value.
+  mutating func clearLabel() {self._label = nil}
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+
+  fileprivate var _accountID: String? = nil
+  fileprivate var _label: String? = nil
+}
+
+struct Byokey_Accounts_ImportClaudeCodeResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var accountID: String = String()
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+struct Byokey_Accounts_LoginRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var provider: String = String()
+
+  var accountID: String {
+    get {_accountID ?? String()}
+    set {_accountID = newValue}
+  }
+  /// Returns true if `accountID` has been explicitly set.
+  var hasAccountID: Bool {self._accountID != nil}
+  /// Clears the value of `accountID`. Subsequent reads from it will return its default value.
+  mutating func clearAccountID() {self._accountID = nil}
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+
+  fileprivate var _accountID: String? = nil
+}
+
+struct Byokey_Accounts_LoginEvent: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var stage: Byokey_Accounts_LoginStage = .unspecified
+
+  /// Human-readable detail — e.g. the authorization URL to show in
+  /// the UI when stage == OPENED_BROWSER.
+  var message: String {
+    get {_message ?? String()}
+    set {_message = newValue}
+  }
+  /// Returns true if `message` has been explicitly set.
+  var hasMessage: Bool {self._message != nil}
+  /// Clears the value of `message`. Subsequent reads from it will return its default value.
+  mutating func clearMessage() {self._message = nil}
+
+  /// Present on `FAILED` events.
+  var error: String {
+    get {_error ?? String()}
+    set {_error = newValue}
+  }
+  /// Returns true if `error` has been explicitly set.
+  var hasError: Bool {self._error != nil}
+  /// Clears the value of `error`. Subsequent reads from it will return its default value.
+  mutating func clearError() {self._error = nil}
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+
+  fileprivate var _message: String? = nil
+  fileprivate var _error: String? = nil
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate let _protobuf_package = "byokey.accounts"
 
 extension Byokey_Accounts_TokenState: SwiftProtobuf._ProtoNameProviding {
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0TOKEN_STATE_UNSPECIFIED\0\u{1}TOKEN_STATE_VALID\0\u{1}TOKEN_STATE_EXPIRED\0\u{1}TOKEN_STATE_INVALID\0")
+}
+
+extension Byokey_Accounts_LoginStage: SwiftProtobuf._ProtoNameProviding {
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0LOGIN_STAGE_UNSPECIFIED\0\u{1}LOGIN_STAGE_STARTED\0\u{1}LOGIN_STAGE_OPENED_BROWSER\0\u{1}LOGIN_STAGE_GOT_CODE\0\u{1}LOGIN_STAGE_EXCHANGING\0\u{1}LOGIN_STAGE_DONE\0\u{1}LOGIN_STAGE_FAILED\0")
 }
 
 extension Byokey_Accounts_ListAccountsRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
@@ -440,6 +647,237 @@ extension Byokey_Accounts_ActivateAccountResponse: SwiftProtobuf.Message, SwiftP
   }
 
   static func ==(lhs: Byokey_Accounts_ActivateAccountResponse, rhs: Byokey_Accounts_ActivateAccountResponse) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Byokey_Accounts_AddApiKeyRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".AddApiKeyRequest"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}provider\0\u{3}api_key\0\u{3}account_id\0\u{1}label\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.provider) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.apiKey) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self._accountID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self._label) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.provider.isEmpty {
+      try visitor.visitSingularStringField(value: self.provider, fieldNumber: 1)
+    }
+    if !self.apiKey.isEmpty {
+      try visitor.visitSingularStringField(value: self.apiKey, fieldNumber: 2)
+    }
+    try { if let v = self._accountID {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 3)
+    } }()
+    try { if let v = self._label {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 4)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Byokey_Accounts_AddApiKeyRequest, rhs: Byokey_Accounts_AddApiKeyRequest) -> Bool {
+    if lhs.provider != rhs.provider {return false}
+    if lhs.apiKey != rhs.apiKey {return false}
+    if lhs._accountID != rhs._accountID {return false}
+    if lhs._label != rhs._label {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Byokey_Accounts_AddApiKeyResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".AddApiKeyResponse"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}account_id\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.accountID) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.accountID.isEmpty {
+      try visitor.visitSingularStringField(value: self.accountID, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Byokey_Accounts_AddApiKeyResponse, rhs: Byokey_Accounts_AddApiKeyResponse) -> Bool {
+    if lhs.accountID != rhs.accountID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Byokey_Accounts_ImportClaudeCodeRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".ImportClaudeCodeRequest"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}account_id\0\u{1}label\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self._accountID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self._label) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._accountID {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 1)
+    } }()
+    try { if let v = self._label {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 2)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Byokey_Accounts_ImportClaudeCodeRequest, rhs: Byokey_Accounts_ImportClaudeCodeRequest) -> Bool {
+    if lhs._accountID != rhs._accountID {return false}
+    if lhs._label != rhs._label {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Byokey_Accounts_ImportClaudeCodeResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".ImportClaudeCodeResponse"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}account_id\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.accountID) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.accountID.isEmpty {
+      try visitor.visitSingularStringField(value: self.accountID, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Byokey_Accounts_ImportClaudeCodeResponse, rhs: Byokey_Accounts_ImportClaudeCodeResponse) -> Bool {
+    if lhs.accountID != rhs.accountID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Byokey_Accounts_LoginRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".LoginRequest"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}provider\0\u{3}account_id\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.provider) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self._accountID) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.provider.isEmpty {
+      try visitor.visitSingularStringField(value: self.provider, fieldNumber: 1)
+    }
+    try { if let v = self._accountID {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 2)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Byokey_Accounts_LoginRequest, rhs: Byokey_Accounts_LoginRequest) -> Bool {
+    if lhs.provider != rhs.provider {return false}
+    if lhs._accountID != rhs._accountID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Byokey_Accounts_LoginEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".LoginEvent"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}message\0\u{1}error\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.stage) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self._message) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self._error) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if self.stage != .unspecified {
+      try visitor.visitSingularEnumField(value: self.stage, fieldNumber: 1)
+    }
+    try { if let v = self._message {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 2)
+    } }()
+    try { if let v = self._error {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 3)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Byokey_Accounts_LoginEvent, rhs: Byokey_Accounts_LoginEvent) -> Bool {
+    if lhs.stage != rhs.stage {return false}
+    if lhs._message != rhs._message {return false}
+    if lhs._error != rhs._error {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

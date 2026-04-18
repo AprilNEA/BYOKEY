@@ -133,6 +133,93 @@ final class DataService {
         await reloadAccounts()
     }
 
+    @discardableResult
+    func addApiKey(
+        provider: String,
+        apiKey: String,
+        accountId: String? = nil,
+        label: String? = nil
+    ) async throws -> String {
+        var req = Byokey_Accounts_AddApiKeyRequest()
+        req.provider = provider
+        req.apiKey = apiKey
+        if let accountId { req.accountID = accountId }
+        if let label { req.label = label }
+        let resp = await accountsClient.addApiKey(request: req)
+        if let error = resp.error { throw error }
+        await reloadAccounts()
+        return resp.message?.accountID ?? ""
+    }
+
+    @discardableResult
+    func importClaudeCode(
+        accountId: String? = nil,
+        label: String? = nil
+    ) async throws -> String {
+        var req = Byokey_Accounts_ImportClaudeCodeRequest()
+        if let accountId { req.accountID = accountId }
+        if let label { req.label = label }
+        let resp = await accountsClient.importClaudeCode(request: req)
+        if let error = resp.error { throw error }
+        await reloadAccounts()
+        return resp.message?.accountID ?? ""
+    }
+
+    /// Run server-streaming OAuth login. Emits progress events as they arrive.
+    /// Throws on failure (terminal `.failed` stage or transport error).
+    func login(
+        provider: String,
+        accountId: String? = nil,
+        onEvent: @escaping @Sendable (Byokey_Accounts_LoginEvent) -> Void
+    ) async throws {
+        var req = Byokey_Accounts_LoginRequest()
+        req.provider = provider
+        if let accountId { req.accountID = accountId }
+
+        let stream = accountsClient.login(headers: [:])
+        try stream.send(req)
+        var terminalError: String?
+        for await result in stream.results() {
+            switch result {
+            case .headers, .complete:
+                continue
+            case .message(let event):
+                onEvent(event)
+                if event.stage == .failed {
+                    terminalError = event.error.isEmpty
+                        ? "login failed"
+                        : event.error
+                }
+            }
+        }
+        if let terminalError {
+            throw NSError(
+                domain: "Byokey.Login",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: terminalError]
+            )
+        }
+        await reloadAccounts()
+    }
+
+    /// Inject the proxy URL into the local Amp CLI settings file.
+    /// Returns the resolved URL.
+    @discardableResult
+    func injectAmpUrl(url: String? = nil) async throws -> Byokey_Amp_InjectUrlResponse {
+        var req = Byokey_Amp_InjectUrlRequest()
+        if let url { req.url = url }
+        let resp = await ampClient.injectURL(request: req)
+        if let error = resp.error { throw error }
+        guard let message = resp.message else {
+            throw NSError(
+                domain: "Byokey.AmpInject",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "empty response"]
+            )
+        }
+        return message
+    }
+
     // MARK: - Private
 
     private func fetchAll() async {

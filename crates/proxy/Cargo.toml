@@ -42,6 +42,7 @@ uuid.workspace = true
 connectrpc.workspace = true
 buffa.workspace = true
 buffa-types.workspace = true
+tokio-stream = "0.1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

@@ -7,8 +7,9 @@
 use async_trait::async_trait;
 use byokey_types::{ByokError, OAuthToken, ProviderId, Result};
 use serde_json::Value;
+use tokio::sync::mpsc;
 
-use super::{open_browser, save_login_token};
+use super::{LoginProgress, emit, open_browser, save_login_token};
 use crate::{AuthManager, callback, credentials::OAuthCredentials, pkce, token};
 
 /// Provider-specific behavior for the Authorization Code + PKCE OAuth flow.
@@ -62,13 +63,10 @@ pub async fn run<P: AuthCodeFlow>(
     auth: &AuthManager,
     http: &rquest::Client,
     account: Option<&str>,
+    events: Option<&mpsc::Sender<LoginProgress>>,
 ) -> Result<()> {
-    eprintln!(
-        "[login] fetching credentials for {}...",
-        provider.provider_name()
-    );
+    emit(events, LoginProgress::Started).await;
     let creds = crate::credentials::fetch(provider.provider_name(), http).await?;
-    eprintln!("[login] credentials fetched");
 
     let (verifier, challenge) = if provider.uses_pkce() {
         pkce::generate_pkce()
@@ -78,29 +76,27 @@ pub async fn run<P: AuthCodeFlow>(
     let state = pkce::random_state();
     let auth_url = provider.build_auth_url(&creds.client_id, &challenge, &state);
 
-    eprintln!(
-        "[login] binding callback on port {}...",
-        provider.callback_port()
-    );
     let listeners = callback::bind_callback(provider.callback_port()).await?;
-    eprintln!("[login] opening browser...");
     open_browser(&auth_url);
-    eprintln!("[login] waiting for OAuth callback...");
+    emit(
+        events,
+        LoginProgress::OpenedBrowser {
+            url: auth_url.clone(),
+        },
+    )
+    .await;
     let params = callback::accept_callback(listeners).await?;
-    eprintln!("[login] callback received");
 
     verify_state(&params, &state)?;
     let code = extract_code(&params)?;
 
-    eprintln!("[login] exchanging code for token...");
+    emit(events, LoginProgress::Exchanging).await;
     let tok = provider
         .exchange_code(http, &creds, code, &verifier, &state)
         .await?;
     let tok = provider.post_process(tok, http).await?;
 
-    eprintln!("[login] saving token...");
     save_login_token(auth, &provider.provider_id(), tok, account).await?;
-    eprintln!("[login] done");
     Ok(())
 }
 

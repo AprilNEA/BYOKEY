@@ -19,6 +19,18 @@ internal protocol Byokey_Accounts_AccountsServiceClientInterface: Sendable {
 
     @available(iOS 13, *)
     func `activateAccount`(request: Byokey_Accounts_ActivateAccountRequest, headers: Connect.Headers) async -> ResponseMessage<Byokey_Accounts_ActivateAccountResponse>
+
+    @available(iOS 13, *)
+    func `addApiKey`(request: Byokey_Accounts_AddApiKeyRequest, headers: Connect.Headers) async -> ResponseMessage<Byokey_Accounts_AddApiKeyResponse>
+
+    @available(iOS 13, *)
+    func `importClaudeCode`(request: Byokey_Accounts_ImportClaudeCodeRequest, headers: Connect.Headers) async -> ResponseMessage<Byokey_Accounts_ImportClaudeCodeResponse>
+
+    /// Server-streaming OAuth login. Emits progress events until the flow
+    /// completes or fails. Clients should keep the stream open to receive
+    /// `OPENED_BROWSER` → `GOT_CODE` → `EXCHANGING` → `DONE` transitions.
+    @available(iOS 13, *)
+    func `login`(headers: Connect.Headers) -> any Connect.ServerOnlyAsyncStreamInterface<Byokey_Accounts_LoginRequest, Byokey_Accounts_LoginEvent>
 }
 
 /// Concrete implementation of `Byokey_Accounts_AccountsServiceClientInterface`.
@@ -44,11 +56,29 @@ internal final class Byokey_Accounts_AccountsServiceClient: Byokey_Accounts_Acco
         return await self.client.unary(path: "/byokey.accounts.AccountsService/ActivateAccount", idempotencyLevel: .unknown, request: request, headers: headers)
     }
 
+    @available(iOS 13, *)
+    internal func `addApiKey`(request: Byokey_Accounts_AddApiKeyRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Byokey_Accounts_AddApiKeyResponse> {
+        return await self.client.unary(path: "/byokey.accounts.AccountsService/AddApiKey", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    internal func `importClaudeCode`(request: Byokey_Accounts_ImportClaudeCodeRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Byokey_Accounts_ImportClaudeCodeResponse> {
+        return await self.client.unary(path: "/byokey.accounts.AccountsService/ImportClaudeCode", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    internal func `login`(headers: Connect.Headers = [:]) -> any Connect.ServerOnlyAsyncStreamInterface<Byokey_Accounts_LoginRequest, Byokey_Accounts_LoginEvent> {
+        return self.client.serverOnlyStream(path: "/byokey.accounts.AccountsService/Login", headers: headers)
+    }
+
     internal enum Metadata {
         internal enum Methods {
             internal static let listAccounts = Connect.MethodSpec(name: "ListAccounts", service: "byokey.accounts.AccountsService", type: .unary)
             internal static let removeAccount = Connect.MethodSpec(name: "RemoveAccount", service: "byokey.accounts.AccountsService", type: .unary)
             internal static let activateAccount = Connect.MethodSpec(name: "ActivateAccount", service: "byokey.accounts.AccountsService", type: .unary)
+            internal static let addApiKey = Connect.MethodSpec(name: "AddApiKey", service: "byokey.accounts.AccountsService", type: .unary)
+            internal static let importClaudeCode = Connect.MethodSpec(name: "ImportClaudeCode", service: "byokey.accounts.AccountsService", type: .unary)
+            internal static let login = Connect.MethodSpec(name: "Login", service: "byokey.accounts.AccountsService", type: .serverStream)
         }
     }
 }

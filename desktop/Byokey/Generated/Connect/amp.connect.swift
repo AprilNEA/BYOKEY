@@ -16,6 +16,11 @@ internal protocol Byokey_Amp_AmpServiceClientInterface: Sendable {
 
     @available(iOS 13, *)
     func `getThread`(request: Byokey_Amp_GetThreadRequest, headers: Connect.Headers) async -> ResponseMessage<Byokey_Amp_GetThreadResponse>
+
+    /// Rewrites ~/.config/amp/settings.json to point `amp.url` at the byokey
+    /// proxy URL. Idempotent: repeat calls converge to the same file contents.
+    @available(iOS 13, *)
+    func `injectURL`(request: Byokey_Amp_InjectUrlRequest, headers: Connect.Headers) async -> ResponseMessage<Byokey_Amp_InjectUrlResponse>
 }
 
 /// Concrete implementation of `Byokey_Amp_AmpServiceClientInterface`.
@@ -36,10 +41,16 @@ internal final class Byokey_Amp_AmpServiceClient: Byokey_Amp_AmpServiceClientInt
         return await self.client.unary(path: "/byokey.amp.AmpService/GetThread", idempotencyLevel: .noSideEffects, request: request, headers: headers)
     }
 
+    @available(iOS 13, *)
+    internal func `injectURL`(request: Byokey_Amp_InjectUrlRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Byokey_Amp_InjectUrlResponse> {
+        return await self.client.unary(path: "/byokey.amp.AmpService/InjectUrl", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
     internal enum Metadata {
         internal enum Methods {
             internal static let listThreads = Connect.MethodSpec(name: "ListThreads", service: "byokey.amp.AmpService", type: .unary)
             internal static let getThread = Connect.MethodSpec(name: "GetThread", service: "byokey.amp.AmpService", type: .unary)
+            internal static let injectURL = Connect.MethodSpec(name: "InjectUrl", service: "byokey.amp.AmpService", type: .unary)
         }
     }
 }

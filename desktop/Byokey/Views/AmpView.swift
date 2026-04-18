@@ -33,7 +33,6 @@ struct AmpView: View {
     @Environment(AppEnvironment.self) private var appEnv
     @Environment(DataService.self) private var dataService
     @State private var isInjecting = false
-    @State private var isTogglingAds = false
     @State private var resultMessage: ResultMessage?
     @State private var injectionStatus: InjectionStatus = .unknown
 
@@ -76,17 +75,6 @@ struct AmpView: View {
                         isLoading: isInjecting
                     ) {
                         Task { await inject() }
-                    }
-
-                    quickActionCard(
-                        title: "Ads Control",
-                        subtitle: "Patch Amp CLI & extensions",
-                        statusColor: nil,
-                        icon: "eye.slash",
-                        actionLabel: "Disable Ads",
-                        isLoading: isTogglingAds
-                    ) {
-                        Task { await toggleAds(disable: true) }
                     }
                 }
 
@@ -456,17 +444,6 @@ struct AmpView: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .disabled(isLoading)
-
-                if title == "Ads Control" {
-                    Button {
-                        Task { await toggleAds(disable: false) }
-                    } label: {
-                        Text("Restore")
-                            .font(.caption)
-                    }
-                    .controlSize(.small)
-                    .disabled(isTogglingAds)
-                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -546,25 +523,14 @@ struct AmpView: View {
         isInjecting = true
         defer { isInjecting = false }
         do {
-            let output = try await CLIRunner.ampInject()
-            resultMessage = .init(
-                text: output.trimmingCharacters(in: .whitespacesAndNewlines), isError: false)
+            let resp = try await dataService.injectAmpUrl()
+            var summary = "amp.url set to \(resp.resolvedURL)"
+            if resp.extrasMerged > 0 {
+                summary += " — merged \(resp.extrasMerged) extra setting(s)"
+            }
+            summary += "\nconfig: \(resp.settingsPath)"
+            resultMessage = .init(text: summary, isError: false)
             checkInjectionStatus()
-        } catch {
-            resultMessage = .init(text: error.localizedDescription, isError: true)
-        }
-    }
-
-    private func toggleAds(disable: Bool) async {
-        isTogglingAds = true
-        defer { isTogglingAds = false }
-        do {
-            let output =
-                disable
-                ? try await CLIRunner.ampAdsDisable()
-                : try await CLIRunner.ampAdsEnable()
-            resultMessage = .init(
-                text: output.trimmingCharacters(in: .whitespacesAndNewlines), isError: false)
         } catch {
             resultMessage = .init(text: error.localizedDescription, isError: true)
         }

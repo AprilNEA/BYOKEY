@@ -333,9 +333,7 @@ struct AccountsView: View {
         loginInProgress = provider
         errorMessage = nil
         do {
-            try await CLIRunner.login(provider: provider)
-            try? await Task.sleep(for: .seconds(1))
-            await dataService.reloadAccounts()
+            try await dataService.login(provider: provider) { _ in }
         } catch {
             errorMessage = "Login failed: \(error.localizedDescription)"
         }
@@ -357,6 +355,8 @@ private enum AddMethod: Hashable {
 }
 
 private struct AddAccountSheet: View {
+    @Environment(DataService.self) private var dataService
+
     let providerId: String
     let providerName: String
     let onDismiss: () -> Void
@@ -368,6 +368,7 @@ private struct AddAccountSheet: View {
     @State private var label: String = ""
     @State private var isSubmitting = false
     @State private var localError: String?
+    @State private var loginProgress: String?
 
     init(
         providerId: String,
@@ -441,6 +442,16 @@ private struct AddAccountSheet: View {
                         .padding(.top, 4)
                     TextField("e.g. Work", text: $label)
                         .textFieldStyle(.roundedBorder)
+                }
+            }
+
+            if let loginProgress {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text(loginProgress)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
             }
 
@@ -539,16 +550,21 @@ private struct AddAccountSheet: View {
     private func submit() async {
         isSubmitting = true
         localError = nil
+        loginProgress = nil
         do {
             switch method {
             case .claudeCode:
-                try await CLIRunner.importClaudeCode()
+                try await dataService.importClaudeCode()
             case .oauth:
-                try await CLIRunner.login(provider: providerId)
+                try await dataService.login(provider: providerId) { @Sendable event in
+                    Task { @MainActor in
+                        self.loginProgress = Self.progressMessage(for: event)
+                    }
+                }
             case .apiKey:
                 let trimmed = apiKey.trimmingCharacters(in: .whitespaces)
                 let trimmedLabel = label.trimmingCharacters(in: .whitespaces)
-                try await CLIRunner.addApiKey(
+                try await dataService.addApiKey(
                     provider: providerId,
                     apiKey: trimmed,
                     label: trimmedLabel.isEmpty ? nil : trimmedLabel
@@ -560,6 +576,26 @@ private struct AddAccountSheet: View {
             onError(error.localizedDescription)
         }
         isSubmitting = false
+        loginProgress = nil
+    }
+
+    private static func progressMessage(for event: Byokey_Accounts_LoginEvent) -> String? {
+        switch event.stage {
+        case .started:
+            return "Starting login…"
+        case .openedBrowser:
+            return event.message.isEmpty
+                ? "Waiting for browser callback…"
+                : "Opened: \(event.message)"
+        case .gotCode:
+            return "Got authorization code"
+        case .exchanging:
+            return "Exchanging code for token…"
+        case .done:
+            return "Done"
+        case .failed, .unspecified, .UNRECOGNIZED:
+            return nil
+        }
     }
 }
 
