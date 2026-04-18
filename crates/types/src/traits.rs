@@ -21,6 +21,11 @@ pub const DEFAULT_ACCOUNT: &str = "default";
 /// Claude Code CLI (see `byokey_auth::provider::claude_code`).
 pub const CLAUDE_CODE_ACCOUNT: &str = "claude-code";
 
+/// Maximum byte length accepted by the `AddApiKey` RPC / CLI command.
+/// Real API keys are well under 1KB; rejecting larger values guards against
+/// oversized strings ending up in every outgoing `Authorization` header.
+pub const MAX_API_KEY_BYTES: usize = 4096;
+
 /// Persistent storage for OAuth tokens, keyed by `(provider, account_id)`.
 ///
 /// The basic `load`/`save`/`remove` methods operate on the **active** account

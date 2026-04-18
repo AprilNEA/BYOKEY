@@ -106,7 +106,9 @@ pub async fn run<P: DeviceCodeFlow>(
 
         match provider.poll_token(http, &creds, &dc.device_code).await? {
             PollResult::Success(tok) => {
-                emit(events, LoginProgress::Exchanging).await;
+                // Device Code flow has no distinct "exchange" step: the
+                // successful poll *is* the token return. Go straight to
+                // saving and letting DONE be emitted by the handler.
                 save_login_token(auth, &provider_id, tok, account).await?;
                 if events.is_none() {
                     println!("{provider_id} login successful");

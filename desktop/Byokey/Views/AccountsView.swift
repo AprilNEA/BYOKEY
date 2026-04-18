@@ -100,6 +100,7 @@ struct AccountsView: View {
                     errorMessage = message
                 }
             )
+            .onAppear { errorMessage = nil }
         }
     }
 

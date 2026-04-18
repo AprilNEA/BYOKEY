@@ -19,6 +19,6 @@ pub use ratelimit::{RateLimitSnapshot, RateLimitStore};
 pub use token::{AccountInfo, OAuthToken, TokenState};
 pub use traits::{
     AccountUsageTotal, ByteStream, CLAUDE_CODE_ACCOUNT, ChatHistoryStore, ConversationSummary,
-    DEFAULT_ACCOUNT, MessageRecord, ProviderExecutor, ProviderResponse, RequestTranslator,
-    ResponseTranslator, TokenStore, UsageBucket, UsageRecord, UsageStore,
+    DEFAULT_ACCOUNT, MAX_API_KEY_BYTES, MessageRecord, ProviderExecutor, ProviderResponse,
+    RequestTranslator, ResponseTranslator, TokenStore, UsageBucket, UsageRecord, UsageStore,
 };

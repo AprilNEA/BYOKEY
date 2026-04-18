@@ -63,7 +63,9 @@ pub async fn load_token() -> Result<Option<OAuthToken>, ByokError> {
     Ok(Some(OAuthToken {
         access_token: secrets.oauth.access_token,
         refresh_token: secrets.oauth.refresh_token,
-        expires_at: secrets.oauth.expires_at_ms.map(|ms| ms / 1000),
+        // Claude Code stores `expiresAt` as Unix milliseconds (JS `Date.now()`);
+        // `OAuthToken::expires_at` expects Unix seconds.
+        expires_at: secrets.oauth.expires_at_ms.map(|ms| ms / 1_000),
         token_type: Some("Bearer".to_string()),
     }))
 }
@@ -94,7 +96,7 @@ async fn load_raw() -> Result<Option<String>, ByokError> {
     .await
     .map_err(|_| {
         ByokError::Auth(
-            "Keychain lookup timed out after 10s (locked or awaiting user confirmation)".into(),
+            "Keychain lookup timed out after 10s — unlock your login Keychain and try again".into(),
         )
     })?
     .map_err(|e| ByokError::Auth(format!("failed to spawn security: {e}")))?;

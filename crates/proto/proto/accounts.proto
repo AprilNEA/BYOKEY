@@ -21,9 +21,12 @@ service AccountsService {
   //   STARTED → OPENED_BROWSER → EXCHANGING → DONE/FAILED
   //
   // Stage progression (Device Code flow — Copilot, Qwen, Kimi):
-  //   STARTED → OPENED_BROWSER → EXCHANGING → DONE/FAILED
-  //   (the `user_code` field on OPENED_BROWSER carries the short code the
-  //    user must enter at the verification URL)
+  //   STARTED → OPENED_BROWSER → DONE/FAILED
+  //   After OPENED_BROWSER the server polls the provider every few seconds
+  //   waiting for the user to finish entering the code — there may be a
+  //   long silent gap (tens of seconds to minutes) before DONE arrives.
+  //   The `user_code` field on OPENED_BROWSER carries the short code the
+  //   user must enter at the verification URL.
   //
   // `GOT_CODE` is reserved for future flow variants with a distinct
   // pre-exchange step (e.g. email/SMS verification). Current flows do not

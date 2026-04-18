@@ -36,9 +36,11 @@ impl AuthCmd {
         if api_key.trim().is_empty() {
             anyhow::bail!("api_key cannot be empty");
         }
-        const MAX_API_KEY_BYTES: usize = 4096;
-        if api_key.len() > MAX_API_KEY_BYTES {
-            anyhow::bail!("api_key exceeds maximum length of {MAX_API_KEY_BYTES} bytes");
+        if api_key.len() > byokey_types::MAX_API_KEY_BYTES {
+            anyhow::bail!(
+                "api_key exceeds maximum length of {} bytes",
+                byokey_types::MAX_API_KEY_BYTES
+            );
         }
         let account_id = account
             .as_deref()
