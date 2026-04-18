@@ -36,6 +36,10 @@ impl AuthCmd {
         if api_key.trim().is_empty() {
             anyhow::bail!("api_key cannot be empty");
         }
+        const MAX_API_KEY_BYTES: usize = 4096;
+        if api_key.len() > MAX_API_KEY_BYTES {
+            anyhow::bail!("api_key exceeds maximum length of {MAX_API_KEY_BYTES} bytes");
+        }
         let account_id = account
             .as_deref()
             .unwrap_or(byokey_types::DEFAULT_ACCOUNT)
@@ -71,7 +75,10 @@ impl AuthCmd {
                 )
             })?;
         let provider = ProviderId::Claude;
-        let account_id = account.as_deref().unwrap_or("claude-code").to_string();
+        let account_id = account
+            .as_deref()
+            .unwrap_or(byokey_types::CLAUDE_CODE_ACCOUNT)
+            .to_string();
         let label = label.unwrap_or_else(|| "Claude Code".to_string());
         self.auth
             .save_token_for(&provider, &account_id, Some(label.as_str()), token)

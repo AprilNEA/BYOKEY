@@ -17,6 +17,10 @@ pub type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes>> + Send>>;
 /// Default account identifier used when no explicit account is specified.
 pub const DEFAULT_ACCOUNT: &str = "default";
 
+/// Default account identifier for credentials imported from the local
+/// Claude Code CLI (see `byokey_auth::provider::claude_code`).
+pub const CLAUDE_CODE_ACCOUNT: &str = "claude-code";
+
 /// Persistent storage for OAuth tokens, keyed by `(provider, account_id)`.
 ///
 /// The basic `load`/`save`/`remove` methods operate on the **active** account

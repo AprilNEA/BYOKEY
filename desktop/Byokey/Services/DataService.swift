@@ -181,7 +181,7 @@ final class DataService {
         var terminalError: String?
         var sawTerminal = false
 
-        for await result in stream.results() {
+        streamLoop: for await result in stream.results() {
             switch result {
             case .headers:
                 continue
@@ -189,9 +189,11 @@ final class DataService {
                 onEvent(event)
                 if event.stage == .done {
                     sawTerminal = true
+                    break streamLoop
                 } else if event.stage == .failed {
                     sawTerminal = true
                     terminalError = event.error.isEmpty ? "login failed" : event.error
+                    break streamLoop
                 }
             case .complete(let code, let error, _):
                 if code != .ok, terminalError == nil {

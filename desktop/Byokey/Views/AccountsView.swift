@@ -354,6 +354,7 @@ private struct AddAccountSheet: View {
     @State private var isSubmitting = false
     @State private var localError: String?
     @State private var loginProgress: String?
+    @State private var submitTask: Task<Void, Never>?
 
     init(
         providerId: String,
@@ -452,10 +453,14 @@ private struct AddAccountSheet: View {
 
             HStack {
                 Spacer()
-                Button("Cancel", action: onDismiss)
-                    .keyboardShortcut(.cancelAction)
+                Button("Cancel") {
+                    submitTask?.cancel()
+                    submitTask = nil
+                    onDismiss()
+                }
+                .keyboardShortcut(.cancelAction)
                 Button {
-                    Task { await submit() }
+                    submitTask = Task { await submit() }
                 } label: {
                     if isSubmitting {
                         ProgressView().controlSize(.small)
@@ -466,6 +471,10 @@ private struct AddAccountSheet: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(isSubmitting || !isReady)
             }
+        }
+        .onDisappear {
+            submitTask?.cancel()
+            submitTask = nil
         }
         .padding(24)
         .frame(width: 440)

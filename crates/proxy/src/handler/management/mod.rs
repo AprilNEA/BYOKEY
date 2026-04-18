@@ -107,6 +107,10 @@ const THIRTY_DAYS_SECS: i64 = 30 * 24 * 3600;
 // Largest time range a single `GetUsageByAccount` request can ask for.
 // Prevents adversarial queries that would scan the entire usage table.
 const MAX_USAGE_RANGE_SECS: i64 = 365 * 24 * 3600;
+// Sanity cap on `AddApiKey.api_key` length. Real API keys are well under 1KB;
+// rejecting larger values protects outgoing Authorization headers from
+// accidentally-huge payloads.
+const MAX_API_KEY_BYTES: usize = 4096;
 
 fn policy_strategy_to_proto(kind: byokey_config::PolicyStrategyKind) -> stat::RoutingStrategy {
     use byokey_config::PolicyStrategyKind as K;
@@ -525,6 +529,11 @@ impl acct::AccountsService for AccountsServiceImpl {
         if req.api_key.trim().is_empty() {
             return Err(ConnectError::invalid_argument("api_key cannot be empty"));
         }
+        if req.api_key.len() > MAX_API_KEY_BYTES {
+            return Err(ConnectError::invalid_argument(format!(
+                "api_key exceeds maximum length of {MAX_API_KEY_BYTES} bytes"
+            )));
+        }
         let account_id = req
             .account_id
             .unwrap_or_else(|| byokey_types::DEFAULT_ACCOUNT.to_string());
@@ -563,7 +572,9 @@ impl acct::AccountsService for AccountsServiceImpl {
                 )
             })?;
         let pid = byokey_types::ProviderId::Claude;
-        let account_id = req.account_id.unwrap_or_else(|| "claude-code".to_string());
+        let account_id = req
+            .account_id
+            .unwrap_or_else(|| byokey_types::CLAUDE_CODE_ACCOUNT.to_string());
         let label = req.label.unwrap_or_else(|| "Claude Code".to_string());
         self.0
             .auth

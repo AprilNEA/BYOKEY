@@ -17,8 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Desktop app calls ConnectRPC directly instead of shelling out via `CLIRunner`.
 
 ### Removed
-- `desktop/Byokey/Services/CLIRunner.swift` — all 5 methods migrated to RPC.
-- Dead amp-ads UI (`amp ads` CLI subcommand was removed in commit f183662).
+- `desktop/Byokey/Services/CLIRunner.swift` — `login`, `addApiKey`,
+  `importClaudeCode`, and `ampInject` migrated to RPC; `ampAdsDisable`/
+  `ampAdsEnable` removed entirely (the underlying `amp ads` CLI subcommand
+  was removed in commit f183662, so these had been pointing at nothing).
+- Dead amp-ads UI from `AmpView.swift`.
 
 ## [1.0.0](https://github.com/AprilNEA/BYOKEY/compare/v0.11.0...v1.0.0) - 2026-04-18
 

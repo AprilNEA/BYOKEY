@@ -111,7 +111,12 @@ pub async fn run<P: AuthCodeFlow>(
     if events.is_none() {
         eprintln!("[login] received OAuth code, exchanging for token...");
     }
-    emit(events, LoginProgress::GotCode).await;
+    // Note: LoginProgress::GotCode is intentionally NOT emitted here.
+    // The next `exchange_code` call *is* the "exchanging" work, so emitting
+    // GotCode immediately before Exchanging would produce two consecutive
+    // events with no observable gap. GotCode remains in the enum as a
+    // reserved value for future use (e.g. flows with a distinct pre-exchange
+    // stage such as email/SMS verification).
     emit(events, LoginProgress::Exchanging).await;
     let tok = provider
         .exchange_code(http, &creds, code, &verifier, &state)

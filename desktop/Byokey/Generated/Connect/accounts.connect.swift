@@ -28,7 +28,19 @@ internal protocol Byokey_Accounts_AccountsServiceClientInterface: Sendable {
 
     /// Server-streaming OAuth login. Emits progress events until the flow
     /// completes or fails. Clients should keep the stream open to receive
-    /// `OPENED_BROWSER` → `GOT_CODE` → `EXCHANGING` → `DONE` transitions.
+    /// the stage progression below.
+    ///
+    /// Stage progression (Auth Code flow — Claude, Codex, Gemini, Amp, etc.):
+    ///   STARTED → OPENED_BROWSER → EXCHANGING → DONE/FAILED
+    ///
+    /// Stage progression (Device Code flow — Copilot, Qwen, Kimi):
+    ///   STARTED → OPENED_BROWSER → EXCHANGING → DONE/FAILED
+    ///   (the `user_code` field on OPENED_BROWSER carries the short code the
+    ///    user must enter at the verification URL)
+    ///
+    /// `GOT_CODE` is reserved for future flow variants with a distinct
+    /// pre-exchange step (e.g. email/SMS verification). Current flows do not
+    /// emit it.
     @available(iOS 13, *)
     func `login`(headers: Connect.Headers) -> any Connect.ServerOnlyAsyncStreamInterface<Byokey_Accounts_LoginRequest, Byokey_Accounts_LoginEvent>
 }
@@ -58,12 +70,12 @@ internal final class Byokey_Accounts_AccountsServiceClient: Byokey_Accounts_Acco
 
     @available(iOS 13, *)
     internal func `addApiKey`(request: Byokey_Accounts_AddApiKeyRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Byokey_Accounts_AddApiKeyResponse> {
-        return await self.client.unary(path: "/byokey.accounts.AccountsService/AddApiKey", idempotencyLevel: .unknown, request: request, headers: headers)
+        return await self.client.unary(path: "/byokey.accounts.AccountsService/AddApiKey", idempotencyLevel: .idempotent, request: request, headers: headers)
     }
 
     @available(iOS 13, *)
     internal func `importClaudeCode`(request: Byokey_Accounts_ImportClaudeCodeRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Byokey_Accounts_ImportClaudeCodeResponse> {
-        return await self.client.unary(path: "/byokey.accounts.AccountsService/ImportClaudeCode", idempotencyLevel: .unknown, request: request, headers: headers)
+        return await self.client.unary(path: "/byokey.accounts.AccountsService/ImportClaudeCode", idempotencyLevel: .idempotent, request: request, headers: headers)
     }
 
     @available(iOS 13, *)

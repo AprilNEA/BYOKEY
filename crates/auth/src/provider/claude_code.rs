@@ -75,18 +75,29 @@ async fn load_raw() -> Result<Option<String>, ByokError> {
     // security-framework crate dependency.
     let user = std::env::var("USER")
         .map_err(|_| ByokError::Auth("USER environment variable not set".into()))?;
-    let output = tokio::process::Command::new("security")
-        .args([
-            "find-generic-password",
-            "-s",
-            "Claude Code-credentials",
-            "-a",
-            &user,
-            "-w",
-        ])
-        .output()
-        .await
-        .map_err(|e| ByokError::Auth(format!("failed to spawn security: {e}")))?;
+    // Timeout guards against a locked Keychain that pops an authentication
+    // dialog; when called from the daemon RPC handler we must not block a
+    // worker indefinitely.
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        tokio::process::Command::new("security")
+            .args([
+                "find-generic-password",
+                "-s",
+                "Claude Code-credentials",
+                "-a",
+                &user,
+                "-w",
+            ])
+            .output(),
+    )
+    .await
+    .map_err(|_| {
+        ByokError::Auth(
+            "Keychain lookup timed out after 10s (locked or awaiting user confirmation)".into(),
+        )
+    })?
+    .map_err(|e| ByokError::Auth(format!("failed to spawn security: {e}")))?;
     match output.status.code() {
         Some(0) => {}                // fall through
         Some(44) => return Ok(None), // errSecItemNotFound
