@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `AccountsService.AddApiKey` and `AccountsService.ImportClaudeCode` RPCs.
+- `AccountsService.Login` server-streaming RPC with live `LoginEvent` progress.
+- `AmpService.InjectUrl` RPC.
+- CLI subcommands `add-api-key` (optional stdin via `-`) and `import-claude-code`.
+
+### Changed
+- Desktop app calls ConnectRPC directly instead of shelling out via `CLIRunner`.
+
+### Removed
+- `desktop/Byokey/Services/CLIRunner.swift` — all 5 methods migrated to RPC.
+- Dead amp-ads UI (`amp ads` CLI subcommand was removed in commit f183662).
+
 ## [1.0.0](https://github.com/AprilNEA/BYOKEY/compare/v0.11.0...v1.0.0) - 2026-04-18
 
 First stable release. API surface (HTTP proxy endpoints, CLI commands,

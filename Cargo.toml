@@ -95,8 +95,10 @@ regex = "1"
 tarpc = { version = "0.37", features = ["tokio1", "serde-transport", "unix", "serde-transport-json"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 # Futures
+futures = "0.3"
 futures-core = "0.3"
 futures-util = "0.3"
+tokio-stream = "0.1"
 bytes = "1"
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 http = "1"

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `flow::LoginProgress` enum and `flow::login_with_events` variant for streaming progress.
+- `provider::claude_code::load_token` — reads the local Claude Code CLI's OAuth credentials
+  (macOS Keychain or `~/.claude/.credentials.json`).
+
 ## [0.9.0](https://github.com/AprilNEA/BYOKEY/compare/byokey-auth-v0.8.0...byokey-auth-v0.9.0) - 2026-03-30
 
 ### Added

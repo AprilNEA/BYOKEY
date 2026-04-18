@@ -87,9 +87,19 @@ async fn load_raw() -> Result<Option<String>, ByokError> {
         .output()
         .await
         .map_err(|e| ByokError::Auth(format!("failed to spawn security: {e}")))?;
-    if !output.status.success() {
-        // Exit code 44 = entry not found — treat as "not logged in".
-        return Ok(None);
+    match output.status.code() {
+        Some(0) => {}                // fall through
+        Some(44) => return Ok(None), // errSecItemNotFound
+        Some(code) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(ByokError::Auth(format!(
+                "security failed (exit {code}): {}",
+                stderr.trim()
+            )));
+        }
+        None => {
+            return Err(ByokError::Auth("security terminated by signal".into()));
+        }
     }
     let raw = String::from_utf8(output.stdout)
         .map_err(|e| ByokError::Auth(format!("security returned non-UTF8: {e}")))?;
