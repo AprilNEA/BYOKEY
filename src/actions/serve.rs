@@ -11,8 +11,11 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
+use tracing_subscriber::layer::SubscriberExt as _;
+use tracing_subscriber::util::SubscriberInitExt as _;
 
 use crate::ServerArgs;
+use crate::actions::telemetry;
 use crate::control_server::{self, ControlState};
 
 fn init_logging(cfg: &LogConfig, log_file: Option<PathBuf>) -> Option<WorkerGuard> {
@@ -34,15 +37,18 @@ fn init_logging(cfg: &LogConfig, log_file: Option<PathBuf>) -> Option<WorkerGuar
         (BoxMakeWriter::new(std::io::stdout), None)
     };
 
-    let builder = tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
+    let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
         .with_ansi(path.is_none())
         .with_writer(writer);
 
+    let registry = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(sentry::integrations::tracing::layer());
+
     match cfg.format {
-        LogFormat::Json => builder.json().init(),
-        LogFormat::Text => builder.init(),
+        LogFormat::Json => registry.with(fmt_layer.json()).init(),
+        LogFormat::Text => registry.with(fmt_layer).init(),
     }
 
     guard
@@ -81,8 +87,18 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
 
     let snapshot = config_arc.load();
 
+    // _sentry_guard must be held for the entire process lifetime so pending
+    // events are flushed when it is dropped. Initialization happens before
+    // the tracing subscriber so the sentry-tracing layer sees a bound client.
+    let _sentry_guard = telemetry::init(&snapshot.telemetry);
+    let sentry_enabled = _sentry_guard.is_some();
+
     // _log_guard must be held until server exits to flush buffered writes.
     let _log_guard = init_logging(&snapshot.log, log_file);
+
+    if sentry_enabled {
+        tracing::info!("sentry enabled");
+    }
 
     // CLI overrides for listen address.
     let effective_host = host.as_deref().unwrap_or(&snapshot.host).to_owned();

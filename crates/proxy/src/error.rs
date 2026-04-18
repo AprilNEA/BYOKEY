@@ -75,7 +75,17 @@ fn classify_upstream(status: u16) -> (StatusCode, &'static str, &'static str) {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, error_type, error_code) = self.classify();
-        let msg = self.0.to_string();
+        // Upstream errors: build the client message from fields directly so
+        // the body is forwarded to the original caller. `Display` omits the
+        // body to keep it out of logs/Sentry, so we don't want to use it here.
+        let msg = match &self.0 {
+            ByokError::Upstream {
+                status: s, body, ..
+            } => {
+                format!("upstream error: status={s}, body={body}")
+            }
+            other => other.to_string(),
+        };
         (
             status,
             Json(json!({

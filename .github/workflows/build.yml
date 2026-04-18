@@ -14,6 +14,14 @@ jobs:
     # byokey-proto-v* or byokey-daemon-v* that release-plz may emit.
     if: startsWith(github.event.release.tag_name, 'v')
     runs-on: ${{ matrix.os }}
+    env:
+      # Lift secrets to job-level env so conditional steps can gate on them.
+      # When a fork builds without secrets configured, these become empty
+      # and the Sentry upload steps skip gracefully.
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+      SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT_DAEMON }}
+      BYOKEY_SENTRY_DSN: ${{ secrets.BYOKEY_DAEMON_SENTRY_DSN }}
     strategy:
       fail-fast: false
       matrix:
@@ -49,6 +57,22 @@ jobs:
         shell: bash
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Install sentry-cli (Unix)
+        if: env.SENTRY_AUTH_TOKEN != '' && runner.os != 'Windows'
+        shell: bash
+        run: curl -sL https://sentry.io/get-cli/ | INSTALL_DIR=/usr/local/bin bash
+
+      - name: Upload Rust debug symbols to Sentry
+        # Skipped on Windows: sentry-cli's Windows support is spotty and
+        # the install path above is Unix-only. Runtime Sentry still works
+        # on Windows; only stack-trace symbolication is missing there.
+        if: env.SENTRY_AUTH_TOKEN != '' && runner.os != 'Windows'
+        shell: bash
+        run: |
+          sentry-cli debug-files upload \
+            --include-sources \
+            "target/${{ matrix.target }}/release/"
+
       - name: Package (Unix)
         if: github.event_name == 'release' && runner.os != 'Windows'
         shell: bash
@@ -76,6 +100,11 @@ jobs:
     name: Desktop ${{ matrix.arch }}
     if: startsWith(github.event.release.tag_name, 'v')
     runs-on: macos-latest
+    env:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+      SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT_DESKTOP }}
+      BYOKEY_SENTRY_DSN: ${{ secrets.BYOKEY_DESKTOP_SENTRY_DSN }}
     strategy:
       fail-fast: false
       matrix:
@@ -146,7 +175,19 @@ jobs:
             "CODE_SIGN_IDENTITY=Developer ID Application" \
             DEVELOPMENT_TEAM=8U3ZJ258K9 \
             PRODUCT_BUNDLE_IDENTIFIER=io.byokey.desktop \
-            "OTHER_CODE_SIGN_FLAGS=--timestamp --options=runtime"
+            "OTHER_CODE_SIGN_FLAGS=--timestamp --options=runtime" \
+            "BYOKEY_SENTRY_DSN=$BYOKEY_SENTRY_DSN"
+
+      - name: Install sentry-cli
+        if: env.SENTRY_AUTH_TOKEN != ''
+        run: curl -sL https://sentry.io/get-cli/ | INSTALL_DIR=/usr/local/bin bash
+
+      - name: Upload dSYM to Sentry
+        if: env.SENTRY_AUTH_TOKEN != ''
+        run: |
+          sentry-cli debug-files upload \
+            --include-sources \
+            "$RUNNER_TEMP/Byokey.xcarchive/dSYMs/"
 
       - name: Export archive
         run: |

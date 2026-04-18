@@ -10,5 +10,6 @@ pub use schema::{
     AmpConfig, ApiKeyEntry, ClaudeHeaderDefaults, CloakConfig, CodexHeaderDefaults, Config,
     KeyRoutingStrategy, LogConfig, LogFormat, ModelAlias, PayloadFilterRule, PayloadRule,
     PayloadRules, PolicyStrategyKind, ProviderConfig, RoutingPolicyEntry, StreamingConfig,
+    TelemetryConfig,
 };
 pub use watcher::ConfigWatcher;

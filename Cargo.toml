@@ -106,6 +106,18 @@ http = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 tracing-appender = "0.2"
+sentry = { version = "0.47", default-features = false, features = [
+    "backtrace",
+    "contexts",
+    "debug-images",
+    "panic",
+    "reqwest",
+    "rustls",
+    "tracing",
+    "anyhow",
+    "tower",
+    "tower-http",
+] }
 # OpenAPI
 utoipa = "5"
 # ConnectRPC (Rust server, buffa-based protobuf)
@@ -141,6 +153,11 @@ readme.workspace = true
 name = "byokey"
 path = "src/main.rs"
 
+[profile.release]
+# line-tables-only keeps the binary small while giving Sentry enough
+# information to symbolicate stack traces after sentry-cli debug-files upload.
+debug = "line-tables-only"
+
 [dependencies]
 byokey-proxy.workspace = true
 byokey-config.workspace = true
@@ -159,6 +176,7 @@ rquest.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-appender.workspace = true
+sentry.workspace = true
 tarpc.workspace = true
 tokio-util.workspace = true
 futures-util.workspace = true

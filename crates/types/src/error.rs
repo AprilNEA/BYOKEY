@@ -51,7 +51,14 @@ pub enum ByokError {
     UnsupportedProvider(String),
 
     /// The upstream provider returned a non-success status.
-    #[error("upstream error: status={status}, body={body}")]
+    ///
+    /// The `body` field is deliberately omitted from `Display` output because
+    /// it can contain echoes of user-supplied prompts or other sensitive data.
+    /// Callers that need to forward the body to the original HTTP client must
+    /// read the field directly (see `ApiError::into_response` in
+    /// `byokey-proxy`). Anything that feeds logs, `tracing::error!`, or error
+    /// reporters (Sentry) must avoid that path.
+    #[error("upstream error: status={status}")]
     Upstream {
         status: u16,
         body: String,
@@ -133,7 +140,9 @@ mod tests {
         };
         let s = err.to_string();
         assert!(s.contains("429"));
-        assert!(s.contains("rate limited"));
+        // Body must NOT appear in Display — it can echo user prompts and
+        // leaks into logs / Sentry events.
+        assert!(!s.contains("rate limited"));
     }
 
     #[test]

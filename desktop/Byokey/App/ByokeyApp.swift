@@ -8,6 +8,12 @@ struct ByokeyApp: App {
     @State private var dataService = DataService()
     @State private var updaterState = UpdaterState()
 
+    init() {
+        // Start Sentry as early as possible so setup errors are captured.
+        // No-op when BYOKEY_SENTRY_DSN is unset.
+        Telemetry.start()
+    }
+
     var body: some Scene {
         Window("BYOKEY", id: "main") {
             ContentView()

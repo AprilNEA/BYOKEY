@@ -11,7 +11,7 @@ pub use provider::{
     ApiKeyEntry, ClaudeHeaderDefaults, CloakConfig, CodexHeaderDefaults, KeyRoutingStrategy,
     PolicyStrategyKind, ProviderConfig, RoutingPolicyEntry,
 };
-pub use runtime::{LogConfig, LogFormat, StreamingConfig};
+pub use runtime::{LogConfig, LogFormat, StreamingConfig, TelemetryConfig};
 
 use byokey_types::ProviderId;
 use serde::{Deserialize, Serialize};
@@ -64,6 +64,9 @@ pub struct Config {
     /// Logging configuration.
     #[serde(default)]
     pub log: LogConfig,
+    /// Telemetry (Sentry) configuration.
+    #[serde(default)]
+    pub telemetry: TelemetryConfig,
 }
 
 impl Default for Config {
@@ -80,6 +83,7 @@ impl Default for Config {
             payload: PayloadRules::default(),
             routing_policies: Vec::new(),
             log: LogConfig::default(),
+            telemetry: TelemetryConfig::default(),
         }
     }
 }

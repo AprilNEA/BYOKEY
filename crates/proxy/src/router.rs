@@ -27,6 +27,13 @@ use crate::handler::{amp, chat, management, messages, models};
 use crate::{AppState, openapi};
 
 fn common_layers(router: Router) -> Router {
+    // Sentry layers are added as the outermost wrapping, so a hub is bound
+    // for every request before any other instrumentation runs. For axum,
+    // `.layer()` applies bottom-up; the *last* `.layer()` call is the
+    // outermost, so `NewSentryLayer` goes after `SentryHttpLayer`.
+    // `SentryHttpLayer::new()` does NOT enable transactions — we only want
+    // request context attached to error events, not performance spans that
+    // could capture AI proxy traffic.
     router
         .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
         .layer(
@@ -67,6 +74,10 @@ fn common_layers(router: Router) -> Router {
         .layer(middleware::from_fn(
             crate::middleware::dump::dump_middleware,
         ))
+        .layer(sentry::integrations::tower::SentryHttpLayer::new())
+        .layer(sentry::integrations::tower::NewSentryLayer::<
+            http::Request<axum::body::Body>,
+        >::new_from_top())
 }
 
 /// Build the unified byokey router.

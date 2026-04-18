@@ -10,6 +10,7 @@
 		BA0A10052F5460010096A005 /* Connect in Frameworks */ = {isa = PBXBuildFile; productRef = BA0A10022F5460010096A002 /* Connect */; };
 		BA0A10062F5460010096A006 /* SwiftProtobuf in Frameworks */ = {isa = PBXBuildFile; productRef = BA0A10032F5460010096A003 /* SwiftProtobuf */; };
 		BA0A100A2F5460010096A00A /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = BA0A10092F5460010096A009 /* Sparkle */; };
+		BA5E111150004180000000A1 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = BA5E111150004180000000A2 /* Sentry */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -32,6 +33,7 @@
 				BA0A10052F5460010096A005 /* Connect in Frameworks */,
 				BA0A10062F5460010096A006 /* SwiftProtobuf in Frameworks */,
 				BA0A100A2F5460010096A00A /* Sparkle in Frameworks */,
+				BA5E111150004180000000A1 /* Sentry in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -79,6 +81,7 @@
 				BA0A10022F5460010096A002 /* Connect */,
 				BA0A10032F5460010096A003 /* SwiftProtobuf */,
 				BA0A10092F5460010096A009 /* Sparkle */,
+				BA5E111150004180000000A2 /* Sentry */,
 			);
 			productName = Byokey;
 			productReference = BAD6C0B52F53FC2500968364 /* Byokey.app */;
@@ -112,6 +115,7 @@
 				BA0A10012F5460010096A001 /* XCRemoteSwiftPackageReference "connect-swift" */,
 				BAD6C10E2F544FFC00968364 /* XCRemoteSwiftPackageReference "swift-protobuf" */,
 				BA0A10082F5460010096A008 /* XCRemoteSwiftPackageReference "Sparkle" */,
+				BA5E111150004180000000A3 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BAD6C0B62F53FC2500968364 /* Products */;
@@ -399,6 +403,14 @@
 				minimumVersion = 1.28.0;
 			};
 		};
+		BA5E111150004180000000A3 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/getsentry/sentry-cocoa";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 8.40.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -416,6 +428,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = BA0A10082F5460010096A008 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		BA5E111150004180000000A2 /* Sentry */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BA5E111150004180000000A3 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
+			productName = Sentry;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

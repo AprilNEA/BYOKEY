@@ -34,6 +34,7 @@ bytes.workspace = true
 arc-swap.workspace = true
 notify.workspace = true
 tracing.workspace = true
+sentry.workspace = true
 utoipa.workspace = true
 aigw.workspace = true
 reqwest.workspace = true
