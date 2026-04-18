@@ -3,6 +3,26 @@
     <channel>
         <title>Byokey</title>
         <item>
+            <title>1.1.0</title>
+            <pubDate>Sat, 18 Apr 2026 13:26:09 +0000</pubDate>
+            <sparkle:version>32.2</sparkle:version>
+            <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.2</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/AprilNEA/BYOKEY/releases/download/v1.1.0/Byokey-v1.1.0-x86_64.dmg" length="15144749" type="application/octet-stream" sparkle:edSignature="lGNboeSAqSjaL4YlspSz7vWv+IGKAy+XMLHOUiz43u9N8qnMYUe2K78uAt/oFeSdXs6PAVgXdUb5vSR7KzWdAg=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/AprilNEA/BYOKEY/releases/download/v1.1.0/Byokey32.2-32.1.delta" sparkle:deltaFrom="32.1" length="8233450" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980464" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="M6ZvI6O4tlu6qyOI0I2ksedMzjDr2C84MNETiMpFzxLeXkRFxj5Cl1BBAKgjFf0PqrCcBMVfbILitU+QA1aBDA=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
+            <title>1.1.0</title>
+            <pubDate>Sat, 18 Apr 2026 13:26:09 +0000</pubDate>
+            <sparkle:version>32.1</sparkle:version>
+            <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.2</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/AprilNEA/BYOKEY/releases/download/v1.1.0/Byokey-v1.1.0-arm64.dmg" length="14228643" type="application/octet-stream" sparkle:edSignature="Hj/lN5EHuev53x48QrNkfoPXqLyeDnHepJ+1q5sWO7ABuSpVfBlxaf16FD/+7Fki/M/FEHeDSikPGuBaA7ErBw=="/>
+        </item>
+        <item>
             <title>0.10.0</title>
             <pubDate>Sat, 04 Apr 2026 08:11:22 +0000</pubDate>
             <sparkle:version>27</sparkle:version>
@@ -11,7 +31,7 @@
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/AprilNEA/BYOKEY/releases/download/v0.10.0/Byokey-v0.10.0-arm64.dmg" length="12241267" type="application/octet-stream" sparkle:edSignature="5ITN0xhQS38byiOI52vEbyP8aqELO6H2F4TaVPC6JGLxWQnQmWRF7FfW2Ks/taDFuEFnKN3jiAINSkCAJTogCA=="/>
         </item>
-<item>
+        <item>
             <title>0.9.2</title>
             <pubDate>Mon, 30 Mar 2026 07:13:01 +0000</pubDate>
             <sparkle:version>25</sparkle:version>
