@@ -598,10 +598,18 @@ pub async fn ampcode_proxy(
 
     let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
 
+    // rquest auto-decompresses gzip/brotli/zstd. The upstream's
+    // `content-encoding` and `content-length` describe the *compressed*
+    // payload, so forwarding them alongside the already-decompressed body
+    // would make the amp CLI try to decode twice (garbage → silent parse
+    // failure → degraded mode policy, losing read/bash in smart mode).
     let mut resp_headers = axum::http::HeaderMap::new();
     for (name, value) in resp.headers() {
         let name_str = name.as_str();
-        if HOP_BY_HOP.contains(&name_str) {
+        if HOP_BY_HOP.contains(&name_str)
+            || name_str == "content-encoding"
+            || name_str == "content-length"
+        {
             continue;
         }
         if let (Ok(n), Ok(v)) = (
