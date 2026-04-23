@@ -96,12 +96,11 @@ fn common_layers(router: Router) -> Router {
 ///   `/byokey.amp.AmpService/{Method}` — local byokey management over
 ///   `ConnectRPC` (fallback service).
 ///
-/// The amp routes are wrapped in [`forward_headers_middleware`] to strip
-/// client auth and inject the amp upstream token. The middleware is
-/// scoped to that sub-router only via `.layer()` before `.merge()`, so
-/// REST and `ConnectRPC` routes are unaffected.
+/// `/api/provider/*` is handled locally (byokey's own AI providers);
+/// every other `/api/*` and `/v0/management/*` request is a transparent
+/// passthrough to `ampcode.com` with the amp CLI's own headers — byokey
+/// only touches traffic it generates itself.
 pub fn make_router(state: Arc<AppState>) -> Router {
-    // Amp-specific routes with forward_headers_middleware scoped to them.
     let amp_routes = Router::new()
         .route("/auth/cli-login", get(amp::cli_login_redirect))
         .route("/v1/login", get(amp::login_redirect))
@@ -122,11 +121,7 @@ pub fn make_router(state: Arc<AppState>) -> Router {
             "/api/provider/google/v1beta/models/{action}",
             post(amp::provider::gemini_native_passthrough),
         )
-        .route("/api/{*path}", any(amp::provider::ampcode_proxy))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            crate::middleware::forward::forward_headers_middleware,
-        ));
+        .route("/api/{*path}", any(amp::provider::ampcode_proxy));
 
     // REST AI proxy routes.
     let rest_routes = Router::new()
