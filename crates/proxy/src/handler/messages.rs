@@ -305,7 +305,7 @@ pub async fn anthropic_messages(
             .and_then(|pc| pc.base_url.clone())
             .unwrap_or_else(|| "https://api.anthropic.com".to_owned()),
         beta: Some(beta.clone()),
-        extra_headers: build_fingerprint_headers(&profile),
+        extra_headers: build_fingerprint_headers(&profile, !is_oauth),
         ..Default::default()
     })
     .map_err(|e| ApiError(ByokError::Config(e.to_string())))?;

@@ -67,18 +67,27 @@ enum Credential {
 /// - Device fingerprint (`x-stainless-*`, `user-agent`)
 /// - Session identity (`x-claude-code-session-id`)
 /// - Request identity (`x-client-request-id`)
-/// - Access flags (`anthropic-dangerous-direct-browser-access`, `x-app`)
+/// - Access flags (`x-app`)
+///
+/// The `anthropic-dangerous-direct-browser-access` header is included only
+/// when `is_api_key` is `true` (raw `x-api-key` auth). On OAuth
+/// (`Authorization: Bearer`) the real Claude Code CLI omits this header.
 ///
 /// # Panics
 ///
 /// Panics if any profile field contains non-ASCII characters that are invalid
 /// in HTTP header values. All default profiles use ASCII-only values.
-pub fn build_fingerprint_headers(profile: &DeviceProfile) -> reqwest::header::HeaderMap {
+pub fn build_fingerprint_headers(
+    profile: &DeviceProfile,
+    is_api_key: bool,
+) -> reqwest::header::HeaderMap {
     let mut h = reqwest::header::HeaderMap::new();
-    h.insert(
-        "anthropic-dangerous-direct-browser-access",
-        "true".parse().expect("static header"),
-    );
+    if is_api_key {
+        h.insert(
+            "anthropic-dangerous-direct-browser-access",
+            "true".parse().expect("static header"),
+        );
+    }
     h.insert("x-app", "cli".parse().expect("static header"));
     h.insert(
         reqwest::header::USER_AGENT,
@@ -205,7 +214,7 @@ impl ClaudeExecutor {
             base_url: self.base_url.clone(),
             version: ANTHROPIC_VERSION.to_owned(),
             beta: Some(ANTHROPIC_BETA.to_owned()),
-            extra_headers: build_fingerprint_headers(fingerprint),
+            extra_headers: build_fingerprint_headers(fingerprint, matches!(credential, Credential::ApiKey(_))),
             ..Default::default()
         })
         .map_err(|e| byokey_types::ByokError::Config(e.to_string()))
