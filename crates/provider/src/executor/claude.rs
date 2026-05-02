@@ -214,7 +214,10 @@ impl ClaudeExecutor {
             base_url: self.base_url.clone(),
             version: ANTHROPIC_VERSION.to_owned(),
             beta: Some(ANTHROPIC_BETA.to_owned()),
-            extra_headers: build_fingerprint_headers(fingerprint, matches!(credential, Credential::ApiKey(_))),
+            extra_headers: build_fingerprint_headers(
+                fingerprint,
+                matches!(credential, Credential::ApiKey(_)),
+            ),
             ..Default::default()
         })
         .map_err(|e| byokey_types::ByokError::Config(e.to_string()))
@@ -268,6 +271,8 @@ impl ProviderExecutor for ClaudeExecutor {
                 &fingerprint.device_id,
                 &account_uuid,
                 &fingerprint.session_id,
+                "cli",
+                None,
             );
         }
 

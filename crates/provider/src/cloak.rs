@@ -3,6 +3,22 @@
 //!
 //! The fingerprint algorithm replicates Claude Code's `utils/fingerprint.ts`:
 //! `SHA256(SALT + msg[4] + msg[7] + msg[20] + version)[0..3]`.
+//!
+//! # cc_entrypoint
+//!
+//! `derive_cc_entrypoint` maps an incoming `User-Agent` to the correct
+//! `cc_entrypoint` value in the billing header:
+//! - `claude-cli` / `claude-code` in UA → `"cli"`
+//! - `vscode` / `Code/` in UA → `"vscode"`
+//! - Any other UA → `"local-agent"`
+//! - `None` (executor path has no incoming UA) → `"cli"`
+//!
+//! # cc_workload
+//!
+//! Clients may tag traffic with `X-Byokey-Claude-Workload: <value>`.
+//! The value is validated against `[A-Za-z0-9_-]+` and appended as
+//! `cc_workload=<value>;` after `cc_entrypoint` in the billing header.
+//! Invalid or missing values are silently dropped.
 
 use byokey_config::CloakConfig;
 use sha2::{Digest as _, Sha256};
@@ -13,6 +29,37 @@ const DEFAULT_CLI_VERSION: &str = "2.1.109";
 /// Salt used by Claude Code's fingerprint.ts — must match the backend validator.
 const FINGERPRINT_SALT: &str = "59cf53e54c78";
 
+/// Derives the `cc_entrypoint` value from an incoming `User-Agent` header.
+///
+/// Rules (case-insensitive, checked in order):
+/// 1. UA contains `claude-cli` or `claude-code` → `"cli"`
+/// 2. UA contains `vscode` or `Code/` → `"vscode"`
+/// 3. Any other non-empty UA → `"local-agent"`
+/// 4. `None` (executor path, no incoming UA) → `"cli"`
+#[must_use]
+pub fn derive_cc_entrypoint(user_agent: Option<&str>) -> &'static str {
+    let Some(ua) = user_agent else {
+        return "cli";
+    };
+    let lower = ua.to_lowercase();
+    if lower.contains("claude-cli") || lower.contains("claude-code") {
+        "cli"
+    } else if lower.contains("vscode") || ua.contains("Code/") {
+        "vscode"
+    } else {
+        "local-agent"
+    }
+}
+
+/// Validates a `cc_workload` value.  Returns `true` iff the value matches
+/// `[A-Za-z0-9_-]+` (non-empty).
+fn is_valid_workload(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
 /// Applies cloaking transformations to a Claude API request body.
 ///
 /// 1. Prepends a billing header block and a Claude Code prefix block to the
@@ -21,14 +68,20 @@ const FINGERPRINT_SALT: &str = "59cf53e54c78";
 /// 3. In strict mode, discards all user-supplied system blocks.
 /// 4. Obfuscates sensitive words by inserting a zero-width space after the
 ///    first character of each occurrence.
+///
+/// `entrypoint` should be the result of [`derive_cc_entrypoint`].
+/// `workload` is the optional `X-Byokey-Claude-Workload` header value; invalid
+/// values (not matching `[A-Za-z0-9_-]+`) are silently dropped.
 pub fn apply_cloaking(
     body: &mut serde_json::Value,
     config: &CloakConfig,
     device_id: &str,
     account_uuid: &str,
     session_id: &str,
+    entrypoint: &str,
+    workload: Option<&str>,
 ) {
-    let billing_block = make_billing_block(body);
+    let billing_block = make_billing_block(body, entrypoint, workload);
     let prefix_block = make_prefix_block();
 
     // Normalise `system` to an array of content blocks.
@@ -83,14 +136,19 @@ pub fn apply_cloaking(
 /// no strict mode). Used by the passthrough handler where OAuth tokens
 /// require the billing header to access Sonnet/Opus models.
 ///
+/// `entrypoint` should be the result of [`derive_cc_entrypoint`].
+/// `workload` is the optional `X-Byokey-Claude-Workload` header value; invalid
+/// values (not matching `[A-Za-z0-9_-]+`) are silently dropped.
 /// Optionally injects `metadata.user_id` when identifiers are provided.
 pub fn inject_billing_header(
     body: &mut serde_json::Value,
     device_id: Option<&str>,
     account_uuid: Option<&str>,
     session_id: Option<&str>,
+    entrypoint: &str,
+    workload: Option<&str>,
 ) {
-    let billing_block = make_billing_block(body);
+    let billing_block = make_billing_block(body, entrypoint, workload);
     let prefix_block = make_prefix_block();
 
     let existing_blocks = normalise_system(body);
@@ -165,13 +223,27 @@ fn compute_fingerprint(message_text: &str, version: &str) -> String {
 
 /// Generates the billing header content block using the real Claude Code
 /// fingerprint algorithm.
-fn make_billing_block(body: &serde_json::Value) -> serde_json::Value {
+///
+/// `entrypoint` is appended as `cc_entrypoint=<entrypoint>;`.
+/// `workload`, when `Some` and valid (`[A-Za-z0-9_-]+`), is appended as
+/// `cc_workload=<workload>;` immediately after `cc_entrypoint`.
+fn make_billing_block(
+    body: &serde_json::Value,
+    entrypoint: &str,
+    workload: Option<&str>,
+) -> serde_json::Value {
     let msg_text = extract_first_user_message_text(body);
     let fp = compute_fingerprint(&msg_text, DEFAULT_CLI_VERSION);
 
-    let header = format!(
-        "x-anthropic-billing-header: cc_version={DEFAULT_CLI_VERSION}.{fp}; cc_entrypoint=cli;"
+    let mut header = format!(
+        "x-anthropic-billing-header: cc_version={DEFAULT_CLI_VERSION}.{fp}; cc_entrypoint={entrypoint};"
     );
+
+    if let Some(wl) = workload {
+        if is_valid_workload(wl) {
+            header.push_str(&format!(" cc_workload={wl};"));
+        }
+    }
 
     serde_json::json!({
         "type": "text",
@@ -453,14 +525,13 @@ mod tests {
                 {"role": "user", "content": "Hello, world! This is a test message."}
             ]
         });
-        let block = make_billing_block(&body);
+        let block = make_billing_block(&body, "cli", None);
 
         let text = block["text"].as_str().unwrap();
         assert!(text.starts_with(&format!(
             "x-anthropic-billing-header: cc_version={DEFAULT_CLI_VERSION}."
         )));
         assert!(text.contains("; cc_entrypoint=cli;"));
-        assert!(text.ends_with(';'));
         // No cch field in the real format.
         assert!(!text.contains("cch="));
 
@@ -473,8 +544,70 @@ mod tests {
         assert!(u16::from_str_radix(fp, 16).is_ok());
 
         // Same input → same fingerprint.
-        let block2 = make_billing_block(&body);
+        let block2 = make_billing_block(&body, "cli", None);
         assert_eq!(block, block2);
+    }
+
+    #[test]
+    fn test_billing_header_with_workload() {
+        let body = serde_json::json!({"messages": [{"role": "user", "content": "hi"}]});
+        let block = make_billing_block(&body, "cli", Some("agentic"));
+        let text = block["text"].as_str().unwrap();
+        assert!(text.contains("cc_entrypoint=cli;"));
+        assert!(text.contains("cc_workload=agentic;"));
+        // workload follows entrypoint
+        let ep_pos = text.find("cc_entrypoint=cli;").unwrap();
+        let wl_pos = text.find("cc_workload=agentic;").unwrap();
+        assert!(wl_pos > ep_pos);
+    }
+
+    #[test]
+    fn test_billing_header_invalid_workload_dropped() {
+        let body = serde_json::json!({"messages": [{"role": "user", "content": "hi"}]});
+        // Spaces and special chars are invalid.
+        let block = make_billing_block(&body, "cli", Some("bad value!"));
+        let text = block["text"].as_str().unwrap();
+        assert!(!text.contains("cc_workload="));
+    }
+
+    #[test]
+    fn test_billing_header_empty_workload_dropped() {
+        let body = serde_json::json!({"messages": [{"role": "user", "content": "hi"}]});
+        let block = make_billing_block(&body, "cli", Some(""));
+        let text = block["text"].as_str().unwrap();
+        assert!(!text.contains("cc_workload="));
+    }
+
+    #[test]
+    fn test_derive_cc_entrypoint() {
+        // None → cli
+        assert_eq!(derive_cc_entrypoint(None), "cli");
+
+        // claude-cli UA → cli
+        assert_eq!(
+            derive_cc_entrypoint(Some("claude-cli/2.1.109 (external, cli)")),
+            "cli"
+        );
+        // claude-code UA (case-insensitive) → cli
+        assert_eq!(derive_cc_entrypoint(Some("Claude-Code/1.0")), "cli");
+
+        // VSCode UA → vscode
+        assert_eq!(
+            derive_cc_entrypoint(Some("vscode/1.107.0 (external)")),
+            "vscode"
+        );
+        // Code/ UA shape → vscode
+        assert_eq!(
+            derive_cc_entrypoint(Some("GitHubCopilotChat/0.35.0 Code/1.107.0")),
+            "vscode"
+        );
+
+        // Unknown UA → local-agent
+        assert_eq!(derive_cc_entrypoint(Some("curl/7.88.0")), "local-agent");
+        assert_eq!(
+            derive_cc_entrypoint(Some("python-httpx/0.27.0")),
+            "local-agent"
+        );
     }
 
     #[test]
@@ -524,6 +657,8 @@ mod tests {
             TEST_DEVICE_ID,
             TEST_ACCOUNT_UUID,
             TEST_SESSION_ID,
+            "cli",
+            None,
         );
 
         let system = body["system"].as_array().unwrap();
@@ -565,6 +700,8 @@ mod tests {
             TEST_DEVICE_ID,
             TEST_ACCOUNT_UUID,
             TEST_SESSION_ID,
+            "cli",
+            None,
         );
 
         let system = body["system"].as_array().unwrap();
@@ -590,6 +727,8 @@ mod tests {
             TEST_DEVICE_ID,
             TEST_ACCOUNT_UUID,
             TEST_SESSION_ID,
+            "cli",
+            None,
         );
 
         let system = body["system"].as_array().unwrap();
@@ -619,6 +758,8 @@ mod tests {
             TEST_DEVICE_ID,
             TEST_ACCOUNT_UUID,
             TEST_SESSION_ID,
+            "cli",
+            None,
         );
 
         let system = body["system"].as_array().unwrap();
@@ -646,6 +787,8 @@ mod tests {
             TEST_DEVICE_ID,
             TEST_ACCOUNT_UUID,
             TEST_SESSION_ID,
+            "cli",
+            None,
         );
 
         let system = body["system"].as_array().unwrap();
@@ -697,6 +840,8 @@ mod tests {
             TEST_DEVICE_ID,
             TEST_ACCOUNT_UUID,
             TEST_SESSION_ID,
+            "cli",
+            None,
         );
 
         // Check system block (index 2 because billing + prefix are prepended).

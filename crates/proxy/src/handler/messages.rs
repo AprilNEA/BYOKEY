@@ -15,7 +15,7 @@ use axum::{
 };
 use byokey_provider::CopilotExecutor;
 use byokey_provider::claude_headers::{ANTHROPIC_BETA, ANTHROPIC_VERSION};
-use byokey_provider::cloak::inject_billing_header;
+use byokey_provider::cloak::{derive_cc_entrypoint, inject_billing_header};
 use byokey_types::{ByokError, ProviderId, ThinkingCapability, traits::ByteStream};
 use bytes::Bytes;
 use futures_util::{StreamExt as _, TryStreamExt as _};
@@ -25,7 +25,7 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::util::stream::{AnthropicParser, response_to_stream, tap_usage_stream};
-use crate::util::{extract_usage, sse_response};
+use crate::util::{extract_usage, sse_response, strip_gateway_headers};
 use crate::{AppState, UsageRecorder, error::ApiError};
 
 // Copilot identification headers (matching VS Code Copilot Chat extension).
@@ -271,11 +271,20 @@ pub async fn anthropic_messages(
     // OAuth tokens require the billing header and tool name remapping.
     if is_oauth {
         let account_uuid = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, b"global").to_string();
+        let ua = headers
+            .get(axum::http::header::USER_AGENT)
+            .and_then(|v| v.to_str().ok());
+        let entrypoint = derive_cc_entrypoint(ua);
+        let workload = headers
+            .get("x-byokey-claude-workload")
+            .and_then(|v| v.to_str().ok());
         inject_billing_header(
             &mut body,
             Some(&profile.device_id),
             Some(&account_uuid),
             Some(&profile.session_id),
+            entrypoint,
+            workload,
         );
         byokey_provider::cloak::remap_tool_names_request(&mut body);
     }
@@ -572,6 +581,18 @@ async fn forward_response(
 
     let upstream_status = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK);
 
+    // Collect upstream response headers and strip gateway fingerprints before
+    // forwarding anything to the client.
+    let mut upstream_headers = axum::http::HeaderMap::new();
+    for (name, value) in resp.headers() {
+        if let Ok(name) = axum::http::HeaderName::from_bytes(name.as_str().as_bytes())
+            && let Ok(value) = axum::http::HeaderValue::from_bytes(value.as_bytes())
+        {
+            upstream_headers.insert(name, value);
+        }
+    }
+    strip_gateway_headers(&mut upstream_headers);
+
     if stream {
         let raw = response_to_stream(resp);
         let remapped: ByteStream = if reverse_remap_tools {
@@ -603,7 +624,15 @@ async fn forward_response(
             AnthropicParser::new(),
         );
         let mapped = tapped.map_err(|e| std::io::Error::other(e.to_string()));
-        Ok(sse_response(upstream_status, mapped))
+        let mut sse = sse_response(upstream_status, mapped);
+        // Merge upstream headers (gateway-stripped) into the SSE response.
+        // We do not overwrite the SSE-specific headers set by sse_response.
+        for (name, value) in &upstream_headers {
+            sse.headers_mut()
+                .entry(name)
+                .or_insert_with(|| value.clone());
+        }
+        Ok(sse)
     } else {
         let mut json: Value = resp
             .json()
@@ -614,7 +643,15 @@ async fn forward_response(
         }
         let (input, output) = extract_usage(&json, "/usage/input_tokens", "/usage/output_tokens");
         usage.record_success_for(model, provider, account_id, input, output);
-        Ok((upstream_status, axum::Json(json)).into_response())
+        let mut response = (upstream_status, axum::Json(json)).into_response();
+        // Merge upstream headers (gateway-stripped) into the JSON response.
+        for (name, value) in &upstream_headers {
+            response
+                .headers_mut()
+                .entry(name)
+                .or_insert_with(|| value.clone());
+        }
+        Ok(response)
     }
 }
 
