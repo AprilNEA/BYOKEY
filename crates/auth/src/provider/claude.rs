@@ -10,10 +10,16 @@ pub const CALLBACK_PORT: u16 = 54545;
 pub const AUTH_URL: &str = "https://claude.ai/oauth/authorize";
 
 /// OAuth scopes requested during authorization.
-pub const SCOPES: &[&str] = &["org:create_api_key", "user:profile", "user:inference"];
+pub const SCOPES: &[&str] = &[
+    "user:profile",
+    "user:inference",
+    "user:sessions:claude_code",
+    "user:mcp_servers",
+    "user:file_upload",
+];
 
 // Scope encoding: `:` -> %3A, space -> +
-const SCOPE_ENCODED: &str = "org%3Acreate_api_key+user%3Aprofile+user%3Ainference";
+const SCOPE_ENCODED: &str = "user%3Aprofile+user%3Ainference+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload";
 const REDIRECT_URI_ENCODED: &str = "http%3A%2F%2Flocalhost%3A54545%2Fcallback";
 const REDIRECT_URI: &str = "http://localhost:54545/callback";
 
