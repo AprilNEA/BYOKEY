@@ -985,7 +985,6 @@ dependencies = [
  "byokey-auth",
  "byokey-config",
  "byokey-store",
- "byokey-translate",
  "byokey-types",
  "bytes",
  "eventsource-stream",
@@ -1028,7 +1027,6 @@ dependencies = [
  "byokey-proto",
  "byokey-provider",
  "byokey-store",
- "byokey-translate",
  "byokey-types",
  "bytes",
  "connectrpc",
@@ -1066,17 +1064,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "byokey-translate"
-version = "1.2.0"
-dependencies = [
- "anyhow",
- "byokey-types",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
 ]
 
 [[package]]

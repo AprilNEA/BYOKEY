@@ -6,11 +6,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use byokey_provider::{make_executor_for_model, parse_qualified_model};
-use byokey_translate::{
-    ThinkingConfig as ByokeyThinkingConfig, ThinkingLevel as ByokeyThinkingLevel, apply_thinking,
-    parse_model_suffix,
-};
+use byokey_provider::{make_executor_for_model, parse_model_suffix, parse_qualified_model};
 use byokey_types::{ChatRequest, ProviderId, traits::ProviderResponse};
 use futures_util::TryStreamExt as _;
 use std::collections::HashSet;
@@ -77,36 +73,21 @@ pub async fn chat_completions(
     // Replace model name with the clean version (suffix stripped)
     request.model.clone_from(&suffix.model);
 
-    // Apply thinking config if suffix was parsed.
+    // Apply thinking config if a model suffix was parsed.
     //
-    // Two paths run together so executors using either surface see the
-    // intent:
+    // The canonical [`aigw_core::model::ThinkingRequest`] is set on the
+    // request body's `thinking` field. Each provider's executor
+    // deserialises into `aigw_core::ChatRequest` and lets aigw's
+    // per-provider [`ThinkingProjector`] translate the canonical config
+    // onto the wire surface (Anthropic `thinking.type`, OpenAI Responses
+    // `reasoning.effort`, OpenAI Chat Completions `reasoning_effort`,
+    // Gemini `generationConfig.thinkingConfig`).
     //
-    // 1. **Canonical** — set `body.thinking` to the aigw-shape
-    //    [`aigw_core::model::ThinkingRequest`]. The Claude executor (and
-    //    any future aigw-using executor) deserialises into
-    //    `aigw_core::ChatRequest` and lets the provider's
-    //    `ThinkingProjector` translate from there.
-    //
-    // 2. **Legacy provider-specific JSON injection** via
-    //    [`byokey_translate::apply_thinking`]. Non-aigw executors (Copilot,
-    //    Qwen, Kimi, IFlow, Amp, …) read the body verbatim and need the
-    //    provider-native field (`reasoning_effort`, `reasoning.effort`,
-    //    `generationConfig.thinkingConfig`, etc.) already present.
-    //
-    // For aigw-using executors the projector overwrites whatever
-    // apply_thinking produced for that provider, so both running yields
-    // the same observable outcome.
-    if let Some(ref thinking) = suffix.thinking {
-        let provider =
-            byokey_provider::resolve_provider(&suffix.model).unwrap_or(ProviderId::Claude);
-        let capability = byokey_provider::thinking_capability(&suffix.model);
+    // [`ThinkingProjector`]: aigw_core::translate::ThinkingProjector
+    if let Some(thinking) = &suffix.thinking {
         let mut body = request.into_body();
-        body = apply_thinking(body, &provider, thinking, capability);
-        if let Some(canonical) = byokey_thinking_to_aigw(thinking) {
-            body["thinking"] = canonical;
-        }
-        // Re-parse the modified body back into ChatRequest
+        body["thinking"] = serde_json::to_value(thinking)
+            .map_err(|e| ApiError::from(byokey_types::ByokError::Translation(e.to_string())))?;
         request = serde_json::from_value(body)
             .map_err(|e| ApiError::from(byokey_types::ByokError::Translation(e.to_string())))?;
     }
@@ -161,31 +142,4 @@ pub async fn chat_completions(
             Err(ApiError::from(e))
         }
     }
-}
-
-/// Convert BYOKEY's parsed thinking config into the canonical aigw shape
-/// for serialisation onto `body.thinking`.
-///
-/// Returns `None` only when the canonical surface can't represent the
-/// config (currently never — every BYOKEY variant has an aigw equivalent).
-fn byokey_thinking_to_aigw(t: &ByokeyThinkingConfig) -> Option<serde_json::Value> {
-    use aigw_core::model::{ThinkingLevel as AigwLevel, ThinkingRequest};
-    let canonical = match t {
-        ByokeyThinkingConfig::Budget(b) => ThinkingRequest::Budget {
-            budget_tokens: *b,
-        },
-        ByokeyThinkingConfig::Level(l) => ThinkingRequest::Level {
-            level: match l {
-                ByokeyThinkingLevel::Minimal => AigwLevel::Minimal,
-                ByokeyThinkingLevel::Low => AigwLevel::Low,
-                ByokeyThinkingLevel::Medium => AigwLevel::Medium,
-                ByokeyThinkingLevel::High => AigwLevel::High,
-                ByokeyThinkingLevel::XHigh => AigwLevel::XHigh,
-                ByokeyThinkingLevel::Max => AigwLevel::Max,
-            },
-        },
-        ByokeyThinkingConfig::Auto => ThinkingRequest::Auto,
-        ByokeyThinkingConfig::Disabled => ThinkingRequest::Disabled,
-    };
-    serde_json::to_value(canonical).ok()
 }
