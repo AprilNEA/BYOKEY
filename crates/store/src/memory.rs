@@ -51,7 +51,16 @@ impl TokenStore for InMemoryTokenStore {
     }
 
     async fn save(&self, provider: &ProviderId, token: &OAuthToken) -> Result<()> {
-        self.save_account(provider, "default", None, token).await
+        // Resolve the active account_id so refreshes update the row that
+        // `load()` reads, rather than orphaning a second non-active row.
+        let active_id = {
+            let data = self.data.lock().unwrap();
+            data.iter()
+                .find(|((p, _), e)| p == provider && e.is_active)
+                .map(|((_, id), _)| id.clone())
+        };
+        let account_id = active_id.as_deref().unwrap_or("default");
+        self.save_account(provider, account_id, None, token).await
     }
 
     async fn remove(&self, provider: &ProviderId) -> Result<()> {
@@ -241,6 +250,41 @@ mod tests {
                 .unwrap()
                 .access_token,
             "gemini-tok"
+        );
+    }
+
+    #[tokio::test]
+    async fn save_updates_non_default_active_account() {
+        // Regression: save() used to hardcode account_id="default", which
+        // stranded refreshes when the active account was named otherwise
+        // (e.g. "codex-cli" from import-codex). Now save() must overwrite
+        // the active row.
+        let store = InMemoryTokenStore::new();
+        store
+            .save_account(
+                &ProviderId::Codex,
+                "codex-cli",
+                Some("Codex CLI"),
+                &OAuthToken::new("imported"),
+            )
+            .await
+            .unwrap();
+        store
+            .save(&ProviderId::Codex, &OAuthToken::new("refreshed"))
+            .await
+            .unwrap();
+        let accounts = store.list_accounts(&ProviderId::Codex).await.unwrap();
+        assert_eq!(accounts.len(), 1, "save must not create a second account");
+        assert_eq!(accounts[0].account_id, "codex-cli");
+        assert!(accounts[0].is_active);
+        assert_eq!(
+            store
+                .load(&ProviderId::Codex)
+                .await
+                .unwrap()
+                .unwrap()
+                .access_token,
+            "refreshed"
         );
     }
 

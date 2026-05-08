@@ -92,11 +92,7 @@ impl AuthCmd {
 
     /// Import the currently-logged-in OpenAI Codex CLI OAuth credentials
     /// from `~/.codex/auth.json` as a Codex account.
-    pub async fn import_codex(
-        &self,
-        account: Option<String>,
-        label: Option<String>,
-    ) -> Result<()> {
+    pub async fn import_codex(&self, account: Option<String>, label: Option<String>) -> Result<()> {
         let token = byokey_auth::provider::codex_cli::load_token()
             .await
             .map_err(|e| anyhow::anyhow!("read Codex CLI credentials: {e}"))?

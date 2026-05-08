@@ -40,7 +40,18 @@ impl TokenStore for SqliteTokenStore {
     ///
     /// If no account exists yet, creates a `"default"` account and marks it active.
     async fn save(&self, provider: &ProviderId, token: &OAuthToken) -> Result<()> {
-        self.save_account(provider, "default", None, token).await
+        // Resolve the active account so refreshes overwrite the row that
+        // `load()` reads. Falling back to literal `"default"` here would
+        // strand the active account's expired token in place and write a
+        // second, non-active row that callers never see.
+        let key = provider.to_string();
+        let active = account::Entity::find()
+            .filter(account::Column::Provider.eq(&key))
+            .filter(account::Column::IsActive.eq(true))
+            .one(&self.db)
+            .await?;
+        let account_id = active.as_ref().map_or("default", |m| m.account_id.as_str());
+        self.save_account(provider, account_id, None, token).await
     }
 
     /// Removes the active account's token for the given provider.
@@ -326,6 +337,37 @@ mod tests {
         s.save(&ProviderId::Kiro, &tok).await.unwrap();
         let loaded = s.load(&ProviderId::Kiro).await.unwrap().unwrap();
         assert!(loaded.expires_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn save_updates_non_default_active_account() {
+        // Regression: save() used to hardcode account_id="default", which
+        // stranded refreshes when the active account was named otherwise
+        // (e.g. "codex-cli" from import-codex).
+        let s = mem().await;
+        s.save_account(
+            &ProviderId::Codex,
+            "codex-cli",
+            Some("Codex CLI"),
+            &OAuthToken::new("imported"),
+        )
+        .await
+        .unwrap();
+        s.save(&ProviderId::Codex, &OAuthToken::new("refreshed"))
+            .await
+            .unwrap();
+        let accounts = s.list_accounts(&ProviderId::Codex).await.unwrap();
+        assert_eq!(accounts.len(), 1, "save must not create a second account");
+        assert_eq!(accounts[0].account_id, "codex-cli");
+        assert!(accounts[0].is_active);
+        assert_eq!(
+            s.load(&ProviderId::Codex)
+                .await
+                .unwrap()
+                .unwrap()
+                .access_token,
+            "refreshed"
+        );
     }
 
     // ── Multi-account tests ──────────────────────────────────────────────

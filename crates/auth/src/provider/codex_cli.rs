@@ -20,8 +20,10 @@
 //! ```
 //!
 //! In API-key mode, `tokens` is absent and `OPENAI_API_KEY` carries the raw
-//! key. We support both: the OAuth case maps to a refreshable token, and the
-//! API-key case maps to a non-expiring token (`token_type = "api-key"`).
+//! key. That mode is **not** importable: byokey's Codex executor is wired
+//! to the ChatGPT-mode Codex Responses endpoint, where a raw `sk-...` won't
+//! authenticate. Users with an API-key-mode auth.json should use
+//! `byokey add-api-key codex <key>` against the standard OpenAI API instead.
 
 use base64::Engine;
 use byokey_types::{ByokError, OAuthToken};
@@ -30,8 +32,6 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 struct AuthFile {
     tokens: Option<Tokens>,
-    #[serde(rename = "OPENAI_API_KEY")]
-    openai_api_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,32 +52,28 @@ pub async fn load_token() -> Result<Option<OAuthToken>, ByokError> {
     let Some(raw) = load_raw().await? else {
         return Ok(None);
     };
-    let auth: AuthFile = serde_json::from_str(&raw).map_err(|e| {
-        ByokError::Auth(format!("failed to parse Codex CLI credentials JSON: {e}"))
-    })?;
+    let auth: AuthFile = serde_json::from_str(&raw)
+        .map_err(|e| ByokError::Auth(format!("failed to parse Codex CLI credentials JSON: {e}")))?;
 
-    if let Some(t) = auth.tokens {
-        // ChatGPT-mode OAuth token: access_token is a JWT — decode `exp` so
-        // the AuthManager knows when to refresh.
-        let expires_at = decode_jwt_exp(&t.access_token);
-        return Ok(Some(OAuthToken {
-            access_token: t.access_token,
-            refresh_token: t.refresh_token,
-            expires_at,
-            token_type: Some("Bearer".to_string()),
-        }));
-    }
+    let Some(t) = auth.tokens else {
+        return Err(ByokError::Auth(
+            "Codex CLI is in API-key mode (~/.codex/auth.json has no `tokens` block). \
+             byokey's Codex executor targets the ChatGPT-mode Codex Responses endpoint \
+             and cannot authenticate with a raw OpenAI API key. \
+             Use `byokey add-api-key codex <sk-...>` if you want a static key."
+                .into(),
+        ));
+    };
 
-    if let Some(key) = auth.openai_api_key.filter(|s| !s.is_empty()) {
-        return Ok(Some(OAuthToken {
-            access_token: key,
-            refresh_token: None,
-            expires_at: None,
-            token_type: Some("api-key".to_string()),
-        }));
-    }
-
-    Ok(None)
+    // ChatGPT-mode OAuth token: access_token is a JWT — decode `exp` so
+    // the AuthManager knows when to refresh.
+    let expires_at = decode_jwt_exp(&t.access_token);
+    Ok(Some(OAuthToken {
+        access_token: t.access_token,
+        refresh_token: t.refresh_token,
+        expires_at,
+        token_type: Some("Bearer".to_string()),
+    }))
 }
 
 /// Decode the `exp` claim from a JWT access token. Best-effort: returns
@@ -112,8 +108,8 @@ mod tests {
     #[test]
     fn parses_chatgpt_mode_oauth() {
         // JWT payload `{"exp":9999999999}` URL-safe base64-encoded.
-        let payload_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(br#"{"exp":9999999999}"#);
+        let payload_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(br#"{"exp":9999999999}"#);
         let fake_jwt = format!("h.{payload_b64}.s");
         let raw = format!(
             r#"{{
@@ -135,16 +131,22 @@ mod tests {
         assert_eq!(decode_jwt_exp(&fake_jwt), Some(9_999_999_999));
     }
 
-    #[test]
-    fn parses_api_key_mode() {
+    #[tokio::test]
+    async fn rejects_api_key_mode_with_clear_error() {
+        // load_token reads the actual file at ~/.codex/auth.json, so we test
+        // the parsing path through serde directly: an api_key-mode file has
+        // no `tokens` block, which we explicitly reject in load_token via
+        // the `let Some(t) = auth.tokens else { return Err(...) }` branch.
         let raw = r#"{
             "auth_mode": "api_key",
             "OPENAI_API_KEY": "sk-foo",
             "tokens": null
         }"#;
         let auth: AuthFile = serde_json::from_str(raw).unwrap();
-        assert!(auth.tokens.is_none());
-        assert_eq!(auth.openai_api_key.as_deref(), Some("sk-foo"));
+        assert!(
+            auth.tokens.is_none(),
+            "api_key mode must surface as `tokens: None`"
+        );
     }
 
     #[test]
