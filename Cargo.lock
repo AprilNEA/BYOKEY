@@ -1015,6 +1015,8 @@ version = "1.2.0"
 dependencies = [
  "aigw",
  "aigw-core",
+ "aigw-gemini",
+ "aigw-openai",
  "anyhow",
  "arc-swap",
  "async-trait",

@@ -419,10 +419,18 @@ async fn gemini_native_via_backend(
         )))
     })?;
 
-    // Translate Gemini native request → OpenAI format.
-    let mut openai_req: Value = byokey_translate::GeminiNativeRequest { body: &body, model }
-        .try_into()
-        .map_err(ApiError::from)?;
+    // Translate Gemini-native request → canonical (OpenAI shape) via aigw.
+    let mut native: aigw_gemini::GenerateContentRequest =
+        serde_json::from_value(body.clone()).map_err(|e| {
+            ApiError::from(ByokError::Translation(format!(
+                "failed to parse Gemini-native body: {e}"
+            )))
+        })?;
+    native.model = model.to_owned();
+    let canonical = aigw_gemini::translate::gemini_request_to_canonical(native)
+        .map_err(|e| ApiError::from(ByokError::Translation(e.to_string())))?;
+    let mut openai_req: Value = serde_json::to_value(&canonical)
+        .map_err(|e| ApiError::from(ByokError::Translation(e.to_string())))?;
 
     // Inject stream flag based on the Gemini action URL.
     openai_req["stream"] = Value::Bool(is_stream);
@@ -467,13 +475,18 @@ async fn gemini_native_via_backend(
                 .usage
                 .record_success_for(model, &provider_name, account_id, input, output);
 
-            let gemini_resp: Value = byokey_translate::OpenAIResponseToGemini {
-                body: &openai_resp,
-                model,
-            }
-            .try_into()
-            .map_err(ApiError::from)?;
-            Ok(axum::Json(gemini_resp).into_response())
+            // Translate OpenAI-format response → Gemini-native via aigw.
+            let canonical: aigw_core::model::ChatResponse = serde_json::from_value(openai_resp)
+                .map_err(|e| ApiError::from(ByokError::Translation(e.to_string())))?;
+            let mut gemini_resp = aigw_gemini::translate::chat_response_to_gemini(canonical)
+                .map_err(|e| ApiError::from(ByokError::Translation(e.to_string())))?;
+            // Override modelVersion with the client-requested name (canonical
+            // carries the upstream model id, but Gemini-native clients expect
+            // the model they asked for).
+            gemini_resp.model_version = Some(model.to_owned());
+            let value = serde_json::to_value(&gemini_resp)
+                .map_err(|e| ApiError::from(ByokError::Translation(e.to_string())))?;
+            Ok(axum::Json(value).into_response())
         }
         byokey_types::traits::ProviderResponse::Stream(byte_stream) => {
             // Tap the OpenAI stream for usage before translating to Gemini SSE.
@@ -496,15 +509,27 @@ async fn gemini_native_via_backend(
 /// Transform a stream of `OpenAI` SSE byte chunks into Gemini-native SSE chunks.
 ///
 /// The upstream `ByteStream` yields arbitrary byte boundaries; SSE lines may be
-/// split across chunks. We buffer incoming bytes and split on newlines so that
-/// each line is translated individually.
+/// split across chunks. We buffer incoming bytes, split on newlines, parse
+/// each `data: ` line through aigw-openai's [`OpenAIStreamParser`] (which
+/// emits canonical [`StreamEvent`]s), then feed each event through
+/// aigw-gemini's [`stream_event_to_gemini_sse`] bridge to produce
+/// Gemini-native SSE bytes.
+///
+/// [`OpenAIStreamParser`]: aigw_openai::translate::OpenAIStreamParser
+/// [`StreamEvent`]: aigw_core::model::StreamEvent
+/// [`stream_event_to_gemini_sse`]: aigw_gemini::translate::stream_event_to_gemini_sse
 fn byte_stream_to_gemini_sse(
     upstream: byokey_types::traits::ByteStream,
     model: String,
 ) -> impl futures_util::Stream<Item = std::result::Result<Bytes, ByokError>> {
+    use aigw_core::translate::StreamParser as _;
+    use aigw_gemini::translate::{NativeSseContext, stream_event_to_gemini_sse};
+    use aigw_openai::translate::OpenAIStreamParser;
     use futures_util::StreamExt as _;
 
     let mut buffer = Vec::<u8>::new();
+    let mut parser = OpenAIStreamParser::default();
+    let mut ctx = NativeSseContext::with_model(model);
 
     upstream.flat_map(move |chunk_result| {
         let mut output: Vec<std::result::Result<Bytes, ByokError>> = Vec::new();
@@ -516,14 +541,20 @@ fn byte_stream_to_gemini_sse(
 
                 // Process complete lines from the buffer.
                 while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
-                    let line: Vec<u8> = buffer.drain(..=pos).collect();
-                    let translated: Option<Vec<u8>> = byokey_translate::OpenAISseChunk {
-                        line: &line,
-                        model: &model,
-                    }
-                    .into();
-                    if let Some(bytes) = translated {
-                        output.push(Ok(Bytes::from(bytes)));
+                    let raw: Vec<u8> = buffer.drain(..=pos).collect();
+                    let line = String::from_utf8_lossy(&raw);
+                    let line = line.trim_end_matches(['\r', '\n']);
+                    let Some(data) = line.strip_prefix("data: ") else {
+                        continue;
+                    };
+                    let events = match parser.parse_event("", data) {
+                        Ok(e) => e,
+                        Err(_) => continue,
+                    };
+                    for ev in &events {
+                        if let Some(bytes) = stream_event_to_gemini_sse(ev, &mut ctx) {
+                            output.push(Ok(Bytes::from(bytes)));
+                        }
                     }
                 }
             }
