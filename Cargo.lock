@@ -956,6 +956,7 @@ dependencies = [
  "connectrpc",
  "connectrpc-build",
  "futures",
+ "http",
  "http-body",
  "serde",
 ]
@@ -1069,13 +1070,10 @@ name = "byokey-tui"
 version = "1.2.0"
 dependencies = [
  "anyhow",
- "byokey-auth",
- "byokey-daemon",
- "byokey-store",
- "byokey-types",
+ "byokey-proto",
  "crossterm",
+ "http",
  "ratatui",
- "rquest",
 ]
 
 [[package]]
@@ -1358,6 +1356,8 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "percent-encoding",
  "pin-project",
  "serde",

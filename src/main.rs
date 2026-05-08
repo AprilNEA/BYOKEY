@@ -149,8 +149,9 @@ enum Commands {
     },
     /// Launch the interactive terminal UI.
     Tui {
-        #[command(flatten)]
-        store: StoreArgs,
+        /// ConnectRPC management API base URL.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
     },
     /// List all accounts for a provider.
     Accounts {
@@ -251,7 +252,7 @@ async fn run(command: Commands) -> Result<()> {
                 .await
         }
         Commands::Status { store } => auth::AuthCmd::new(store.db).await?.status().await,
-        Commands::Tui { store } => byokey_tui::run(store.db).await,
+        Commands::Tui { url } => byokey_tui::run(url).await,
         Commands::Accounts { provider, store } => {
             auth::AuthCmd::new(store.db).await?.accounts(provider).await
         }

@@ -1,8 +1,6 @@
 //! Drawing routines for each TUI tab.
 
-use crate::app::{App, ProviderSnapshot, Tab};
-use byokey_daemon::process::ServerStatus;
-use byokey_types::TokenState;
+use crate::app::{App, AuthState, ConnectionStatus, ProviderSnapshot, Tab, TokenState};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -57,33 +55,26 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Length(4), Constraint::Min(0)])
         .split(area);
 
-    let server_line = match app.server {
-        ServerStatus::Running { pid } => Line::from(vec![
+    let server_line = match &app.server {
+        ConnectionStatus::Connected { host, port } => Line::from(vec![
             Span::styled(
-                "● running",
+                "● connected",
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw(format!("  pid {pid}  ")),
-            Span::styled("(:8018)", Style::default().fg(Color::DarkGray)),
+            Span::raw(format!("  {host}:{port}")),
         ]),
-        ServerStatus::Stale { pid } => Line::from(vec![
-            Span::styled(
-                "● stale",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(format!("  pid {pid} unresponsive")),
-        ]),
-        ServerStatus::Stopped => Line::from(Span::styled(
-            "○ not running",
+        ConnectionStatus::Disconnected => Line::from(Span::styled(
+            "○ disconnected",
             Style::default().fg(Color::DarkGray),
         )),
     };
-    let server = Paragraph::new(vec![server_line])
-        .block(Block::default().borders(Borders::ALL).title(" Daemon "));
+    let server = Paragraph::new(vec![server_line]).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Management API "),
+    );
     f.render_widget(server, chunks[0]);
 
     let rows: Vec<Row> = app
@@ -92,15 +83,17 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
         .map(|p| {
             let (state_label, state_style) = state_cell(p);
             Row::new(vec![
-                Cell::from(p.id.to_string()).style(Style::default().fg(Color::Cyan)),
-                Cell::from(p.display_name.to_string()),
+                Cell::from(p.id.clone()).style(Style::default().fg(Color::Cyan)),
+                Cell::from(p.display_name.clone()),
                 Cell::from(state_label).style(state_style),
+                Cell::from(if p.enabled { "yes" } else { "no" }),
                 Cell::from(p.accounts.len().to_string()).style(Style::default().fg(Color::White)),
+                Cell::from(p.models_count.to_string()),
             ])
         })
         .collect();
 
-    let header = Row::new(vec!["id", "name", "state", "accounts"])
+    let header = Row::new(vec!["id", "name", "state", "enabled", "accounts", "models"])
         .style(
             Style::default()
                 .fg(Color::Yellow)
@@ -114,7 +107,9 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
             Constraint::Length(14),
             Constraint::Min(20),
             Constraint::Length(20),
+            Constraint::Length(9),
             Constraint::Length(10),
+            Constraint::Length(8),
         ],
     )
     .header(header)
@@ -127,22 +122,20 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn state_cell(p: &ProviderSnapshot) -> (String, Style) {
-    if p.accounts.is_empty() {
-        return (
-            "not configured".to_string(),
-            Style::default().fg(Color::DarkGray),
-        );
-    }
-    match p.active_state {
-        TokenState::Valid => (
+    match p.auth_state {
+        AuthState::Authenticated => (
             "authenticated".to_string(),
             Style::default().fg(Color::Green),
         ),
-        TokenState::Expired => (
+        AuthState::Expired => (
             "expired (refresh)".to_string(),
             Style::default().fg(Color::Yellow),
         ),
-        TokenState::Invalid => ("expired".to_string(), Style::default().fg(Color::Red)),
+        AuthState::NotConfigured => (
+            "not configured".to_string(),
+            Style::default().fg(Color::DarkGray),
+        ),
+        AuthState::Unknown => ("unknown".to_string(), Style::default().fg(Color::Red)),
     }
 }
 
@@ -178,6 +171,10 @@ fn draw_accounts(f: &mut Frame, area: Rect, app: &App) {
                             .fg(Color::Green)
                             .add_modifier(Modifier::BOLD),
                     ),
+                    Span::styled(
+                        format!(" [{}]", token_state_label(a.token_state)),
+                        token_state_style(a.token_state),
+                    ),
                 ])));
             }
         }
@@ -189,6 +186,24 @@ fn draw_accounts(f: &mut Frame, area: Rect, app: &App) {
     let mut state = ListState::default();
     state.select(Some(app.selected));
     f.render_stateful_widget(list, area, &mut state);
+}
+
+fn token_state_label(state: TokenState) -> &'static str {
+    match state {
+        TokenState::Valid => "valid",
+        TokenState::Expired => "expired",
+        TokenState::Invalid => "invalid",
+        TokenState::Unknown => "unknown",
+    }
+}
+
+fn token_state_style(state: TokenState) -> Style {
+    match state {
+        TokenState::Valid => Style::default().fg(Color::Green),
+        TokenState::Expired => Style::default().fg(Color::Yellow),
+        TokenState::Invalid => Style::default().fg(Color::Red),
+        TokenState::Unknown => Style::default().fg(Color::DarkGray),
+    }
 }
 
 fn draw_usage(f: &mut Frame, area: Rect, app: &App) {
@@ -227,7 +242,7 @@ fn draw_usage(f: &mut Frame, area: Rect, app: &App) {
     );
     f.render_widget(totals, chunks[0]);
 
-    if app.usage.buckets.is_empty() {
+    if app.usage.rows.is_empty() {
         let empty = Paragraph::new("no usage recorded yet")
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL).title(" Per-model "));
@@ -237,7 +252,7 @@ fn draw_usage(f: &mut Frame, area: Rect, app: &App) {
 
     let rows: Vec<Row> = app
         .usage
-        .buckets
+        .rows
         .iter()
         .map(|b| {
             Row::new(vec![

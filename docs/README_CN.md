@@ -190,6 +190,7 @@ Commands:
   login         向 Provider 认证
   logout        删除指定 Provider 的已存储凭据
   status        显示所有 Provider 的认证状态
+  tui           启动交互式终端 UI
   accounts      列出某个 Provider 的所有账户
   switch        切换某个 Provider 的活动账户
   amp           Amp 相关工具
@@ -239,6 +240,10 @@ Options:
 **`byokey logout <PROVIDER>`** — 删除指定 Provider 的已存储 Token。
 
 **`byokey status`** — 打印所有已知 Provider 的认证状态。
+
+**`byokey tui`** — 打开终端管理 UI。默认连接
+`http://127.0.0.1:8018` 上的 ConnectRPC 管理 API；可用 `--url <URL>`
+覆盖。
 
 **`byokey accounts <PROVIDER>`** — 列出某个 Provider 的所有账户。
 
