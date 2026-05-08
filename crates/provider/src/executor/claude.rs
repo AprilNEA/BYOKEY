@@ -16,7 +16,6 @@ use aigw_core::translate::{RequestTranslator as _, ResponseTranslator as _};
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
 use byokey_config::CloakConfig;
-use byokey_translate::inject_cache_control;
 use byokey_types::{
     ChatRequest, ProviderId, RateLimitStore,
     traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
@@ -240,10 +239,13 @@ impl ProviderExecutor for ClaudeExecutor {
             .translate_request(&aigw_request)
             .map_err(|e| byokey_types::ByokError::Translation(e.to_string()))?;
 
-        // Post-process on the Anthropic-format body (cache control, temperature, cloaking).
+        // Post-process on the Anthropic-format body. cache_control breakpoints
+        // are now applied inside aigw's AnthropicRequestTranslator
+        // (DefaultCacheControlStrategy + always-on enforce_breakpoint_cap +
+        // normalize_ttl_ordering), so we only need temperature normalization
+        // and cloaking here.
         let mut body: Value = serde_json::from_slice(&translated.body)
             .map_err(|e| byokey_types::ByokError::Translation(e.to_string()))?;
-        body = inject_cache_control(body);
         normalize_temperature_for_thinking(&mut body);
 
         // Apply cloaking with identity from the device profile.

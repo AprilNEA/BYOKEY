@@ -80,14 +80,22 @@ pub fn stream_event_to_sse(event: &StreamEvent, ctx: &mut SseContext) -> Option<
             Some(format!("data: {chunk}\n\n").into_bytes())
         }
 
-        StreamEvent::ReasoningSignature(sig) => {
+        // Reasoning block lifecycle: ReasoningStart carries no client-visible
+        // payload (the OpenAI Chat SSE format has no equivalent); ReasoningEnd
+        // surfaces the integrity signature on the same field BYOKEY's clients
+        // already consume from the deprecated ReasoningSignature path.
+        StreamEvent::ReasoningStart { .. } => None,
+
+        #[allow(deprecated)]
+        StreamEvent::ReasoningEnd { signature, .. }
+        | StreamEvent::ReasoningSignature(signature) => {
             let chunk = json!({
                 "id": &ctx.id,
                 "object": "chat.completion.chunk",
                 "model": &ctx.model,
                 "choices": [{
                     "index": 0,
-                    "delta": {"reasoning_signature": sig},
+                    "delta": {"reasoning_signature": signature},
                     "finish_reason": null
                 }]
             });

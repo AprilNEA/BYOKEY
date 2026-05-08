@@ -54,8 +54,6 @@ dependencies = [
 [[package]]
 name = "aigw"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad15c089a873417322d0b59d9782fc1430cfe4bfe70a14ed8808e1f3e72ad159"
 dependencies = [
  "aigw-anthropic",
  "aigw-openai",
@@ -65,8 +63,6 @@ dependencies = [
 [[package]]
 name = "aigw-anthropic"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b489591d2854036b29ef33d625340645e14de73f870e10ce80aa06e9fcd6c0dd"
 dependencies = [
  "aigw-core",
  "bon 3.9.1",
@@ -86,8 +82,6 @@ dependencies = [
 [[package]]
 name = "aigw-core"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08728c63efcd8e309aff604b2c4de8e6e30c83cb7e30db52bf344430c0cc982a"
 dependencies = [
  "bon 3.9.1",
  "bytes",
@@ -101,8 +95,6 @@ dependencies = [
 [[package]]
 name = "aigw-openai"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a340511409db89757ec2248ceb8845975ab7d606d4b87a296e931ea8f3127b9"
 dependencies = [
  "aigw-core",
  "bon 3.9.1",
@@ -122,8 +114,6 @@ dependencies = [
 [[package]]
 name = "aigw-openai-compat"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ce546e8dbb16c31f56e1445aca3d4a1c70ca52187410383995b5651c8a36d71"
 dependencies = [
  "aigw-core",
  "aigw-openai",
