@@ -90,6 +90,35 @@ impl AuthCmd {
         Ok(())
     }
 
+    /// Import the currently-logged-in OpenAI Codex CLI OAuth credentials
+    /// from `~/.codex/auth.json` as a Codex account.
+    pub async fn import_codex(
+        &self,
+        account: Option<String>,
+        label: Option<String>,
+    ) -> Result<()> {
+        let token = byokey_auth::provider::codex_cli::load_token()
+            .await
+            .map_err(|e| anyhow::anyhow!("read Codex CLI credentials: {e}"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no Codex CLI credentials found — is the Codex CLI logged in on this machine?"
+                )
+            })?;
+        let provider = ProviderId::Codex;
+        let account_id = account
+            .as_deref()
+            .unwrap_or(byokey_types::CODEX_CLI_ACCOUNT)
+            .to_string();
+        let label = label.unwrap_or_else(|| "Codex CLI".to_string());
+        self.auth
+            .save_token_for(&provider, &account_id, Some(label.as_str()), token)
+            .await
+            .map_err(|e| anyhow::anyhow!("save Codex CLI token: {e}"))?;
+        println!("{provider}: imported Codex CLI credentials to account '{account_id}'");
+        Ok(())
+    }
+
     pub async fn logout(&self, provider: ProviderId, account: Option<String>) -> Result<()> {
         if let Some(account_id) = &account {
             self.auth

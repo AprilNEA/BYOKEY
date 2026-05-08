@@ -129,6 +129,14 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
 brew install AprilNEA/tap/byokey
 ```
 
+**Install script (Linux / macOS)**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/AprilNEA/BYOKEY/master/install.sh | sh
+```
+
+Downloads the latest release binary into `~/.byokey/bin/`. Pin a version with `BYOKEY_VERSION=v1.2.0` or override the install location with `BYOKEY_INSTALL_DIR=/usr/local/bin`.
+
 **From crates.io**
 
 ```sh

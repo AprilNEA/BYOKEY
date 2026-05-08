@@ -11,6 +11,7 @@ members = [
     "crates/proto",
     "crates/proxy",
     "crates/ampcode",
+    "crates/tui",
 ]
 exclude = ["desktop/src-tauri"]
 
@@ -37,6 +38,7 @@ byokey-provider = { version = "1.2.0", path = "crates/provider" }
 byokey-proto = { version = "1.2.0", path = "crates/proto" }
 byokey-proxy = { version = "1.2.0", path = "crates/proxy" }
 byokey-daemon = { version = "1.2.0", path = "crates/daemon" }
+byokey-tui = { version = "1.2.0", path = "crates/tui" }
 ampcode = { version = "0.1.1", path = "crates/ampcode" }
 loadwise-core = "0.1.0"
 aigw = { version = "0.4.0", default-features = false, features = ["anthropic", "anthropic-claude-code", "openai", "openai-compat"] }
@@ -165,6 +167,7 @@ byokey-auth.workspace = true
 byokey-store.workspace = true
 byokey-types.workspace = true
 byokey-daemon.workspace = true
+byokey-tui.workspace = true
 axum.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
