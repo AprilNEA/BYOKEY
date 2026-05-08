@@ -24,7 +24,6 @@ use futures_util::TryStreamExt as _;
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
-use crate::middleware::forward::ForwardedHeaders;
 use crate::util::stream::{CodexParser, GeminiParser, response_to_stream, tap_usage_stream};
 use crate::util::{bad_gateway, extract_usage, sse_response, upstream_error};
 use crate::{AppState, error::ApiError};
@@ -533,12 +532,34 @@ fn byte_stream_to_gemini_sse(
     })
 }
 
+/// Hop-by-hop headers per RFC 7230 §6.1 — must not be forwarded by proxies.
+const HOP_BY_HOP: &[&str] = &[
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+];
+
 /// Transparent proxy to `ampcode.com` — used for both `/api/{*path}` and
-/// `/v0/management/{*path}`. Takes the original URI path directly so a
-/// single handler covers all non-provider amp routes.
+/// `/v0/management/{*path}`.
+///
+/// Forwards the request verbatim: the client's headers (including
+/// `Authorization`, cookies, user-agent, etc.) and body are passed through
+/// untouched apart from the HTTP hop-by-hop headers and `host`, which any
+/// proxy must drop for correctness. The response body is streamed back
+/// rather than buffered so SSE and long-poll endpoints (e.g. thread
+/// continuation after a tool result) work end-to-end.
+///
+/// byokey deliberately does NOT inject its own amp token here: the amp CLI
+/// manages its own user session, and these non-AI endpoints
+/// (threads, telemetry, auth, management) must run as the logged-in user.
 pub async fn ampcode_proxy(
     State(state): State<Arc<AppState>>,
-    axum::extract::Extension(fwd): axum::extract::Extension<ForwardedHeaders>,
+    headers: axum::http::HeaderMap,
     method: Method,
     uri: axum::http::Uri,
     body: Bytes,
@@ -549,22 +570,24 @@ pub async fn ampcode_proxy(
         None => format!("{AMP_BACKEND}{path}"),
     };
 
-    let debug = path.ends_with("/internal") && tracing::enabled!(tracing::Level::DEBUG);
-    if debug {
-        let req_body = std::str::from_utf8(&body)
-            .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-            .map_or_else(
-                || format!("{body:?}"),
-                |v| serde_json::to_string_pretty(&v).unwrap_or_default(),
-            );
-        tracing::debug!(%method, %url, body = %req_body, "ampcode proxy request");
+    let mut fwd = rquest::header::HeaderMap::new();
+    for (name, value) in &headers {
+        let name_str = name.as_str();
+        if HOP_BY_HOP.contains(&name_str) || name_str == "host" {
+            continue;
+        }
+        if let (Ok(n), Ok(v)) = (
+            rquest::header::HeaderName::from_bytes(name.as_ref()),
+            rquest::header::HeaderValue::from_bytes(value.as_bytes()),
+        ) {
+            fwd.insert(n, v);
+        }
     }
 
     let resp = match state
         .http
         .request(method, url)
-        .headers(fwd.headers)
+        .headers(fwd)
         .body(body)
         .send()
         .await
@@ -575,8 +598,20 @@ pub async fn ampcode_proxy(
 
     let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
 
+    // rquest auto-decompresses gzip/brotli/zstd. The upstream's
+    // `content-encoding` and `content-length` describe the *compressed*
+    // payload, so forwarding them alongside the already-decompressed body
+    // would make the amp CLI try to decode twice (garbage → silent parse
+    // failure → degraded mode policy, losing read/bash in smart mode).
     let mut resp_headers = axum::http::HeaderMap::new();
     for (name, value) in resp.headers() {
+        let name_str = name.as_str();
+        if HOP_BY_HOP.contains(&name_str)
+            || name_str == "content-encoding"
+            || name_str == "content-length"
+        {
+            continue;
+        }
         if let (Ok(n), Ok(v)) = (
             axum::http::HeaderName::from_bytes(name.as_ref()),
             axum::http::HeaderValue::from_bytes(value.as_bytes()),
@@ -585,20 +620,15 @@ pub async fn ampcode_proxy(
         }
     }
 
-    let body_bytes = resp.bytes().await.unwrap_or_default();
+    let stream = resp
+        .bytes_stream()
+        .map_err(|e| std::io::Error::other(e.to_string()));
+    let body = axum::body::Body::from_stream(stream);
 
-    if debug {
-        let resp_body = std::str::from_utf8(&body_bytes)
-            .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-            .map_or_else(
-                || format!("{body_bytes:?}"),
-                |v| serde_json::to_string_pretty(&v).unwrap_or_default(),
-            );
-        tracing::debug!(%status, body = %resp_body, "ampcode proxy response");
-    }
-
-    (status, resp_headers, body_bytes).into_response()
+    let mut response = Response::new(body);
+    *response.status_mut() = status;
+    *response.headers_mut() = resp_headers;
+    response
 }
 
 #[cfg(test)]
