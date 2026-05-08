@@ -37,6 +37,7 @@ tracing.workspace = true
 sentry.workspace = true
 utoipa.workspace = true
 aigw.workspace = true
+aigw-core.workspace = true
 reqwest.workspace = true
 secrecy.workspace = true
 uuid.workspace = true
