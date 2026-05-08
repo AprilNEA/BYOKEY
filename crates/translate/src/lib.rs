@@ -11,16 +11,12 @@
 //! and the `model(...)` suffix UX convention.
 
 pub mod gemini_native_to_openai;
-pub mod gemini_to_openai;
 pub mod merge_messages;
-pub mod openai_to_gemini;
 pub mod openai_to_gemini_native;
 pub mod thinking;
 
 pub use gemini_native_to_openai::GeminiNativeRequest;
-pub use gemini_to_openai::GeminiToOpenAI;
 pub use merge_messages::merge_adjacent_messages;
-pub use openai_to_gemini::OpenAIToGemini;
 pub use openai_to_gemini_native::{OpenAIResponseToGemini, OpenAISseChunk};
 pub use thinking::ThinkingExtractor;
 pub use thinking::{

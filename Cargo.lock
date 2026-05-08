@@ -56,6 +56,7 @@ name = "aigw"
 version = "0.4.0"
 dependencies = [
  "aigw-anthropic",
+ "aigw-gemini",
  "aigw-openai",
  "aigw-openai-compat",
 ]
@@ -90,6 +91,25 @@ dependencies = [
  "serde_json",
  "strum 0.28.0",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "aigw-gemini"
+version = "0.4.0"
+dependencies = [
+ "aigw-core",
+ "bon 3.9.1",
+ "bytes",
+ "eventsource-stream",
+ "futures",
+ "http",
+ "reqwest 0.12.28",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -957,6 +977,7 @@ version = "1.2.0"
 dependencies = [
  "aigw",
  "aigw-core",
+ "aigw-gemini",
  "aigw-openai",
  "anyhow",
  "async-trait",

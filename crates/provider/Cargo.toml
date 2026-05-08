@@ -20,6 +20,7 @@ loadwise-core.workspace = true
 aigw.workspace = true
 aigw-core.workspace = true
 aigw-openai.workspace = true
+aigw-gemini.workspace = true
 reqwest.workspace = true
 secrecy.workspace = true
 rquest.workspace = true

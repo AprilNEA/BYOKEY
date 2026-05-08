@@ -9,15 +9,17 @@ use std::fmt::Write as _;
 
 use crate::http_util::ProviderHttp;
 use crate::registry;
+use aigw_core::translate::ResponseTranslator as _;
+use aigw_gemini::translate::{GeminiResponseTranslator, build_generate_content_request};
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
-use byokey_translate::{GeminiToOpenAI, OpenAIToGemini};
 use byokey_types::{
-    ByokError, ChatRequest, ProviderId, RateLimitStore, RequestTranslator, ResponseTranslator,
+    ByokError, ChatRequest, ProviderId, RateLimitStore,
     traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
 };
 use bytes::Bytes;
 use futures_util::StreamExt as _;
+use http::StatusCode;
 use rquest::Client;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -263,8 +265,17 @@ impl ProviderExecutor for AntigravityExecutor {
             |m| strip_ag_prefix(m).to_string(),
         );
 
-        // Translate OpenAI -> Gemini format
-        let mut gemini_body = OpenAIToGemini.translate_request(body)?;
+        // Translate OpenAI/canonical → Gemini-native via aigw-gemini, then
+        // serialise back to a Value so the Antigravity envelope can wrap it.
+        let mut canonical: aigw_core::model::ChatRequest = serde_json::from_value(body)
+            .map_err(|e| ByokError::Translation(e.to_string()))?;
+        // Use the bare model in the canonical body — aigw will write it back
+        // into the URL, but the envelope path doesn't use the URL anyway.
+        canonical.model = model.clone();
+        let native = build_generate_content_request(&canonical)
+            .map_err(|e| ByokError::Translation(e.to_string()))?;
+        let mut gemini_body = serde_json::to_value(&native)
+            .map_err(|e| ByokError::Translation(e.to_string()))?;
 
         // Wrap in Antigravity envelope
         let body = wrap_request(&model, &mut gemini_body);
@@ -314,7 +325,16 @@ impl ProviderExecutor for AntigravityExecutor {
             // Extract the `response` field from the Antigravity envelope
             let gemini_response = json.get("response").cloned().unwrap_or(json);
 
-            let translated = GeminiToOpenAI.translate_response(gemini_response)?;
+            // Hand the inner Gemini-format response to aigw-gemini for
+            // canonical translation, then serialise the canonical
+            // ChatResponse back to a Value (BYOKEY's executor trait).
+            let bytes = serde_json::to_vec(&gemini_response)
+                .map_err(|e| ByokError::Translation(e.to_string()))?;
+            let canonical = GeminiResponseTranslator
+                .translate_response(StatusCode::OK, &bytes)
+                .map_err(|e| ByokError::Translation(e.to_string()))?;
+            let translated = serde_json::to_value(&canonical)
+                .map_err(|e| ByokError::Translation(e.to_string()))?;
             Ok(ProviderResponse::Complete(translated))
         }
     }
