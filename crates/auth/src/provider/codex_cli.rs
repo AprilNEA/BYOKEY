@@ -23,7 +23,7 @@
 //! key. That mode is **not** importable: byokey's Codex executor is wired
 //! to the ChatGPT-mode Codex Responses endpoint, where a raw `sk-...` won't
 //! authenticate. Users with an API-key-mode auth.json should use
-//! `byokey add-api-key codex <key>` against the standard OpenAI API instead.
+//! `byokey add-api-key codex <key>` against the standard `OpenAI` API instead.
 
 use base64::Engine;
 use byokey_types::{ByokError, OAuthToken};

@@ -1,17 +1,15 @@
 //! Terminal UI for inspecting BYOKEY state.
 //!
-//! Reads directly from the local `SQLite` store so it works whether or not the
-//! background daemon is running. Liveness of the daemon itself is queried via
-//! [`byokey_daemon::process::status`].
+//! This crate is an upper-layer management API client. It does not read
+//! `SQLite` stores, auth managers, or daemon internals directly; all BYOKEY
+//! state is fetched through the `ConnectRPC` management API served by `proxy`.
 
 #![allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 
 mod app;
 mod ui;
 
-use anyhow::Result;
-use byokey_auth::AuthManager;
-use byokey_store::SqliteTokenStore;
+use anyhow::{Context as _, Result, bail};
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     execute,
@@ -20,26 +18,26 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::{
     io,
-    path::PathBuf,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
 use app::App;
+use byokey_proto::client::ManagementClient;
 
-/// Open the `SQLite` store at the given path (or the default if `None`).
-async fn open_store(db: Option<PathBuf>) -> Result<SqliteTokenStore> {
-    let path = match db {
-        Some(p) => p,
-        None => byokey_daemon::paths::db_path()?,
-    };
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+const DEFAULT_MANAGEMENT_URL: &str = "http://127.0.0.1:8018";
+
+fn management_client(endpoint: Option<String>) -> Result<ManagementClient> {
+    let endpoint = endpoint.unwrap_or_else(|| DEFAULT_MANAGEMENT_URL.to_string());
+    let uri: http::Uri = endpoint
+        .parse()
+        .with_context(|| format!("invalid management API URL {endpoint}"))?;
+    if uri.scheme_str() != Some("http") {
+        bail!("TUI management client currently supports local http:// URLs only");
     }
-    let url = format!("sqlite://{}?mode=rwc", path.display());
-    SqliteTokenStore::new(&url)
-        .await
-        .map_err(|e| anyhow::anyhow!("database error: {e}"))
+    if uri.authority().is_none() {
+        bail!("management API URL must include host and port");
+    }
+    Ok(ManagementClient::local_http(uri))
 }
 
 /// Run the TUI until the user quits.
@@ -47,12 +45,9 @@ async fn open_store(db: Option<PathBuf>) -> Result<SqliteTokenStore> {
 /// # Errors
 ///
 /// Returns an error if the terminal cannot be initialized or if the underlying
-/// store fails to open.
-pub async fn run(db: Option<PathBuf>) -> Result<()> {
-    let store = Arc::new(open_store(db).await?);
-    let auth = Arc::new(AuthManager::new(store.clone(), rquest::Client::new()));
-
-    let mut app = App::new(store, auth);
+/// management API URL is invalid.
+pub async fn run(endpoint: Option<String>) -> Result<()> {
+    let mut app = App::new(management_client(endpoint)?);
     app.refresh().await;
 
     enable_raw_mode()?;
