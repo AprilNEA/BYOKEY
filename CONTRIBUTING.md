@@ -58,10 +58,11 @@ Strict layered DAG — no reverse cross-layer dependencies:
 | `byokey-types` | 0 | Core types, traits, errors (zero intra-workspace deps) |
 | `byokey-config` | 1 | YAML configuration (figment) + file watching |
 | `byokey-store` | 1 | SQLite token/usage persistence (sea-orm v2 + sea-orm-migration) |
-| `byokey-auth` | 2 | OAuth flows (does not depend on translate / provider) |
-| `byokey-translate` | 2 | Format conversion — pure functions (does not depend on auth) |
-| `byokey-provider` | 3 | Provider Executor + model registry + `VersionStore` |
-| `byokey-proxy` | 4 | axum HTTP server, routing, SSE passthrough |
+| `byokey-auth` | 2 | OAuth flows (does not depend on provider / proxy) |
+| `byokey-provider` | 3 | Provider Executor + model registry + `VersionStore`; protocol conversion lives in `aigw` |
+| `byokey-proto` | 3 | ConnectRPC management API schema and generated client/server protocol types |
+| `byokey-proxy` | 4 | axum HTTP server, routing, SSE passthrough, ConnectRPC management fallback |
+| `byokey-tui` | — | ratatui management client using the ConnectRPC API |
 | `byokey-daemon` | — | Process/service management, PID file, Unix control socket (separate from the layered DAG — used by the CLI binary only) |
 
 CLI entry point: `src/main.rs` (package = `byokey`, bin = `byokey`).

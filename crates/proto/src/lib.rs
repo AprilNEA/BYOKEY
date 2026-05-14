@@ -13,6 +13,7 @@
 //! - [`byokey::status`] — server health, usage, rate limits
 //! - [`byokey::accounts`] — provider account management
 //! - [`byokey::amp`] — Amp CLI thread browsing
+//! - [`client`] — optional management API client wrapper (`client` feature)
 
 #![allow(
     dead_code,
@@ -21,5 +22,8 @@
     clippy::all,
     clippy::pedantic
 )]
+
+#[cfg(feature = "client")]
+pub mod client;
 
 include!(concat!(env!("OUT_DIR"), "/_connectrpc.rs"));

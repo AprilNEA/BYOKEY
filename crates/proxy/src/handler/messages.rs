@@ -28,6 +28,10 @@ use crate::util::stream::{AnthropicParser, response_to_stream, tap_usage_stream}
 use crate::util::{extract_usage, sse_response, strip_gateway_headers};
 use crate::{AppState, UsageRecorder, error::ApiError};
 
+/// Default thinking budget (tokens) for `Auto` mode on legacy Claude models
+/// that require an explicit `budget_tokens` value with `thinking.type: "enabled"`.
+const DEFAULT_AUTO_BUDGET: u32 = 10_000;
+
 // Copilot identification headers (matching VS Code Copilot Chat extension).
 const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.35.0";
 const COPILOT_EDITOR_VERSION: &str = "vscode/1.107.0";
@@ -121,7 +125,7 @@ fn sanitize_thinking(body: &mut Value) {
                 // Legacy models: "enabled" requires budget_tokens; use default.
                 body["thinking"] = serde_json::json!({
                     "type": "enabled",
-                    "budget_tokens": byokey_translate::DEFAULT_AUTO_BUDGET
+                    "budget_tokens": DEFAULT_AUTO_BUDGET
                 });
             }
             None => {
@@ -159,6 +163,53 @@ fn normalize_temperature_for_thinking(body: &mut Value) {
         Some(_) => {
             body["temperature"] = serde_json::json!(1);
         }
+    }
+}
+
+/// Returns `true` if a Claude thinking block signature looks valid.
+///
+/// Valid Anthropic-generated signatures start with `E` or `R` (after
+/// stripping an optional `<prefix>#` cache key). Antigravity / Gemini
+/// thinking blocks use a different format and would be rejected by the
+/// Claude API if forwarded.
+fn has_valid_claude_signature(sig: &str) -> bool {
+    let sig = sig.trim();
+    if sig.is_empty() {
+        return false;
+    }
+    let core = if let Some(idx) = sig.find('#') {
+        sig[idx + 1..].trim()
+    } else {
+        sig
+    };
+    if core.is_empty() {
+        return false;
+    }
+    matches!(core.as_bytes()[0], b'E' | b'R')
+}
+
+/// Strip thinking blocks with non-Anthropic signatures from
+/// `messages[].content[]` so they don't trip the Claude API on the way out.
+///
+/// This handler operates on raw Anthropic-native JSON (no aigw round-trip),
+/// so the structural source-tag check used by aigw-anthropic doesn't apply
+/// here — the signature-prefix heuristic is the right tool for the
+/// passthrough path.
+fn strip_invalid_thinking_signatures(body: &mut Value) {
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for msg in messages {
+        let Some(content) = msg.get_mut("content").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        content.retain(|block| {
+            if block.get("type").and_then(Value::as_str) != Some("thinking") {
+                return true;
+            }
+            let sig = block.get("signature").and_then(Value::as_str).unwrap_or("");
+            has_valid_claude_signature(sig)
+        });
     }
 }
 
@@ -244,7 +295,7 @@ pub async fn anthropic_messages(
     let mut body = body.0;
     sanitize_system(&mut body);
     sanitize_thinking(&mut body);
-    byokey_translate::strip_invalid_thinking_signatures(&mut body);
+    strip_invalid_thinking_signatures(&mut body);
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let beta = build_beta_header(&mut body, &headers);
 

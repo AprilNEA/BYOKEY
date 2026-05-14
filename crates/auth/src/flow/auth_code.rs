@@ -89,6 +89,14 @@ pub async fn run<P: AuthCodeFlow>(
             "[login] opening browser for {}...",
             provider.provider_name()
         );
+        eprintln!();
+        eprintln!("If your browser does not open, copy and paste this URL:");
+        eprintln!("  {auth_url}");
+        eprintln!();
+        eprintln!(
+            "Listening for the OAuth callback on http://localhost:{}/...",
+            provider.callback_port()
+        );
     }
     open_browser(&auth_url);
     emit(

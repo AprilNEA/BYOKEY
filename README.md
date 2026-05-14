@@ -129,6 +129,14 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
 brew install AprilNEA/tap/byokey
 ```
 
+**Install script (Linux / macOS)**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/AprilNEA/BYOKEY/master/install.sh | sh
+```
+
+Downloads the latest release binary into `~/.byokey/bin/`. Pin a version with `BYOKEY_VERSION=v1.2.0` or override the install location with `BYOKEY_INSTALL_DIR=/usr/local/bin`.
+
 **From crates.io**
 
 ```sh
@@ -190,6 +198,7 @@ Commands:
   login         Authenticate with a provider
   logout        Remove stored credentials for a provider
   status        Show authentication status for all providers
+  tui           Launch the interactive terminal UI
   accounts      List all accounts for a provider
   switch        Switch the active account for a provider
   amp           Amp-related utilities
@@ -240,6 +249,10 @@ Options:
 **`byokey logout <PROVIDER>`** — Deletes the stored token for the given provider.
 
 **`byokey status`** — Prints authentication status for every known provider.
+
+**`byokey tui`** — Opens the terminal management UI. It connects to the
+ConnectRPC management API at `http://127.0.0.1:8018` by default; override with
+`--url <URL>`.
 
 **`byokey accounts <PROVIDER>`** — Lists all accounts for a provider.
 

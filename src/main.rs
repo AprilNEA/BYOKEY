@@ -120,6 +120,18 @@ enum Commands {
         #[command(flatten)]
         store: StoreArgs,
     },
+    /// Import the local OpenAI Codex CLI's OAuth credentials as a Codex
+    /// account. Reads from `~/.codex/auth.json`.
+    ImportCodex {
+        /// Account identifier. Defaults to `codex-cli`.
+        #[arg(long, value_name = "NAME")]
+        account: Option<String>,
+        /// Human-readable label to show in UIs. Defaults to `Codex CLI`.
+        #[arg(long)]
+        label: Option<String>,
+        #[command(flatten)]
+        store: StoreArgs,
+    },
     /// Remove stored credentials for a provider.
     Logout {
         /// Provider name.
@@ -134,6 +146,12 @@ enum Commands {
     Status {
         #[command(flatten)]
         store: StoreArgs,
+    },
+    /// Launch the interactive terminal UI.
+    Tui {
+        /// ConnectRPC management API base URL.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
     },
     /// List all accounts for a provider.
     Accounts {
@@ -213,6 +231,16 @@ async fn run(command: Commands) -> Result<()> {
                 .import_claude_code(account, label)
                 .await
         }
+        Commands::ImportCodex {
+            account,
+            label,
+            store,
+        } => {
+            auth::AuthCmd::new(store.db)
+                .await?
+                .import_codex(account, label)
+                .await
+        }
         Commands::Logout {
             provider,
             account,
@@ -224,6 +252,7 @@ async fn run(command: Commands) -> Result<()> {
                 .await
         }
         Commands::Status { store } => auth::AuthCmd::new(store.db).await?.status().await,
+        Commands::Tui { url } => byokey_tui::run(url).await,
         Commands::Accounts { provider, store } => {
             auth::AuthCmd::new(store.db).await?.accounts(provider).await
         }

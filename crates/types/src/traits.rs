@@ -21,6 +21,10 @@ pub const DEFAULT_ACCOUNT: &str = "default";
 /// Claude Code CLI (see `byokey_auth::provider::claude_code`).
 pub const CLAUDE_CODE_ACCOUNT: &str = "claude-code";
 
+/// Default account identifier for credentials imported from the local
+/// `OpenAI` Codex CLI (see `byokey_auth::provider::codex_cli`).
+pub const CODEX_CLI_ACCOUNT: &str = "codex-cli";
+
 /// Maximum byte length accepted by the `AddApiKey` RPC / CLI command.
 /// Real API keys are well under 1KB; rejecting larger values guards against
 /// oversized strings ending up in every outgoing `Authorization` header.

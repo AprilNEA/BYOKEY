@@ -9,6 +9,7 @@ pub mod antigravity;
 pub mod claude;
 pub mod claude_code;
 pub mod codex;
+pub mod codex_cli;
 pub mod copilot;
 pub mod gemini;
 pub mod iflow;

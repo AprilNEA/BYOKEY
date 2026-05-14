@@ -16,7 +16,6 @@ byokey-types = { workspace = true, features = ["rquest"] }
 byokey-config.workspace = true
 byokey-auth.workspace = true
 byokey-provider.workspace = true
-byokey-translate.workspace = true
 byokey-store.workspace = true
 byokey-proto.workspace = true
 axum.workspace = true
@@ -37,6 +36,9 @@ tracing.workspace = true
 sentry.workspace = true
 utoipa.workspace = true
 aigw.workspace = true
+aigw-core.workspace = true
+aigw-gemini.workspace = true
+aigw-openai.workspace = true
 reqwest.workspace = true
 secrecy.workspace = true
 uuid.workspace = true

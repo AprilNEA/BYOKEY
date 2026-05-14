@@ -52,14 +52,7 @@ pub(crate) fn tap_usage_stream<P: UsageParser>(
                     s.buf.extend_from_slice(&bytes);
                     while let Some(nl) = s.buf.iter().position(|&b| b == b'\n') {
                         let line: Vec<u8> = s.buf.drain(..=nl).collect();
-                        let line = String::from_utf8_lossy(&line);
-                        let line = line.trim();
-                        if let Some(data) = line.strip_prefix("data: ")
-                            && data != "[DONE]"
-                            && let Ok(ev) = serde_json::from_str::<Value>(data)
-                        {
-                            s.parser.parse_line(&ev);
-                        }
+                        parse_usage_sse_line(&mut s.parser, &line);
                     }
                     Ok(Some((bytes, s)))
                 }
@@ -76,6 +69,10 @@ pub(crate) fn tap_usage_stream<P: UsageParser>(
                     Err(e)
                 }
                 None => {
+                    if !s.buf.is_empty() {
+                        let line = std::mem::take(&mut s.buf);
+                        parse_usage_sse_line(&mut s.parser, &line);
+                    }
                     let (input, output) = s.parser.finish();
                     s.usage
                         .record_success_for(&s.model, &s.provider, &s.account_id, input, output);
@@ -84,6 +81,17 @@ pub(crate) fn tap_usage_stream<P: UsageParser>(
             }
         },
     ))
+}
+
+fn parse_usage_sse_line<P: UsageParser>(parser: &mut P, line: &[u8]) {
+    let line = String::from_utf8_lossy(line);
+    let line = line.trim();
+    if let Some(data) = line.strip_prefix("data:").map(str::trim_start)
+        && data != "[DONE]"
+        && let Ok(ev) = serde_json::from_str::<Value>(data)
+    {
+        parser.parse_line(&ev);
+    }
 }
 
 /// Converts an `rquest::Response` into a [`ByteStream`].
@@ -235,5 +243,38 @@ impl UsageParser for GeminiParser {
     }
     fn finish(self) -> (u64, u64) {
         (self.input, self.output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use futures_util::stream;
+
+    #[tokio::test]
+    async fn tap_usage_stream_parses_final_line_without_newline() {
+        let usage = Arc::new(UsageRecorder::new(None));
+        let inner: ByteStream = Box::pin(stream::iter([Ok(Bytes::from_static(
+            br#"data: {"usage":{"prompt_tokens":12,"completion_tokens":7}}"#,
+        ))]));
+
+        let chunks: Vec<_> = tap_usage_stream(
+            inner,
+            Arc::clone(&usage),
+            "gpt-test".to_owned(),
+            "openai".to_owned(),
+            "default".to_owned(),
+            OpenAIParser::new(),
+        )
+        .collect()
+        .await;
+
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].is_ok());
+        let snapshot = usage.snapshot();
+        assert_eq!(snapshot.success_requests, 1);
+        assert_eq!(snapshot.input_tokens, 12);
+        assert_eq!(snapshot.output_tokens, 7);
     }
 }

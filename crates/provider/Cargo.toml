@@ -15,11 +15,11 @@ workspace = true
 byokey-types = { workspace = true, features = ["rquest"] }
 byokey-config.workspace = true
 byokey-auth.workspace = true
-byokey-translate.workspace = true
 loadwise-core.workspace = true
 aigw.workspace = true
 aigw-core.workspace = true
 aigw-openai.workspace = true
+aigw-gemini.workspace = true
 reqwest.workspace = true
 secrecy.workspace = true
 rquest.workspace = true

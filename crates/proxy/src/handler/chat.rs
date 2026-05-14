@@ -6,8 +6,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use byokey_provider::{make_executor_for_model, parse_qualified_model};
-use byokey_translate::{apply_thinking, parse_model_suffix};
+use byokey_provider::{make_executor_for_model, parse_model_suffix, parse_qualified_model};
 use byokey_types::{ChatRequest, ProviderId, traits::ProviderResponse};
 use futures_util::TryStreamExt as _;
 use std::collections::HashSet;
@@ -74,14 +73,21 @@ pub async fn chat_completions(
     // Replace model name with the clean version (suffix stripped)
     request.model.clone_from(&suffix.model);
 
-    // Apply thinking config if suffix was parsed
-    if let Some(ref thinking) = suffix.thinking {
-        let provider =
-            byokey_provider::resolve_provider(&suffix.model).unwrap_or(ProviderId::Claude);
-        let capability = byokey_provider::thinking_capability(&suffix.model);
+    // Apply thinking config if a model suffix was parsed.
+    //
+    // The canonical [`aigw_core::model::ThinkingRequest`] is set on the
+    // request body's `thinking` field. Each provider's executor
+    // deserialises into `aigw_core::ChatRequest` and lets aigw's
+    // per-provider [`ThinkingProjector`] translate the canonical config
+    // onto the wire surface (Anthropic `thinking.type`, OpenAI Responses
+    // `reasoning.effort`, OpenAI Chat Completions `reasoning_effort`,
+    // Gemini `generationConfig.thinkingConfig`).
+    //
+    // [`ThinkingProjector`]: aigw_core::translate::ThinkingProjector
+    if let Some(thinking) = &suffix.thinking {
         let mut body = request.into_body();
-        body = apply_thinking(body, &provider, thinking, capability);
-        // Re-parse the modified body back into ChatRequest
+        body["thinking"] = serde_json::to_value(thinking)
+            .map_err(|e| ApiError::from(byokey_types::ByokError::Translation(e.to_string())))?;
         request = serde_json::from_value(body)
             .map_err(|e| ApiError::from(byokey_types::ByokError::Translation(e.to_string())))?;
     }

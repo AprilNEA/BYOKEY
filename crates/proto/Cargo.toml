@@ -21,6 +21,10 @@ unsafe_code = "allow"
 pedantic = { level = "warn", priority = -1 }
 all = { level = "warn", priority = -2 }
 
+[features]
+default = []
+client = ["connectrpc/client"]
+
 [build-dependencies]
 connectrpc-build.workspace = true
 
@@ -28,6 +32,7 @@ connectrpc-build.workspace = true
 connectrpc.workspace = true
 buffa.workspace = true
 buffa-types.workspace = true
+http.workspace = true
 http-body.workspace = true
 serde.workspace = true
 # Required by generated code: the server-streaming `Login` RPC stub
