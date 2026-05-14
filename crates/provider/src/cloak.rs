@@ -4,7 +4,7 @@
 //! The fingerprint algorithm replicates Claude Code's `utils/fingerprint.ts`:
 //! `SHA256(SALT + msg[4] + msg[7] + msg[20] + version)[0..3]`.
 //!
-//! # cc_entrypoint
+//! # `cc_entrypoint`
 //!
 //! `derive_cc_entrypoint` maps an incoming `User-Agent` to the correct
 //! `cc_entrypoint` value in the billing header:
@@ -13,7 +13,7 @@
 //! - Any other UA → `"local-agent"`
 //! - `None` (executor path has no incoming UA) → `"cli"`
 //!
-//! # cc_workload
+//! # `cc_workload`
 //!
 //! Clients may tag traffic with `X-Byokey-Claude-Workload: <value>`.
 //! The value is validated against `[A-Za-z0-9_-]+` and appended as
@@ -239,10 +239,11 @@ fn make_billing_block(
         "x-anthropic-billing-header: cc_version={DEFAULT_CLI_VERSION}.{fp}; cc_entrypoint={entrypoint};"
     );
 
-    if let Some(wl) = workload {
-        if is_valid_workload(wl) {
-            header.push_str(&format!(" cc_workload={wl};"));
-        }
+    if let Some(wl) = workload
+        && is_valid_workload(wl)
+    {
+        use std::fmt::Write as _;
+        let _ = write!(header, " cc_workload={wl};");
     }
 
     serde_json::json!({

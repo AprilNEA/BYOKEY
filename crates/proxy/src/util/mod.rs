@@ -51,43 +51,6 @@ pub(crate) fn strip_gateway_headers(headers: &mut HeaderMap) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::http::HeaderName;
-    use std::str::FromStr as _;
-
-    #[test]
-    fn strip_gateway_headers_drops_gateway_headers_keeps_safe() {
-        let mut map = HeaderMap::new();
-        map.insert(
-            HeaderName::from_str("x-litellm-version").unwrap(),
-            "1.0".parse().unwrap(),
-        );
-        map.insert(
-            HeaderName::from_str("cf-ray").unwrap(),
-            "abc123".parse().unwrap(),
-        );
-        map.insert(
-            HeaderName::from_str("x-request-id").unwrap(),
-            "req-1".parse().unwrap(),
-        );
-        map.insert(
-            axum::http::header::CONTENT_TYPE,
-            "application/json".parse().unwrap(),
-        );
-
-        strip_gateway_headers(&mut map);
-
-        // Gateway headers gone.
-        assert!(map.get("x-litellm-version").is_none());
-        assert!(map.get("cf-ray").is_none());
-        // Safe headers retained.
-        assert!(map.get("x-request-id").is_some());
-        assert!(map.get(axum::http::header::CONTENT_TYPE).is_some());
-    }
-}
-
 pub(crate) fn extract_usage(json: &Value, input_ptr: &str, output_ptr: &str) -> (u64, u64) {
     (
         json.pointer(input_ptr).and_then(Value::as_u64).unwrap_or(0),
@@ -141,4 +104,41 @@ pub(crate) fn upstream_error(
         body,
         retry_after: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderName;
+    use std::str::FromStr as _;
+
+    #[test]
+    fn strip_gateway_headers_drops_gateway_headers_keeps_safe() {
+        let mut map = HeaderMap::new();
+        map.insert(
+            HeaderName::from_str("x-litellm-version").unwrap(),
+            "1.0".parse().unwrap(),
+        );
+        map.insert(
+            HeaderName::from_str("cf-ray").unwrap(),
+            "abc123".parse().unwrap(),
+        );
+        map.insert(
+            HeaderName::from_str("x-request-id").unwrap(),
+            "req-1".parse().unwrap(),
+        );
+        map.insert(
+            axum::http::header::CONTENT_TYPE,
+            "application/json".parse().unwrap(),
+        );
+
+        strip_gateway_headers(&mut map);
+
+        // Gateway headers gone.
+        assert!(map.get("x-litellm-version").is_none());
+        assert!(map.get("cf-ray").is_none());
+        // Safe headers retained.
+        assert!(map.get("x-request-id").is_some());
+        assert!(map.get(axum::http::header::CONTENT_TYPE).is_some());
+    }
 }
