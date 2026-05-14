@@ -70,6 +70,7 @@ changelog_update = false
 # re-enable when byokey-proto's next version ships with that feature.
 [[package]]
 name = "byokey-tui"
+publish = false
 release = false
 git_tag_enable = false
 git_release_enable = false
