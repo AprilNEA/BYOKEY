@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Terminal UI for BYOKEY"
+# Internal workspace crate — depends on byokey-proto's `client` feature
+# which is newer than the published byokey-proto 1.2.0. Re-enable when
+# byokey-proto's next release ships that feature.
+publish = false
 
 [dependencies]
 byokey-proto = { workspace = true, features = ["client"] }

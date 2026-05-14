@@ -65,6 +65,16 @@ git_tag_enable = false
 git_release_enable = false
 changelog_update = false
 
+# Internal TUI — not published. Depends on byokey-proto's `client`
+# feature, which postdates the last byokey-proto crates.io release;
+# re-enable when byokey-proto's next version ships with that feature.
+[[package]]
+name = "byokey-tui"
+release = false
+git_tag_enable = false
+git_release_enable = false
+changelog_update = false
+
 [[package]]
 name = "ampcode"
 git_tag_enable = false
