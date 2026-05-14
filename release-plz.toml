@@ -42,12 +42,6 @@ git_release_enable = false
 changelog_update = false
 
 [[package]]
-name = "byokey-translate"
-git_tag_enable = false
-git_release_enable = false
-changelog_update = false
-
-[[package]]
 name = "byokey-provider"
 git_tag_enable = false
 git_release_enable = false

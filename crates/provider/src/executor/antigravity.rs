@@ -5,12 +5,14 @@
 //! JSON lines (not SSE), each containing a `response` field with a Gemini
 //! stream chunk.
 
-use std::fmt::Write as _;
-
 use crate::http_util::ProviderHttp;
 use crate::registry;
+use crate::stream_bridge::{SseContext, stream_events_to_sse};
 use aigw_core::translate::ResponseTranslator as _;
-use aigw_gemini::translate::{GeminiResponseTranslator, build_generate_content_request};
+use aigw_core::translate::StreamParser as _;
+use aigw_gemini::translate::{
+    GeminiResponseTranslator, GeminiStreamParser, build_generate_content_request,
+};
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
 use byokey_types::{
@@ -18,7 +20,7 @@ use byokey_types::{
     traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
 };
 use bytes::Bytes;
-use futures_util::StreamExt as _;
+use futures_util::{StreamExt as _, stream::try_unfold};
 use http::StatusCode;
 use rquest::Client;
 use serde_json::{Value, json};
@@ -151,106 +153,97 @@ fn strip_ag_prefix(model: &str) -> &str {
     model.strip_prefix("ag-").unwrap_or(model)
 }
 
-/// Converts a single Gemini streaming chunk (from within the Antigravity envelope)
-/// into an `OpenAI` SSE `chat.completion.chunk` line.
-fn gemini_chunk_to_openai_sse(chunk: &Value, model: &str) -> Option<String> {
-    let mut output = String::new();
+/// Translate Antigravity's enveloped Gemini stream into `OpenAI` Chat SSE.
+fn translate_antigravity_stream(inner: ByteStream, model: String) -> ByteStream {
+    struct State {
+        inner: ByteStream,
+        buf: Vec<u8>,
+        parser: GeminiStreamParser,
+        ctx: SseContext,
+        done: bool,
+    }
 
-    // Build main content chunk from candidates
-    if let Some(candidates) = chunk.get("candidates").and_then(Value::as_array)
-        && let Some(candidate) = candidates.first()
-    {
-        let finish_reason = candidate
-            .get("finishReason")
-            .and_then(Value::as_str)
-            .and_then(|r| match r {
-                "STOP" => Some("stop"),
-                "MAX_TOKENS" => Some("length"),
-                _ => None,
-            });
+    Box::pin(try_unfold(
+        State {
+            inner,
+            buf: Vec::new(),
+            parser: GeminiStreamParser::new(),
+            ctx: SseContext {
+                id: "chatcmpl-antigravity".to_owned(),
+                model,
+            },
+            done: false,
+        },
+        |mut s| async move {
+            loop {
+                if let Some(nl) = s.buf.iter().position(|&b| b == b'\n') {
+                    let raw: Vec<u8> = s.buf.drain(..=nl).collect();
+                    let line = String::from_utf8_lossy(&raw);
+                    let line = line.trim_end_matches(['\r', '\n']).trim();
+                    if line.is_empty() {
+                        continue;
+                    }
 
-        let parts = candidate
-            .pointer("/content/parts")
-            .and_then(Value::as_array);
-
-        let mut delta = json!({});
-        let mut has_content = false;
-
-        if let Some(parts) = parts {
-            for part in parts {
-                if let Some(text) = part.get("text").and_then(Value::as_str) {
-                    delta["content"] = json!(text);
-                    has_content = true;
-                }
-                if let Some(fc) = part.get("functionCall") {
-                    let name = fc.get("name").and_then(Value::as_str).unwrap_or("");
-                    let args = fc.get("args").cloned().unwrap_or_else(|| json!({}));
-                    let tool_call = json!({
-                        "index": 0,
-                        "id": format!("{name}-{}", &random_uuid()[..8]),
-                        "type": "function",
-                        "function": {
-                            "name": name,
-                            "arguments": args.to_string(),
+                    let data = line.strip_prefix("data: ").unwrap_or(line);
+                    let events = if data == "[DONE]" {
+                        s.parser.parse_event("", data)
+                    } else {
+                        match serde_json::from_str::<Value>(data) {
+                            Ok(envelope) => {
+                                let gemini_chunk = envelope.get("response").unwrap_or(&envelope);
+                                s.parser.parse_event("", &gemini_chunk.to_string())
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "antigravity stream envelope parse error");
+                                continue;
+                            }
                         }
-                    });
-                    delta["tool_calls"] = json!([tool_call]);
-                    has_content = true;
+                    };
+
+                    match events {
+                        Ok(events) if !events.is_empty() => {
+                            if events
+                                .iter()
+                                .any(|e| matches!(e, aigw_core::model::StreamEvent::Done))
+                            {
+                                s.done = true;
+                            }
+                            let bytes = stream_events_to_sse(&events, &mut s.ctx);
+                            if !bytes.is_empty() {
+                                return Ok(Some((Bytes::from(bytes), s)));
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "antigravity stream parse error");
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                if s.done {
+                    return Ok(None);
+                }
+
+                match s.inner.next().await {
+                    Some(Ok(b)) => s.buf.extend_from_slice(&b),
+                    Some(Err(e)) => return Err(e),
+                    None => {
+                        let events = s
+                            .parser
+                            .finish()
+                            .map_err(|e| ByokError::Translation(e.to_string()))?;
+                        let bytes = stream_events_to_sse(&events, &mut s.ctx);
+                        if bytes.is_empty() {
+                            return Ok(None);
+                        }
+                        s.done = true;
+                        return Ok(Some((Bytes::from(bytes), s)));
+                    }
                 }
             }
-        }
-
-        if has_content || finish_reason.is_some() {
-            if finish_reason.is_some() && !has_content {
-                delta = json!({});
-            }
-            let sse_chunk = json!({
-                "id": "chatcmpl-antigravity",
-                "object": "chat.completion.chunk",
-                "model": model,
-                "choices": [{
-                    "index": 0,
-                    "delta": delta,
-                    "finish_reason": finish_reason,
-                }]
-            });
-            if let Ok(s) = serde_json::to_string(&sse_chunk) {
-                let _ = write!(output, "data: {s}\n\n");
-            }
-        }
-    }
-
-    // Emit usage chunk if usageMetadata is present (typically on the last chunk)
-    if let Some(usage_meta) = chunk.get("usageMetadata") {
-        let prompt = usage_meta
-            .get("promptTokenCount")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let completion = usage_meta
-            .get("candidatesTokenCount")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let usage_chunk = json!({
-            "id": "chatcmpl-antigravity",
-            "object": "chat.completion.chunk",
-            "model": model,
-            "choices": [],
-            "usage": {
-                "prompt_tokens": prompt,
-                "completion_tokens": completion,
-                "total_tokens": prompt + completion
-            }
-        });
-        if let Ok(s) = serde_json::to_string(&usage_chunk) {
-            let _ = write!(output, "data: {s}\n\n");
-        }
-    }
-
-    if output.is_empty() {
-        None
-    } else {
-        Some(output)
-    }
+        },
+    ))
 }
 
 #[async_trait]
@@ -267,15 +260,15 @@ impl ProviderExecutor for AntigravityExecutor {
 
         // Translate OpenAI/canonical → Gemini-native via aigw-gemini, then
         // serialise back to a Value so the Antigravity envelope can wrap it.
-        let mut canonical: aigw_core::model::ChatRequest = serde_json::from_value(body)
-            .map_err(|e| ByokError::Translation(e.to_string()))?;
+        let mut canonical: aigw_core::model::ChatRequest =
+            serde_json::from_value(body).map_err(|e| ByokError::Translation(e.to_string()))?;
         // Use the bare model in the canonical body — aigw will write it back
         // into the URL, but the envelope path doesn't use the URL anyway.
         canonical.model = model.clone();
         let native = build_generate_content_request(&canonical)
             .map_err(|e| ByokError::Translation(e.to_string()))?;
-        let mut gemini_body = serde_json::to_value(&native)
-            .map_err(|e| ByokError::Translation(e.to_string()))?;
+        let mut gemini_body =
+            serde_json::to_value(&native).map_err(|e| ByokError::Translation(e.to_string()))?;
 
         // Wrap in Antigravity envelope
         let body = wrap_request(&model, &mut gemini_body);
@@ -291,34 +284,12 @@ impl ProviderExecutor for AntigravityExecutor {
         let resp = self.send_request(path, &token, &body, stream).await?;
 
         if stream {
-            let model_owned = model;
-            let byte_stream: ByteStream = Box::pin(resp.bytes_stream().map(move |chunk_result| {
-                let chunk_bytes = chunk_result.map_err(ByokError::from)?;
-                let text = String::from_utf8_lossy(&chunk_bytes);
-                let mut output = String::new();
-
-                for line in text.lines() {
-                    let line = line.trim();
-                    if line.is_empty() {
-                        continue;
-                    }
-                    // Strip SSE "data: " prefix if present
-                    let json_str = line.strip_prefix("data: ").unwrap_or(line);
-                    if json_str == "[DONE]" {
-                        output.push_str("data: [DONE]\n\n");
-                        continue;
-                    }
-                    if let Ok(envelope) = serde_json::from_str::<Value>(json_str)
-                        && let Some(gemini_chunk) = envelope.get("response")
-                        && let Some(sse) = gemini_chunk_to_openai_sse(gemini_chunk, &model_owned)
-                    {
-                        output.push_str(&sse);
-                    }
-                }
-
-                Ok(Bytes::from(output))
-            }));
-            Ok(ProviderResponse::Stream(byte_stream))
+            let byte_stream: ByteStream =
+                Box::pin(resp.bytes_stream().map(|r| r.map_err(ByokError::from)));
+            Ok(ProviderResponse::Stream(translate_antigravity_stream(
+                byte_stream,
+                model,
+            )))
         } else {
             let json: Value = resp.json().await?;
 
@@ -408,54 +379,105 @@ mod tests {
         assert!(wrapped["request"].get("contents").is_some());
     }
 
-    #[test]
-    fn test_gemini_chunk_to_openai_sse_text() {
-        let chunk = json!({
-            "candidates": [{
-                "content": {"parts": [{"text": "Hello"}], "role": "model"},
-                "index": 0,
-            }]
-        });
-        let sse = gemini_chunk_to_openai_sse(&chunk, "gemini-2.5-pro").unwrap();
-        assert!(sse.starts_with("data: "));
-        let data: Value = serde_json::from_str(sse.trim_start_matches("data: ").trim()).unwrap();
-        assert_eq!(data["choices"][0]["delta"]["content"], "Hello");
-        assert_eq!(data["object"], "chat.completion.chunk");
+    async fn collect_stream_text(stream: ByteStream) -> String {
+        let chunks: Vec<Bytes> = stream
+            .map(|r| r.expect("stream chunk should be ok"))
+            .collect()
+            .await;
+        String::from_utf8(
+            chunks
+                .into_iter()
+                .flat_map(|b| b.to_vec())
+                .collect::<Vec<_>>(),
+        )
+        .expect("stream should be utf8")
     }
 
-    #[test]
-    fn test_gemini_chunk_to_openai_sse_finish() {
-        let chunk = json!({
-            "candidates": [{
-                "content": {"parts": [], "role": "model"},
-                "finishReason": "STOP",
-                "index": 0,
-            }]
+    #[tokio::test]
+    async fn antigravity_stream_text_uses_gemini_parser() {
+        let line = json!({
+            "response": {
+                "candidates": [{
+                    "content": {"parts": [{"text": "Hello"}], "role": "model"},
+                    "index": 0
+                }],
+                "responseId": "ag-1",
+                "modelVersion": "gemini-2.5-pro"
+            }
         });
-        let sse = gemini_chunk_to_openai_sse(&chunk, "gemini-2.5-pro").unwrap();
-        let data: Value = serde_json::from_str(sse.trim_start_matches("data: ").trim()).unwrap();
-        assert_eq!(data["choices"][0]["finish_reason"], "stop");
+        let input: ByteStream = Box::pin(futures_util::stream::iter(vec![Ok(Bytes::from(
+            format!("data: {line}\n"),
+        ))]));
+        let out =
+            collect_stream_text(translate_antigravity_stream(input, "gemini-2.5-pro".into())).await;
+
+        assert!(out.contains(r#""content":"Hello""#));
+        assert!(out.contains("data: [DONE]"));
     }
 
-    #[test]
-    fn test_gemini_chunk_to_openai_sse_function_call() {
-        let chunk = json!({
-            "candidates": [{
-                "content": {
-                    "parts": [{
-                        "functionCall": {
-                            "name": "get_weather",
-                            "args": {"location": "NYC"}
-                        }
-                    }],
-                    "role": "model"
-                },
-                "index": 0,
-            }]
+    #[tokio::test]
+    async fn antigravity_stream_thought_becomes_reasoning_delta() {
+        let line = json!({
+            "response": {
+                "candidates": [{
+                    "content": {
+                        "parts": [
+                            {"text": "thinking", "thought": true, "thoughtSignature": "sig"},
+                            {"text": "answer"}
+                        ],
+                        "role": "model"
+                    },
+                    "index": 0
+                }],
+                "responseId": "ag-1"
+            }
         });
-        let sse = gemini_chunk_to_openai_sse(&chunk, "gemini-2.5-pro").unwrap();
-        let data: Value = serde_json::from_str(sse.trim_start_matches("data: ").trim()).unwrap();
-        let tool_call = &data["choices"][0]["delta"]["tool_calls"][0];
-        assert_eq!(tool_call["function"]["name"], "get_weather");
+        let input: ByteStream = Box::pin(futures_util::stream::iter(vec![Ok(Bytes::from(
+            format!("{line}\n"),
+        ))]));
+        let out =
+            collect_stream_text(translate_antigravity_stream(input, "gemini-2.5-pro".into())).await;
+
+        assert!(out.contains(r#""reasoning_content":"thinking""#));
+        assert!(out.contains(r#""reasoning_signature":"sig""#));
+        assert!(out.contains(r#""content":"answer""#));
+    }
+
+    #[tokio::test]
+    async fn antigravity_stream_finish_usage_and_tool_calls() {
+        let tool = json!({
+            "response": {
+                "candidates": [{
+                    "content": {
+                        "parts": [{
+                            "functionCall": {
+                                "name": "get_weather",
+                                "args": {"location": "NYC"},
+                                "id": "fc1"
+                            }
+                        }],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP",
+                    "index": 0
+                }],
+                "usageMetadata": {
+                    "promptTokenCount": 3,
+                    "candidatesTokenCount": 2,
+                    "totalTokenCount": 5
+                }
+            }
+        });
+        let input: ByteStream = Box::pin(futures_util::stream::iter(vec![Ok(Bytes::from(
+            format!("data: {tool}\n"),
+        ))]));
+        let out =
+            collect_stream_text(translate_antigravity_stream(input, "gemini-2.5-pro".into())).await;
+
+        assert!(out.contains(r#""name":"get_weather""#));
+        assert!(out.contains(r#""arguments":"{\"location\":\"NYC\"}""#));
+        assert!(out.contains(r#""finish_reason":"stop""#));
+        assert!(out.contains(r#""prompt_tokens":3"#));
+        assert!(out.contains("data: [DONE]"));
     }
 }

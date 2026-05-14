@@ -224,6 +224,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn reasoning_signature_emits_reasoning_signature() {
         let mut ctx = SseContext {
             id: "chatcmpl-test".into(),

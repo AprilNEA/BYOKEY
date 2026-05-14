@@ -15,7 +15,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::{Method, StatusCode},
+    http::{Method, StatusCode, Uri},
     response::{IntoResponse, Response},
 };
 use byokey_types::{ByokError, ProviderId};
@@ -25,7 +25,9 @@ use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
 use crate::middleware::forward::ForwardedHeaders;
-use crate::util::stream::{CodexParser, GeminiParser, response_to_stream, tap_usage_stream};
+use crate::util::stream::{
+    CodexParser, GeminiParser, OpenAIParser, response_to_stream, tap_usage_stream,
+};
 use crate::util::{bad_gateway, extract_usage, sse_response, upstream_error};
 use crate::{AppState, error::ApiError};
 
@@ -262,6 +264,7 @@ pub async fn gemini_native_passthrough(
     State(state): State<Arc<AppState>>,
     Path(action): Path<String>,
     Query(query_params): Query<HashMap<String, String>>,
+    uri: Uri,
     axum::extract::Json(body): axum::extract::Json<Value>,
 ) -> Result<Response, ApiError> {
     let config = state.config.load();
@@ -292,17 +295,9 @@ pub async fn gemini_native_passthrough(
     // Direct passthrough to Gemini API.
     let api_key = gemini_config.api_key;
 
-    // Rebuild query string from parsed params.
-    let qs: String = query_params
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect::<Vec<_>>()
-        .join("&");
-    let url = if qs.is_empty() {
-        format!("{GEMINI_MODELS_BASE}/{action}")
-    } else {
-        format!("{GEMINI_MODELS_BASE}/{action}?{qs}")
-    };
+    // Preserve the original query string for transparent passthrough. The
+    // parsed `query_params` map is only used for routing decisions above.
+    let url = gemini_models_url(&action, uri.query());
 
     // API key → `x-goog-api-key`; OAuth token → `Authorization: Bearer`.
     let (auth_name, auth_value, account_id): (&'static str, String, String) =
@@ -420,8 +415,8 @@ async fn gemini_native_via_backend(
     })?;
 
     // Translate Gemini-native request → canonical (OpenAI shape) via aigw.
-    let mut native: aigw_gemini::GenerateContentRequest =
-        serde_json::from_value(body.clone()).map_err(|e| {
+    let mut native: aigw_gemini::GenerateContentRequest = serde_json::from_value(body.clone())
+        .map_err(|e| {
             ApiError::from(ByokError::Translation(format!(
                 "failed to parse Gemini-native body: {e}"
             )))
@@ -496,7 +491,7 @@ async fn gemini_native_via_backend(
                 model.to_string(),
                 provider_name,
                 account_id.to_string(),
-                GeminiParser::new(),
+                OpenAIParser::new(),
             );
             let model_owned = model.to_string();
             let translated = byte_stream_to_gemini_sse(tapped, model_owned);
@@ -522,46 +517,115 @@ fn byte_stream_to_gemini_sse(
     upstream: byokey_types::traits::ByteStream,
     model: String,
 ) -> impl futures_util::Stream<Item = std::result::Result<Bytes, ByokError>> {
+    use aigw_core::model::StreamEvent;
     use aigw_core::translate::StreamParser as _;
     use aigw_gemini::translate::{NativeSseContext, stream_event_to_gemini_sse};
     use aigw_openai::translate::OpenAIStreamParser;
-    use futures_util::StreamExt as _;
+    use futures_util::{StreamExt as _, stream::try_unfold};
+    use std::collections::VecDeque;
 
-    let mut buffer = Vec::<u8>::new();
-    let mut parser = OpenAIStreamParser::default();
-    let mut ctx = NativeSseContext::with_model(model);
+    struct State {
+        upstream: byokey_types::traits::ByteStream,
+        buffer: Vec<u8>,
+        output: VecDeque<Bytes>,
+        parser: OpenAIStreamParser,
+        ctx: NativeSseContext,
+        model: String,
+        finished: bool,
+    }
 
-    upstream.flat_map(move |chunk_result| {
-        let mut output: Vec<std::result::Result<Bytes, ByokError>> = Vec::new();
-
-        match chunk_result {
-            Err(e) => output.push(Err(e)),
-            Ok(chunk) => {
-                buffer.extend_from_slice(&chunk);
-
-                // Process complete lines from the buffer.
-                while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
-                    let raw: Vec<u8> = buffer.drain(..=pos).collect();
-                    let line = String::from_utf8_lossy(&raw);
-                    let line = line.trim_end_matches(['\r', '\n']);
-                    let Some(data) = line.strip_prefix("data: ") else {
-                        continue;
+    fn push_events(state: &mut State, events: &[StreamEvent]) {
+        for ev in events {
+            match ev {
+                StreamEvent::ResponseMeta { id, .. } => {
+                    let event = StreamEvent::ResponseMeta {
+                        id: id.clone(),
+                        model: state.model.clone(),
                     };
-                    let events = match parser.parse_event("", data) {
-                        Ok(e) => e,
-                        Err(_) => continue,
-                    };
-                    for ev in &events {
-                        if let Some(bytes) = stream_event_to_gemini_sse(ev, &mut ctx) {
-                            output.push(Ok(Bytes::from(bytes)));
-                        }
+                    if let Some(bytes) = stream_event_to_gemini_sse(&event, &mut state.ctx) {
+                        state.output.push_back(Bytes::from(bytes));
+                    }
+                }
+                _ => {
+                    if let Some(bytes) = stream_event_to_gemini_sse(ev, &mut state.ctx) {
+                        state.output.push_back(Bytes::from(bytes));
                     }
                 }
             }
         }
+    }
 
-        futures_util::stream::iter(output)
-    })
+    fn process_sse_line(state: &mut State, raw: &[u8]) -> Result<(), ByokError> {
+        let line = String::from_utf8_lossy(raw);
+        let line = line.trim_end_matches(['\r', '\n']);
+        let Some(data) = line.strip_prefix("data:").map(str::trim_start) else {
+            return Ok(());
+        };
+        let events = state.parser.parse_event("", data).map_err(|e| {
+            ByokError::Translation(format!("failed to parse backend OpenAI SSE data: {e}"))
+        })?;
+        push_events(state, &events);
+        Ok(())
+    }
+
+    fn process_complete_lines(state: &mut State) -> Result<(), ByokError> {
+        while let Some(pos) = state.buffer.iter().position(|&b| b == b'\n') {
+            let raw: Vec<u8> = state.buffer.drain(..=pos).collect();
+            process_sse_line(state, &raw)?;
+        }
+        Ok(())
+    }
+
+    try_unfold(
+        State {
+            upstream,
+            buffer: Vec::new(),
+            output: VecDeque::new(),
+            parser: OpenAIStreamParser::default(),
+            ctx: NativeSseContext::with_model(model.clone()),
+            model,
+            finished: false,
+        },
+        |mut state| async move {
+            loop {
+                if let Some(bytes) = state.output.pop_front() {
+                    return Ok(Some((bytes, state)));
+                }
+                if state.finished {
+                    return Ok(None);
+                }
+
+                match state.upstream.next().await {
+                    Some(Ok(chunk)) => {
+                        state.buffer.extend_from_slice(&chunk);
+                        process_complete_lines(&mut state)?;
+                    }
+                    Some(Err(e)) => return Err(e),
+                    None => {
+                        if !state.buffer.is_empty() {
+                            let raw = std::mem::take(&mut state.buffer);
+                            process_sse_line(&mut state, &raw)?;
+                        }
+                        let events = state.parser.finish().map_err(|e| {
+                            ByokError::Translation(format!(
+                                "failed to finish backend OpenAI SSE parser: {e}"
+                            ))
+                        })?;
+                        push_events(&mut state, &events);
+                        state.finished = true;
+                    }
+                }
+            }
+        },
+    )
+}
+
+fn gemini_models_url(action: &str, raw_query: Option<&str>) -> String {
+    if let Some(qs) = raw_query.filter(|qs| !qs.is_empty()) {
+        format!("{GEMINI_MODELS_BASE}/{action}?{qs}")
+    } else {
+        format!("{GEMINI_MODELS_BASE}/{action}")
+    }
 }
 
 /// Transparent proxy to `ampcode.com` — used for both `/api/{*path}` and
@@ -634,10 +698,78 @@ pub async fn ampcode_proxy(
 
 #[cfg(test)]
 mod tests {
+    use byokey_types::traits::ByteStream;
+    use bytes::Bytes;
+    use futures_util::{StreamExt as _, stream};
+    use serde_json::Value;
+
     #[test]
     fn test_urls_are_https() {
         assert!(super::CODEX_RESPONSES_URL.starts_with("https://"));
         assert!(super::OPENAI_RESPONSES_URL.starts_with("https://"));
         assert!(super::GEMINI_MODELS_BASE.starts_with("https://"));
+    }
+
+    #[test]
+    fn gemini_models_url_preserves_raw_query_string() {
+        let url = super::gemini_models_url(
+            "gemini-3-pro:streamGenerateContent",
+            Some("alt=sse&x=a%2Bb&x=c"),
+        );
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro:streamGenerateContent?alt=sse&x=a%2Bb&x=c"
+        );
+    }
+
+    fn stream_from_chunks(chunks: &[&str]) -> ByteStream {
+        let chunks: Vec<_> = chunks
+            .iter()
+            .map(|chunk| Ok(Bytes::from((*chunk).to_owned())))
+            .collect();
+        Box::pin(stream::iter(chunks))
+    }
+
+    async fn collect_gemini_values(chunks: &[&str]) -> Vec<Value> {
+        super::byte_stream_to_gemini_sse(stream_from_chunks(chunks), "gemini-test".to_owned())
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(|result| {
+                let bytes = result.unwrap();
+                let line = std::str::from_utf8(&bytes).unwrap();
+                let data = line.strip_prefix("data: ").unwrap().trim();
+                serde_json::from_str(data).unwrap()
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn backend_stream_flushes_final_line_without_newline() {
+        let values = collect_gemini_values(&[r#"data: {"id":"c","object":"chat.completion.chunk","created":0,"model":"gpt-backend","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}"#]).await;
+
+        assert_eq!(values.len(), 1);
+        assert_eq!(
+            values[0]["candidates"][0]["content"]["parts"][0]["text"],
+            "Hello"
+        );
+        assert_eq!(values[0]["modelVersion"], "gemini-test");
+    }
+
+    #[tokio::test]
+    async fn backend_stream_done_flushes_pending_tool_call() {
+        let values = collect_gemini_values(&[
+            r#"data: {"id":"c","object":"chat.completion.chunk","created":0,"model":"gpt-backend","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"location\":\"SF\"}"}}]},"finish_reason":null}]}
+
+"#,
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert_eq!(values.len(), 1);
+        let function_call = &values[0]["candidates"][0]["content"]["parts"][0]["functionCall"];
+        assert_eq!(function_call["id"], "call_1");
+        assert_eq!(function_call["name"], "get_weather");
+        assert_eq!(function_call["args"]["location"], "SF");
     }
 }

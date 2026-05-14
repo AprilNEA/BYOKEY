@@ -15,8 +15,8 @@
 //! clean model name plus the canonical [`ThinkingRequest`]. The proxy
 //! pipeline writes that into `ChatRequest.thinking` so each provider's
 //! aigw [`ThinkingProjector`] can translate it to the wire field for
-//! that provider (Anthropic `thinking.type`, OpenAI Responses
-//! `reasoning.effort`, OpenAI Chat Completions `reasoning_effort`,
+//! that provider (Anthropic `thinking.type`, `OpenAI` Responses
+//! `reasoning.effort`, `OpenAI` Chat Completions `reasoning_effort`,
 //! Gemini `generationConfig.thinkingConfig.thinkingBudget`).
 //!
 //! [`ThinkingProjector`]: aigw_core::translate::ThinkingProjector
