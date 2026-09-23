@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0](https://github.com/AprilNEA/BYOKEY/compare/v1.2.0...v1.3.0) - 2026-09-23
+
+### Added
+
+- *(auth)* headless login URL + import-codex + TUI
+- harden Claude path against reverse-proxy fingerprinting
+- *(provider)* gate anthropic-dangerous-direct-browser-access to API-key mode
+- *(auth)* update Claude OAuth scopes to align with Claude Code 2.1.88+
+
+### Fixed
+
+- *(deps)* migrate HTTP client from rquest to wreq. Every published `rquest` version is yanked, so `cargo install byokey` could no longer resolve
+- *(deps)* upgrade connectrpc 0.3 → 0.9 and clear the remaining advisories
+- *(deps)* patch h2, rustls and quinn-proto advisories
+- *(ci)* unblock releases and move actions off the removed Node 20
+- *(proxy)* allow unused_async_trait_impl on ConnectRPC handlers
+- *(tui)* use management API client
+- *(clippy)* backtick OpenAI / ConnectRPC in doc comments
+- *(auth,store)* address codex review + CI
+
+### Other
+
+- *(deps)* bump aigw 0.4 → 0.5 (from crates.io)
+- *(byokey)* Antigravity streaming via aigw + docs cleanup
+- *(byokey)* drop apply_thinking + delete byokey-translate crate
+- *(byokey)* AmpCode native-Gemini handler uses aigw bridge
+- *(byokey)* inline messages.rs helpers + Antigravity uses aigw-gemini
+- *(translate,proxy)* thread canonical thinking + drop aigw-covered modules
+- *(deps)* switch to local aigw + drop redundant inject_cache_control
+- *(release)* mirror byokey-tui publish=false in release-plz.toml
+- *(release)* mark byokey-tui as publish=false
+- fix CI clippy lints (cloak doc-backticks + items-after-test)
+- Add `pullfrog.yml` workflow
+
+### Note
+
+The minimum supported Rust version is now 1.98, raised from 1.85 by `wreq`.
+
 ## [1.2.0](https://github.com/AprilNEA/BYOKEY/compare/v1.1.0...v1.2.0) - 2026-04-18
 
 ### Added
