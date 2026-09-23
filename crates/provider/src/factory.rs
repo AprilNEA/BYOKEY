@@ -19,7 +19,7 @@ use wreq::Client;
 use crate::device_profile::DeviceProfileCache;
 use crate::executor::{
     AntigravityExecutor, ClaudeExecutor, CodexExecutor, CodexWsExecutor, CopilotExecutor,
-    GeminiExecutor, IFlowExecutor, KimiExecutor, KiroExecutor, QwenExecutor,
+    CopilotIdentity, GeminiExecutor, IFlowExecutor, KimiExecutor, KiroExecutor, QwenExecutor,
 };
 use crate::versions::VersionStore;
 use crate::{registry, retry};
@@ -118,21 +118,16 @@ pub fn make_executor_with_cache(
                 .maybe_ratelimit(ratelimit)
                 .build(),
         )),
-        ProviderId::Copilot => {
-            let cv = versions.get(provider);
-            Some(Box::new(
-                CopilotExecutor::builder()
-                    .http(http)
-                    .auth(auth)
-                    .maybe_api_key(api_key)
-                    .maybe_base_url(base_url)
-                    .maybe_ratelimit(ratelimit)
-                    .maybe_user_agent(ua)
-                    .maybe_editor_version(cv.and_then(|v| v.editor_version.clone()))
-                    .maybe_plugin_version(cv.and_then(|v| v.plugin_version.clone()))
-                    .build(),
-            ))
-        }
+        ProviderId::Copilot => Some(Box::new(
+            CopilotExecutor::builder()
+                .http(http)
+                .auth(auth)
+                .maybe_api_key(api_key)
+                .maybe_base_url(base_url)
+                .maybe_ratelimit(ratelimit)
+                .identity(CopilotIdentity::from_versions(versions.get(provider)))
+                .build(),
+        )),
         ProviderId::Antigravity => Some(Box::new(
             AntigravityExecutor::builder()
                 .http(http)

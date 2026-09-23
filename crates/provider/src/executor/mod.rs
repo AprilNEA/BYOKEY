@@ -19,7 +19,9 @@ pub use antigravity::AntigravityExecutor;
 pub use claude::ClaudeExecutor;
 pub use codex::CodexExecutor;
 pub use codex_ws::CodexWsExecutor;
-pub use copilot::CopilotExecutor;
+pub use copilot::{
+    Conversation, CopilotCredentials, CopilotDevice, CopilotExecutor, CopilotIdentity,
+};
 pub use gemini::GeminiExecutor;
 pub use iflow::IFlowExecutor;
 pub use kimi::KimiExecutor;

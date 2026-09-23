@@ -24,8 +24,9 @@ pub mod versions;
 
 pub use device_profile::DeviceProfileCache;
 pub use executor::{
-    AntigravityExecutor, ClaudeExecutor, CodexExecutor, CodexWsExecutor, CopilotExecutor,
-    GeminiExecutor, IFlowExecutor, KimiExecutor, KiroExecutor, QwenExecutor,
+    AntigravityExecutor, ClaudeExecutor, CodexExecutor, CodexWsExecutor, Conversation,
+    CopilotCredentials, CopilotDevice, CopilotExecutor, CopilotIdentity, GeminiExecutor,
+    IFlowExecutor, KimiExecutor, KiroExecutor, QwenExecutor,
 };
 pub use factory::{make_executor, make_executor_for_model, make_executor_with_cache};
 pub use http_util::ProviderHttp;

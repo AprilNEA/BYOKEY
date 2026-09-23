@@ -3,6 +3,12 @@
 //! Auth: device code flow → GitHub token → exchange for short-lived Copilot API token.
 //! Format: `OpenAI` passthrough via `aigw::openai_compat` for URL/header/request building.
 //!         Streaming: raw byte passthrough (Option P). Non-streaming: aigw response translator.
+mod device;
+mod headers;
+
+pub use device::CopilotDevice;
+pub use headers::{Conversation, CopilotIdentity};
+
 use crate::http_util::ProviderHttp;
 use crate::registry;
 use aigw::openai::translate::OpenAIResponseTranslator;
@@ -69,14 +75,6 @@ const COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/toke
 /// Copilot usage/quota endpoint (returns `quota_snapshots`).
 const COPILOT_USER_URL: &str = "https://api.github.com/copilot_internal/user";
 
-// Header values matching the VS Code Copilot Chat extension.
-const USER_AGENT: &str = "GitHubCopilotChat/0.35.0";
-const EDITOR_VERSION: &str = "vscode/1.107.0";
-const PLUGIN_VERSION: &str = "copilot-chat/0.35.0";
-const INTEGRATION_ID: &str = "vscode-chat";
-const OPENAI_INTENT: &str = "conversation-panel";
-const GITHUB_API_VERSION: &str = "2025-04-01";
-
 /// A cached Copilot API token with its expiry time.
 struct CachedToken {
     token: String,
@@ -85,6 +83,24 @@ struct CachedToken {
     /// `true` = Pro/Business/Enterprise, `false` = Free tier.
     is_pro: bool,
 }
+
+/// Everything needed to send one Copilot API request as a given account.
+#[derive(Clone, Debug)]
+pub struct CopilotCredentials {
+    /// Short-lived Copilot API token.
+    pub token: String,
+    /// API base URL, without a path suffix.
+    pub endpoint: String,
+    /// The machine the account appears to be using.
+    pub device: CopilotDevice,
+}
+
+/// GitHub token → short-lived Copilot API token.
+///
+/// Process-wide because executors are built per request; an instance-owned
+/// cache would never be hit and every request would re-run the exchange.
+static TOKEN_CACHE: LazyLock<Mutex<HashMap<String, CachedToken>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Score a cached quota for account comparison.
 ///
@@ -103,11 +119,7 @@ pub struct CopilotExecutor {
     api_key: Option<String>,
     base_url: Option<String>,
     auth: Arc<AuthManager>,
-    /// Cache: GitHub token → short-lived Copilot API token.
-    cache: Mutex<HashMap<String, CachedToken>>,
-    user_agent: String,
-    editor_version: String,
-    plugin_version: String,
+    identity: CopilotIdentity,
 }
 
 #[bon::bon]
@@ -120,9 +132,7 @@ impl CopilotExecutor {
         api_key: Option<String>,
         base_url: Option<String>,
         ratelimit: Option<Arc<RateLimitStore>>,
-        user_agent: Option<String>,
-        editor_version: Option<String>,
-        plugin_version: Option<String>,
+        identity: Option<CopilotIdentity>,
     ) -> Self {
         let mut ph = ProviderHttp::new(http);
         if let Some(store) = ratelimit {
@@ -133,37 +143,43 @@ impl CopilotExecutor {
             api_key,
             base_url,
             auth,
-            cache: Mutex::new(HashMap::new()),
-            user_agent: user_agent.unwrap_or_else(|| USER_AGENT.to_string()),
-            editor_version: editor_version.unwrap_or_else(|| EDITOR_VERSION.to_string()),
-            plugin_version: plugin_version.unwrap_or_else(|| PLUGIN_VERSION.to_string()),
+            identity: identity.unwrap_or_default(),
         }
+    }
+
+    /// A GET against `api.github.com` authenticated with the GitHub token.
+    fn github_request(&self, url: &str, github_token: &str) -> wreq::RequestBuilder {
+        let mut builder = self
+            .ph
+            .client()
+            .get(url)
+            .header("authorization", format!("token {github_token}"));
+        for (name, value) in self.identity.github_headers() {
+            builder = builder.header(name, value);
+        }
+        builder
     }
 
     /// Exchange a GitHub token for a Copilot API token and cache the result.
     ///
-    /// Returns `(copilot_api_token, api_endpoint)`.
-    async fn exchange_and_cache(&self, github_token: &str) -> Result<(String, String)> {
+    async fn exchange_and_cache(&self, github_token: &str) -> Result<CopilotCredentials> {
         // Check cache first
         {
-            let cache = self.cache.lock().unwrap();
+            let cache = TOKEN_CACHE.lock().unwrap();
             if let Some(cached) = cache.get(github_token)
                 && cached.expires_at > Instant::now()
             {
-                return Ok((cached.token.clone(), cached.api_endpoint.clone()));
+                return Ok(CopilotCredentials {
+                    token: cached.token.clone(),
+                    endpoint: cached.api_endpoint.clone(),
+                    device: CopilotDevice::for_credential(github_token),
+                });
             }
         }
 
         // Exchange GitHub token for Copilot API token
         let resp = self
-            .ph
-            .client()
-            .get(COPILOT_TOKEN_URL)
-            .header("authorization", format!("token {github_token}"))
-            .header("accept", "application/json")
-            .header("user-agent", self.user_agent.as_str())
-            .header("editor-version", self.editor_version.as_str())
-            .header("editor-plugin-version", self.plugin_version.as_str())
+            .github_request(COPILOT_TOKEN_URL, github_token)
             .send()
             .await?;
 
@@ -213,7 +229,7 @@ impl CopilotExecutor {
 
         // Cache the new token
         {
-            let mut cache = self.cache.lock().unwrap();
+            let mut cache = TOKEN_CACHE.lock().unwrap();
             cache.insert(
                 github_token.to_string(),
                 CachedToken {
@@ -225,11 +241,15 @@ impl CopilotExecutor {
             );
         }
 
-        Ok((api_token, api_endpoint))
+        Ok(CopilotCredentials {
+            token: api_token,
+            endpoint: api_endpoint,
+            device: CopilotDevice::for_credential(github_token),
+        })
     }
 
     /// Obtain a Copilot API token for a specific account.
-    async fn copilot_token_for_account(&self, account_id: &str) -> Result<(String, String)> {
+    async fn copilot_token_for_account(&self, account_id: &str) -> Result<CopilotCredentials> {
         let github_token = self
             .auth
             .get_token_for(&ProviderId::Copilot, account_id)
@@ -243,12 +263,7 @@ impl CopilotExecutor {
     /// Returns `(percent_remaining, unlimited)` on success, `None` on any failure.
     async fn fetch_quota(&self, github_token: &str) -> Option<(f64, bool)> {
         let resp = self
-            .ph
-            .client()
-            .get(COPILOT_USER_URL)
-            .header("authorization", format!("token {github_token}"))
-            .header("accept", "application/json")
-            .header("user-agent", self.user_agent.as_str())
+            .github_request(COPILOT_USER_URL, github_token)
             .send()
             .await
             .ok()?;
@@ -374,7 +389,7 @@ impl CopilotExecutor {
         tracker.last_rebalance = None;
     }
 
-    /// Returns the Copilot API token and base endpoint URL (without path suffix).
+    /// Resolves the credentials for the next Copilot API request.
     ///
     /// When `api_key` is set it is used directly (skip token exchange).
     /// With multiple accounts, selects the account with the most remaining quota.
@@ -387,15 +402,19 @@ impl CopilotExecutor {
     /// # Panics
     ///
     /// Panics if the internal token cache mutex is poisoned.
-    pub async fn copilot_token(&self) -> Result<(String, String)> {
+    pub async fn copilot_token(&self) -> Result<CopilotCredentials> {
         if let Some(key) = &self.api_key {
-            let base = self
+            let endpoint = self
                 .base_url
                 .as_deref()
                 .unwrap_or(DEFAULT_BASE_URL)
                 .trim_end_matches('/')
                 .to_string();
-            return Ok((key.clone(), base));
+            return Ok(CopilotCredentials {
+                token: key.clone(),
+                endpoint,
+                device: CopilotDevice::for_credential(key),
+            });
         }
 
         let accounts = self.auth.list_accounts(&ProviderId::Copilot).await?;
@@ -414,45 +433,30 @@ impl CopilotExecutor {
         self.exchange_and_cache(&github_token).await
     }
 
-    /// Obtains the Copilot API token and base endpoint URL.
-    async fn copilot_creds(&self) -> Result<(String, String)> {
-        self.copilot_token().await
-    }
-
-    /// Builds an [`OpenAICompatProvider`] for a single request, given the resolved
-    /// Copilot API token and base endpoint URL.
+    /// Builds an [`OpenAICompatProvider`] for a single request as `creds`' account.
     ///
-    /// Static Copilot-specific headers are placed in `default_headers` so aigw
-    /// includes them in every request it builds. The `x-initiator` header is
-    /// **per-request** and must be added separately after translation.
-    fn build_provider(&self, token: &str, base_url: &str) -> Result<OpenAICompatProvider> {
-        let mut default_headers = BTreeMap::new();
-        default_headers.insert("user-agent".to_owned(), self.user_agent.clone());
-        default_headers.insert("editor-version".to_owned(), self.editor_version.clone());
-        default_headers.insert(
-            "editor-plugin-version".to_owned(),
-            self.plugin_version.clone(),
-        );
-        default_headers.insert("openai-intent".to_owned(), OPENAI_INTENT.to_owned());
-        default_headers.insert(
-            "copilot-integration-id".to_owned(),
-            INTEGRATION_ID.to_owned(),
-        );
-        default_headers.insert(
-            "x-github-api-version".to_owned(),
-            GITHUB_API_VERSION.to_owned(),
-        );
+    /// The client identity and device ids go into `default_headers` so aigw
+    /// includes them in every request it builds. [`Conversation`] headers
+    /// depend on the request and are appended separately after translation.
+    fn build_provider(&self, creds: &CopilotCredentials) -> Result<OpenAICompatProvider> {
+        let mut default_headers: BTreeMap<String, String> = self
+            .identity
+            .api_headers()
+            .into_iter()
+            .chain(creds.device.headers())
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect();
         default_headers.insert("content-type".to_owned(), "application/json".to_owned());
 
         OpenAICompatProvider::new(OpenAICompatConfig {
             name: "copilot".to_owned(),
             http: HttpTransportConfig {
-                base_url: base_url.to_owned(),
+                base_url: creds.endpoint.clone(),
                 timeout_seconds: 600,
                 default_headers,
             },
             auth: OpenAIAuthConfig {
-                api_key: SecretString::from(token.to_owned()),
+                api_key: SecretString::from(creds.token.clone()),
                 organization: None,
                 project: None,
             },
@@ -479,7 +483,7 @@ impl CopilotExecutor {
 
         if accounts.len() > 1 {
             // Check all cached tokens: any Pro → true.
-            let cache = self.cache.lock().unwrap();
+            let cache = TOKEN_CACHE.lock().unwrap();
             let now = Instant::now();
             let mut found_any = false;
             for cached in cache.values() {
@@ -505,7 +509,7 @@ impl CopilotExecutor {
             .await
             .map(|t| t.access_token)
         {
-            let cache = self.cache.lock().unwrap();
+            let cache = TOKEN_CACHE.lock().unwrap();
             if let Some(cached) = cache.get(&github_token)
                 && cached.expires_at > Instant::now()
             {
@@ -514,26 +518,14 @@ impl CopilotExecutor {
         }
         true // conservative default: assume Pro
     }
-
-    /// Returns the `X-Initiator` header value based on whether the request
-    /// contains any assistant/tool messages (agent) or only user messages.
-    fn initiator(request: &ChatRequest) -> &'static str {
-        let is_agent = request.messages.iter().any(|m| {
-            matches!(
-                m.get("role").and_then(Value::as_str),
-                Some("assistant" | "tool")
-            )
-        });
-        if is_agent { "agent" } else { "user" }
-    }
 }
 
 #[async_trait]
 impl ProviderExecutor for CopilotExecutor {
     async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
         let stream = request.stream;
-        // `x-initiator` is derived from the request message roles before consuming it.
-        let initiator = Self::initiator(&request);
+        // Derived from the messages before the request is consumed.
+        let conversation = Conversation::from_messages(&request.messages);
 
         // Translate: BYOKEY ChatRequest → aigw ChatRequest.
         let aigw_request: aigw_core::model::ChatRequest =
@@ -553,8 +545,7 @@ impl ProviderExecutor for CopilotExecutor {
 
         let mut last_err = None;
         for attempt in 0..max_attempts {
-            let creds = self.copilot_creds().await;
-            let (token, endpoint) = match creds {
+            let creds = match self.copilot_token().await {
                 Ok(c) => c,
                 Err(e) => {
                     if max_attempts > 1 {
@@ -567,11 +558,8 @@ impl ProviderExecutor for CopilotExecutor {
                 }
             };
 
-            // Build aigw provider + translator for this token/endpoint combination.
-            let provider = match self.build_provider(&token, &endpoint) {
-                Ok(p) => p,
-                Err(e) => return Err(e),
-            };
+            // Build aigw provider + translator for this account.
+            let provider = self.build_provider(&creds)?;
             let translator = OpenAICompatRequestTranslator::new(&provider)
                 .map_err(|e| ByokError::Config(e.to_string()))?;
 
@@ -592,11 +580,9 @@ impl ProviderExecutor for CopilotExecutor {
                     builder = builder.header(name.as_str(), v);
                 }
             }
-            // x-initiator is per-request (depends on message roles) so aigw can't
-            // include it in default_headers. Append it manually after translation.
-            builder = builder.header("x-initiator", initiator);
-            // Prevent compressed SSE streams from breaking the line scanner.
-            builder = builder.header("accept-encoding", "identity");
+            for (name, value) in conversation.headers(&creds.device) {
+                builder = builder.header(name, value);
+            }
             // Attach the translated body (already serialized JSON bytes by aigw).
             let builder = builder.body(translated.body.to_vec());
 
@@ -667,26 +653,26 @@ mod tests {
         assert!(!ex.supported_models().is_empty());
     }
 
-    #[test]
-    fn test_initiator_user() {
-        let req: ChatRequest = serde_json::from_value(serde_json::json!({
-            "model": "gpt-4o",
-            "messages": [{"role": "user", "content": "hi"}]
-        }))
-        .unwrap();
-        assert_eq!(CopilotExecutor::initiator(&req), "user");
-    }
+    #[tokio::test]
+    async fn token_cache_is_shared_across_executor_instances() {
+        // Executors are built per request, so a token exchanged by one must be
+        // served from cache to the next without another round trip.
+        let github_token = "ghu_token_cache_is_shared_across_executor_instances";
+        TOKEN_CACHE.lock().unwrap().insert(
+            github_token.to_owned(),
+            CachedToken {
+                token: "copilot-api-token".to_owned(),
+                api_endpoint: "https://api.individual.githubcopilot.com".to_owned(),
+                expires_at: Instant::now() + Duration::from_mins(10),
+                is_pro: true,
+            },
+        );
 
-    #[test]
-    fn test_initiator_agent() {
-        let req: ChatRequest = serde_json::from_value(serde_json::json!({
-            "model": "gpt-4o",
-            "messages": [
-                {"role": "user", "content": "hi"},
-                {"role": "assistant", "content": "hello"}
-            ]
-        }))
-        .unwrap();
-        assert_eq!(CopilotExecutor::initiator(&req), "agent");
+        let creds = make_executor()
+            .exchange_and_cache(github_token)
+            .await
+            .expect("served from cache, no network");
+        assert_eq!(creds.token, "copilot-api-token");
+        assert_eq!(creds.endpoint, "https://api.individual.githubcopilot.com");
     }
 }

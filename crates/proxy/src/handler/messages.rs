@@ -13,9 +13,9 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use byokey_provider::CopilotExecutor;
 use byokey_provider::claude_headers::{ANTHROPIC_BETA, ANTHROPIC_VERSION};
 use byokey_provider::cloak::{derive_cc_entrypoint, inject_billing_header};
+use byokey_provider::{Conversation, CopilotCredentials, CopilotExecutor, CopilotIdentity};
 use byokey_types::{ByokError, ProviderId, ThinkingCapability, traits::ByteStream};
 use bytes::Bytes;
 use futures_util::{StreamExt as _, TryStreamExt as _};
@@ -31,14 +31,6 @@ use crate::{AppState, UsageRecorder, error::ApiError};
 /// Default thinking budget (tokens) for `Auto` mode on legacy Claude models
 /// that require an explicit `budget_tokens` value with `thinking.type: "enabled"`.
 const DEFAULT_AUTO_BUDGET: u32 = 10_000;
-
-// Copilot identification headers (matching VS Code Copilot Chat extension).
-const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.35.0";
-const COPILOT_EDITOR_VERSION: &str = "vscode/1.107.0";
-const COPILOT_PLUGIN_VERSION: &str = "copilot-chat/0.35.0";
-const COPILOT_INTEGRATION_ID: &str = "vscode-chat";
-const COPILOT_OPENAI_INTENT: &str = "conversation-panel";
-const COPILOT_GITHUB_API_VERSION: &str = "2025-04-01";
 
 /// Handles `POST /v1/messages` — Anthropic native format passthrough.
 ///
@@ -264,22 +256,6 @@ fn build_beta_header(body: &mut Value, client_headers: &HeaderMap) -> String {
     betas
 }
 
-/// Detect the `X-Initiator` value from Anthropic-format messages.
-fn detect_initiator(body: &Value) -> &'static str {
-    let is_agent = body
-        .get("messages")
-        .and_then(Value::as_array)
-        .is_some_and(|msgs| {
-            msgs.iter().any(|m| {
-                matches!(
-                    m.get("role").and_then(Value::as_str),
-                    Some("assistant" | "tool")
-                )
-            })
-        });
-    if is_agent { "agent" } else { "user" }
-}
-
 use byokey_provider::executor::claude::build_fingerprint_headers;
 
 #[tracing::instrument(skip_all, fields(
@@ -425,30 +401,34 @@ pub async fn anthropic_messages(
     .await
 }
 
-/// Build a Copilot Messages API request with standard headers.
+/// Build a Copilot Messages API request as `creds`' account.
 fn build_copilot_messages_request(
     http: &wreq::Client,
-    url: &str,
-    token: &str,
+    creds: &CopilotCredentials,
     beta: &str,
     accept: &str,
-    initiator: &str,
+    identity: &CopilotIdentity,
+    conversation: &Conversation,
     body: &Value,
 ) -> wreq::RequestBuilder {
-    http.post(url)
-        .header("authorization", format!("Bearer {token}"))
+    let mut builder = http
+        .post(format!("{}/v1/messages", creds.endpoint))
+        .header("authorization", format!("Bearer {}", creds.token))
         .header("anthropic-version", ANTHROPIC_VERSION)
         .header("anthropic-beta", beta)
         .header("content-type", "application/json")
-        .header("accept", accept)
-        .header("user-agent", COPILOT_USER_AGENT)
-        .header("editor-version", COPILOT_EDITOR_VERSION)
-        .header("editor-plugin-version", COPILOT_PLUGIN_VERSION)
-        .header("copilot-integration-id", COPILOT_INTEGRATION_ID)
-        .header("openai-intent", COPILOT_OPENAI_INTENT)
-        .header("x-github-api-version", COPILOT_GITHUB_API_VERSION)
-        .header("x-initiator", initiator)
-        .json(body)
+        .header("accept", accept);
+    for (name, value) in identity
+        .api_headers()
+        .into_iter()
+        .chain(creds.device.headers())
+    {
+        builder = builder.header(name, value);
+    }
+    for (name, value) in conversation.headers(&creds.device) {
+        builder = builder.header(name, value);
+    }
+    builder.json(body)
 }
 
 /// Route Anthropic-format request to Copilot's native `/v1/messages` endpoint.
@@ -479,12 +459,14 @@ async fn copilot_messages(
         .cloned()
         .unwrap_or_default();
 
+    let identity = CopilotIdentity::from_versions(state.versions.get(&ProviderId::Copilot));
     let executor = CopilotExecutor::builder()
         .http(state.http.clone())
         .auth(state.auth.clone())
         .maybe_api_key(copilot_config.api_key)
         .maybe_base_url(copilot_config.base_url)
         .ratelimit(state.ratelimits.clone())
+        .identity(identity.clone())
         .build();
 
     let accounts = state
@@ -503,7 +485,11 @@ async fn copilot_messages(
     } else {
         "application/json"
     };
-    let initiator = detect_initiator(&body);
+    let messages = body
+        .get("messages")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    let conversation = Conversation::from_messages(messages);
     let model_name = body
         .get("model")
         .and_then(Value::as_str)
@@ -513,8 +499,8 @@ async fn copilot_messages(
     let mut last_err = None;
     for attempt in 0..max_attempts {
         tracing::Span::current().record("attempt", attempt);
-        let (token, endpoint) = match executor.copilot_token().await {
-            Ok(t) => t,
+        let creds = match executor.copilot_token().await {
+            Ok(c) => c,
             Err(e) => {
                 if max_attempts > 1 {
                     tracing::warn!(attempt, error = %e, "copilot token failed, trying next account");
@@ -525,22 +511,20 @@ async fn copilot_messages(
                 return Err(ApiError::from(e));
             }
         };
-        let url = format!("{endpoint}/v1/messages");
-
         tracing::info!(
-            url = %url,
+            endpoint = %creds.endpoint,
             model = %body.get("model").and_then(|v| v.as_str()).unwrap_or("unknown"),
-            stream, initiator, attempt,
+            stream, ?conversation, attempt,
             "routing Anthropic messages through Copilot"
         );
 
         let resp = build_copilot_messages_request(
             &state.http,
-            &url,
-            &token,
+            &creds,
             beta,
             accept,
-            initiator,
+            &identity,
+            &conversation,
             &body,
         )
         .send()
@@ -643,6 +627,15 @@ async fn forward_response(
         }
     }
     strip_gateway_headers(&mut upstream_headers);
+    // Both branches re-encode the body, so the upstream framing no longer
+    // describes it. A stale content-length makes hyper panic mid-response.
+    for framing in [
+        axum::http::header::CONTENT_LENGTH,
+        axum::http::header::TRANSFER_ENCODING,
+        axum::http::header::CONTENT_ENCODING,
+    ] {
+        upstream_headers.remove(framing);
+    }
 
     if stream {
         let raw = response_to_stream(resp);
@@ -899,5 +892,45 @@ mod tests {
         });
         sanitize_thinking(&mut body);
         assert!(body.get("temperature").is_none());
+    }
+
+    // ── forward_response: re-encoded bodies ────────────────────────────
+
+    #[tokio::test]
+    async fn non_stream_response_does_not_forward_upstream_content_length() {
+        // The body is parsed and re-serialized, so its length can change; the
+        // upstream content-length then disagrees with it and hyper panics.
+        let upstream_body = r#"{"id": "msg_1", "type": "message", "content": []}"#;
+        let upstream: wreq::Response = axum::http::Response::builder()
+            .header("content-type", "application/json")
+            .header("content-length", upstream_body.len())
+            .header("x-upstream-marker", "kept")
+            .body(upstream_body)
+            .unwrap()
+            .into();
+
+        let usage = Arc::new(UsageRecorder::new(None));
+        let Ok(response) =
+            forward_response(upstream, false, &usage, "m", "copilot", "a", false).await
+        else {
+            panic!("a 200 upstream response must forward");
+        };
+
+        assert_eq!(response.headers()["x-upstream-marker"], "kept");
+        let declared = response
+            .headers()
+            .get(axum::http::header::CONTENT_LENGTH)
+            .cloned();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        if let Some(declared) = declared {
+            assert_eq!(declared.to_str().unwrap(), body.len().to_string());
+        }
+        assert_ne!(
+            body.len(),
+            upstream_body.len(),
+            "fixture must change length"
+        );
     }
 }
