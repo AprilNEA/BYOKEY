@@ -162,22 +162,22 @@ export OPENAI_BASE_URL=http://localhost:8018/v1
 export OPENAI_API_KEY=any          # byokey ignores the key value
 ```
 
-**For Claude Code with GitHub Copilot:**
+**For Claude Code:**
 
-```sh
-byokey login copilot
-byokey claude-code inject --backend copilot
-byokey start
+Point Claude Code at BYOKEY:
+
+```jsonc
+// ~/.claude/settings.json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:8018",
+    "ANTHROPIC_API_KEY": "byokey-local"
+  }
+}
 ```
 
-If BYOKEY is already running, use the restart command printed by `inject`,
-with the same `--config` path. Then restart Claude Code and select a Claude
-model available to your Copilot account with `/model` or `claude --model <MODEL_ID>`.
-The command preserves your existing model choices. `--backend copilot` changes
-BYOKEY's global Claude routing, including requests from other clients.
-
-Claude Code needs the proxy's root URL, such as `http://127.0.0.1:8018`,
-without `/v1`; it appends `/v1/messages` itself.
+Or let byokey write it for you: `byokey claude-code inject`.
+Restart Claude Code to apply the settings.
 
 **For Amp:**
 
@@ -273,35 +273,9 @@ ConnectRPC management API at `http://127.0.0.1:8018` by default; override with
 as an OS-managed service. Uses `launchd` on macOS, `systemd` on Linux, and
 Windows SCM on Windows.
 
-**`byokey claude-code inject`** — Configures Claude Code to use BYOKEY.
-
-```sh
-byokey claude-code inject [--config FILE] [--settings FILE] [--url URL] \
-  [--backend copilot] [--disable-experimental-betas]
-```
-
-- `--config`: BYOKEY configuration file (JSON or YAML).
-- `--settings`: Claude Code settings file. Defaults to
-  `$CLAUDE_CONFIG_DIR/settings.json` when set, otherwise `~/.claude/settings.json`.
-- `--url`: Override the proxy root URL. Otherwise, use
-  `claude_code.settings.env.ANTHROPIC_BASE_URL` if configured, then fall back
-  to BYOKEY's host and port. Do not append `/v1`.
-- `--backend copilot`: Set `providers.claude.backend` to `copilot` in the
-  BYOKEY configuration. Cannot be combined with `--url`. Other configuration
-  values are preserved; rewriting YAML normalizes formatting and removes comments.
-- `--disable-experimental-betas`: Set
-  `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` for gateway compatibility. This is
-  automatic when BYOKEY's configured Claude backend is Copilot; use the flag
-  explicitly for a remote gateway that needs it.
-
-Injection merges extras from `claude_code.settings` in the BYOKEY configuration,
-then writes the resolved `env.ANTHROPIC_BASE_URL` and a placeholder
-`env.ANTHROPIC_API_KEY`. These generated values take precedence over extras.
-Existing environment entries are merged key by key; unrelated settings and
-model choices are preserved unless explicitly set in those extras. Malformed
-Claude Code settings are rejected instead of overwritten.
-The command prints the required server restart command; it does not run it.
-Restart Claude Code after injection.
+**`byokey claude-code inject`** — Writes `env.ANTHROPIC_BASE_URL` and a
+placeholder `env.ANTHROPIC_API_KEY` (plus extras from `claude_code.settings`)
+into `~/.claude/settings.json`, preserving unrelated settings and model choices.
 
 **`byokey amp inject`** — Writes `amp.url` (and any extras from
 `amp.settings` in your byokey config) into `~/.config/amp/settings.json`.
@@ -332,37 +306,6 @@ providers:
 
 All fields are optional; unspecified providers are enabled by default and use
 the OAuth token stored in the database.
-
-Optional Claude Code settings to merge when running `byokey claude-code inject`:
-
-```yaml
-claude_code:
-  settings:
-    env:
-      CLAUDE_CODE_EFFORT_LEVEL: high
-```
-
-Injection does not select or pin a model automatically. Use model IDs supported
-by the provider handling your requests; available features depend on that provider.
-
-With `providers.claude.backend: copilot`, `/v1/messages` automatically converts
-recognizable Claude 4+ Opus, Sonnet, Haiku, and Fable IDs to Copilot spelling,
-for example `claude-opus-5-5` → `claude-opus-5.5`. Dated snapshot IDs such as
-`claude-haiku-4-5-20251001` select the undated same family/version,
-`claude-haiku-4.5`. The `-fast` variant is retained; already dotted IDs and
-unknown/custom names are unchanged. This does not check model availability or
-downgrade versions, and does not change direct Anthropic requests.
-
-Explicit `model_alias.copilot` entries take precedence and send `name` verbatim:
-
-```yaml
-model_alias:
-  copilot:
-    - alias: claude-opus-5-5
-      name: claude-opus-5.5
-```
-
-Set `alias` and `name` to the same ID to opt that ID out of automatic conversion.
 
 ## Contributing
 
