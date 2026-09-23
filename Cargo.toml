@@ -12,7 +12,6 @@ members = [
     "crates/ampcode",
     "crates/tui",
 ]
-exclude = ["desktop/src-tauri"]
 
 [workspace.package]
 edition = "2024"

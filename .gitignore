@@ -7,5 +7,3 @@ dist/
 # Playwright MCP artifacts
 .playwright-mcp/
 .DS_Store
-# Xcode user-specific state
-xcuserdata/

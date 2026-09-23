@@ -1,8 +1,7 @@
 //! BYOKEY ConnectRPC protocol definitions.
 //!
 //! This crate contains the protobuf schemas and generated Rust code for
-//! services consumed over ConnectRPC by both the byokey CLI and the
-//! byokey desktop app.
+//! services consumed over ConnectRPC by the byokey CLI and TUI.
 //!
 //! The generated code is produced at build time from `proto/*.proto` by
 //! [`connectrpc-build`] and exposed under module paths that mirror the
