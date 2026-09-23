@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0](https://github.com/AprilNEA/BYOKEY/compare/v1.3.0...v1.4.0) - 2026-09-23
+
+### Added
+
+- *(copilot)* send the headers VS Code 1.139 sends, read from its source
+
+### Fixed
+
+- *(copilot)* let the Copilot API compress chat responses
+- *(copilot)* align request headers with current Copilot Chat
+- *(proxy)* stop forwarding upstream body framing on /v1/messages
+
+### Other
+
+- *(release)* include internal crates' commits in the byokey changelog
+
 ## [1.3.0](https://github.com/AprilNEA/BYOKEY/compare/v1.2.0...v1.3.0) - 2026-09-23
 
 ### Added
