@@ -7,9 +7,9 @@ pub mod schema;
 pub mod watcher;
 
 pub use schema::{
-    AmpConfig, ApiKeyEntry, ClaudeHeaderDefaults, CloakConfig, CodexHeaderDefaults, Config,
-    KeyRoutingStrategy, LogConfig, LogFormat, ModelAlias, PayloadFilterRule, PayloadRule,
-    PayloadRules, PolicyStrategyKind, ProviderConfig, RoutingPolicyEntry, StreamingConfig,
-    TelemetryConfig,
+    AmpConfig, ApiKeyEntry, ClaudeCodeConfig, ClaudeHeaderDefaults, CloakConfig,
+    CodexHeaderDefaults, Config, KeyRoutingStrategy, LogConfig, LogFormat, ModelAlias,
+    PayloadFilterRule, PayloadRule, PayloadRules, PolicyStrategyKind, ProviderConfig,
+    RoutingPolicyEntry, StreamingConfig, TelemetryConfig,
 };
 pub use watcher::ConfigWatcher;

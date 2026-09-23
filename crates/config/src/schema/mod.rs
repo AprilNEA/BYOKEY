@@ -1,10 +1,12 @@
 pub mod amp;
+pub mod claude_code;
 pub mod model;
 pub mod payload;
 pub mod provider;
 pub mod runtime;
 
 pub use amp::AmpConfig;
+pub use claude_code::ClaudeCodeConfig;
 pub use model::ModelAlias;
 pub use payload::{PayloadFilterRule, PayloadRule, PayloadRules};
 pub use provider::{
@@ -39,6 +41,9 @@ pub struct Config {
     /// `AmpCode` proxy integration configuration.
     #[serde(default)]
     pub amp: AmpConfig,
+    /// Claude Code CLI integration configuration.
+    #[serde(default)]
+    pub claude_code: ClaudeCodeConfig,
     /// Global upstream proxy URL (e.g. "socks5://user:pass@host:port").
     /// All upstream requests will go through this proxy.
     #[serde(default)]
@@ -76,6 +81,7 @@ impl Default for Config {
             host: default_host(),
             providers: HashMap::new(),
             amp: AmpConfig::default(),
+            claude_code: ClaudeCodeConfig::default(),
             proxy_url: None,
             model_alias: HashMap::new(),
             excluded_models: HashMap::new(),

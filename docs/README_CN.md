@@ -154,6 +154,23 @@ export OPENAI_BASE_URL=http://localhost:8018/v1
 export OPENAI_API_KEY=any          # byokey 忽略 key 的值
 ```
 
+**通过 GitHub Copilot 使用 Claude Code：**
+
+```sh
+byokey login copilot
+byokey claude-code inject --backend copilot
+byokey start
+```
+
+如果 BYOKEY 已在运行，请执行 `inject` 输出的重启命令，并使用相同的
+`--config` 路径。然后重启 Claude Code，通过 `/model` 或
+`claude --model <MODEL_ID>` 选择你的 Copilot 账户可用的 Claude 模型。
+注入命令会保留现有模型选择。`--backend copilot` 修改的是 BYOKEY 的全局
+Claude 路由，也会影响其他客户端的请求。
+
+Claude Code 使用代理的根地址，例如 `http://127.0.0.1:8018`，不要添加
+`/v1`；它会自行拼接 `/v1/messages`。
+
 **对于 Amp：**
 
 `byokey serve` 会额外监听一个端口 `18018`（可通过 `amp.port` 配置），
@@ -186,6 +203,7 @@ Commands:
   tui           启动交互式终端 UI
   accounts      列出某个 Provider 的所有账户
   switch        切换某个 Provider 的活动账户
+  claude-code   Claude Code 配置工具
   amp           Amp 相关工具
   openapi       导出 OpenAPI 规范（JSON 格式）
   completions   生成 Shell 补全脚本
@@ -246,6 +264,34 @@ Options:
 注册为系统托管服务。macOS 上使用 `launchd`、Linux 上使用 `systemd`、
 Windows 上使用 SCM。
 
+**`byokey claude-code inject`** — 将 Claude Code 配置为使用 BYOKEY。
+
+```sh
+byokey claude-code inject [--config FILE] [--settings FILE] [--url URL] \
+  [--backend copilot] [--disable-experimental-betas]
+```
+
+- `--config`：BYOKEY 配置文件（JSON 或 YAML）。
+- `--settings`：Claude Code 设置文件。设置了 `CLAUDE_CONFIG_DIR` 时默认使用
+  `$CLAUDE_CONFIG_DIR/settings.json`，否则使用 `~/.claude/settings.json`。
+- `--url`：覆盖代理根地址。未指定时，优先使用
+  `claude_code.settings.env.ANTHROPIC_BASE_URL`，否则根据 BYOKEY 的监听地址
+  和端口生成。不要添加 `/v1`。
+- `--backend copilot`：将 BYOKEY 配置中的 `providers.claude.backend` 设为
+  `copilot`，不能与 `--url` 同时使用。其他配置值会保留；重写 YAML 时会
+  统一格式并移除注释。
+- `--disable-experimental-betas`：设置
+  `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`，以兼容网关。
+  BYOKEY 的 Claude 后端配置为 Copilot 时会自动设置；连接需要此设置的
+  远程网关时可显式使用该选项。
+
+注入先合并 BYOKEY 配置中 `claude_code.settings` 的额外设置，再写入解析后的
+`env.ANTHROPIC_BASE_URL` 和占位用的 `env.ANTHROPIC_API_KEY`；生成的这两个值
+优先于额外设置。环境变量按键合并；其他设置和模型选择会保留，除非额外设置中
+明确指定了新值。
+格式错误的 Claude Code 设置文件会被拒绝，不会被覆盖。
+命令会输出所需的服务器重启命令，不会自动执行。注入后请重启 Claude Code。
+
 **`byokey amp inject`** — 将 `amp.url`（以及 byokey 配置中 `amp.settings`
 的额外字段）写入 `~/.config/amp/settings.json`。
 
@@ -274,6 +320,36 @@ providers:
 ```
 
 所有字段均可选；未指定的 Provider 默认启用，并使用数据库中存储的 OAuth Token。
+
+可选的 Claude Code 额外设置会在运行 `byokey claude-code inject` 时合并：
+
+```yaml
+claude_code:
+  settings:
+    env:
+      CLAUDE_CODE_EFFORT_LEVEL: high
+```
+
+注入不会自动选择或固定模型。请使用实际处理请求的 Provider 支持的模型 ID；
+可用功能也取决于该 Provider。
+
+设置 `providers.claude.backend: copilot` 后，`/v1/messages` 会将可识别的
+Claude 4 及以后版本的 Opus、Sonnet、Haiku、Fable 模型 ID 自动转换为 Copilot
+的命名，例如 `claude-opus-5-5` → `claude-opus-5.5`。带日期的快照 ID，
+如 `claude-haiku-4-5-20251001`，会改为同系列、同版本的不带日期名称
+`claude-haiku-4.5`。`-fast` 变体会保留，已有小数点的 ID 和未知或自定义名称
+保持原样。转换不会检查模型是否可用，也不会降低版本；直连 Anthropic 的请求不受影响。
+
+显式配置的 `model_alias.copilot` 优先于自动转换，`name` 会原样发送：
+
+```yaml
+model_alias:
+  copilot:
+    - alias: claude-opus-5-5
+      name: claude-opus-5.5
+```
+
+将 `alias` 和 `name` 设为同一个 ID，即可对该 ID 禁用自动转换。
 
 ## 贡献
 

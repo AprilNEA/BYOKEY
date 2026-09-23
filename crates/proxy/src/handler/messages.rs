@@ -277,13 +277,7 @@ pub async fn anthropic_messages(
 
     // Global backend override: `claude.backend: copilot`.
     let config = state.config.load();
-    let claude_config = config
-        .providers
-        .get(&ProviderId::Claude)
-        .cloned()
-        .unwrap_or_default();
-
-    if claude_config.backend.as_ref() == Some(&ProviderId::Copilot) {
+    if prepare_copilot_request(&mut body, &config) {
         return copilot_messages(&state, body, stream, &beta).await;
     }
 
@@ -401,6 +395,95 @@ pub async fn anthropic_messages(
     .await
 }
 
+/// Select the Copilot Messages backend and map only its request model.
+///
+/// Explicit Copilot aliases are authoritative, including aliases that opt out
+/// of normalization by mapping a name to itself. Other providers' aliases do
+/// not affect this native Messages route.
+fn prepare_copilot_request(body: &mut Value, config: &byokey_config::Config) -> bool {
+    let backend = config
+        .providers
+        .get(&ProviderId::Claude)
+        .and_then(|provider| provider.backend.as_ref());
+    if backend != Some(&ProviderId::Copilot) {
+        return false;
+    }
+
+    let Some(model) = body.get("model").and_then(Value::as_str) else {
+        return true;
+    };
+    let mapped = config
+        .model_alias
+        .get(&ProviderId::Copilot)
+        .and_then(|aliases| aliases.iter().find(|entry| entry.alias == model))
+        .map(|entry| entry.name.clone())
+        .or_else(|| normalize_copilot_claude_model(model));
+    if let Some(mapped) = mapped {
+        body["model"] = Value::String(mapped);
+    }
+    true
+}
+
+/// Normalize recognizable modern Claude IDs without selecting another model.
+///
+/// Only Opus, Sonnet, Haiku and Fable IDs with a major version of at least four
+/// are eligible. Minor versions use a dot in Copilot; the known `-fast` variant
+/// is retained. A bare calendar-date snapshot suffix is dropped because
+/// Copilot uses the corresponding undated family/version name. Unknown suffixes
+/// and already-dotted IDs are left to the upstream API or explicit aliases.
+fn normalize_copilot_claude_model(model: &str) -> Option<String> {
+    let model = model.strip_prefix("claude-")?;
+    let (family, version) = model.split_once('-')?;
+    if !matches!(family, "opus" | "sonnet" | "haiku" | "fable") {
+        return None;
+    }
+    let parts: Vec<_> = version.split('-').collect();
+    let major = *parts.first()?;
+    let valid_component = |part: &str| {
+        !part.is_empty()
+            && part.len() <= 2
+            && part.bytes().all(|byte| byte.is_ascii_digit())
+            && (part.len() == 1 || !part.starts_with('0'))
+    };
+    if !valid_component(major) || major.parse::<u8>().ok()? < 4 {
+        return None;
+    }
+
+    match parts.as_slice() {
+        [_, date] if is_claude_snapshot_date(date) => Some(format!("claude-{family}-{major}")),
+        [_, minor] if valid_component(minor) => Some(format!("claude-{family}-{major}.{minor}")),
+        [_, minor, "fast"] if valid_component(minor) => {
+            Some(format!("claude-{family}-{major}.{minor}-fast"))
+        }
+        [_, minor, date] if valid_component(minor) && is_claude_snapshot_date(date) => {
+            Some(format!("claude-{family}-{major}.{minor}"))
+        }
+        _ => None,
+    }
+}
+
+/// Recognize an exact YYYYMMDD calendar date, not an arbitrary numeric suffix.
+fn is_claude_snapshot_date(date: &str) -> bool {
+    if date.len() != 8 || !date.bytes().all(|byte| byte.is_ascii_digit()) {
+        return false;
+    }
+    let (Ok(year), Ok(month), Ok(day)) = (
+        date[..4].parse::<u16>(),
+        date[4..6].parse::<u8>(),
+        date[6..].parse::<u8>(),
+    ) else {
+        return false;
+    };
+    let days = match month {
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        _ => return false,
+    };
+    year > 0 && (1..=days).contains(&day)
+}
+
 /// Build a Copilot Messages API request as `creds`' account.
 fn build_copilot_messages_request(
     http: &wreq::Client,
@@ -435,7 +518,8 @@ fn build_copilot_messages_request(
 ///
 /// Copilot provides a native Anthropic-compatible Messages API at
 /// `api.githubcopilot.com/v1/messages`. This handler authenticates via
-/// the Copilot token exchange flow and forwards the request verbatim.
+/// the Copilot token exchange flow and forwards the request after the
+/// Copilot-specific model mapping performed by `prepare_copilot_request`.
 ///
 /// With multiple Copilot accounts, retries with quota-aware rotation
 /// on transient failures.
@@ -703,6 +787,169 @@ async fn forward_response(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // ── Copilot Messages routing and model mapping ─────────────────────
+
+    fn copilot_backend_config() -> byokey_config::Config {
+        byokey_config::Config::from_yaml("providers:\n  claude:\n    backend: copilot\n").unwrap()
+    }
+
+    fn model_mapping_request(model: &str) -> Value {
+        json!({
+            "model": model,
+            "stream": true,
+            "max_tokens": 4096,
+            "system": [{"type": "text", "text": "Keep all request fields."}],
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "high"},
+            "tools": [{"name": "Read", "input_schema": {"type": "object"}}],
+            "messages": [
+                {"role": "user", "content": "Read file.txt"},
+                {"role": "assistant", "content": [{
+                    "type": "tool_use", "id": "tool_1", "name": "Read",
+                    "input": {"path": "file.txt", "model": model}
+                }]},
+                {"role": "user", "content": [{
+                    "type": "tool_result", "tool_use_id": "tool_1", "content": "contents"
+                }]}
+            ],
+            "custom_metadata": {"model": model}
+        })
+    }
+
+    #[test]
+    fn copilot_model_mapping_changes_only_the_top_level_model() {
+        let config = copilot_backend_config();
+        for (incoming, upstream) in [
+            ("claude-opus-5-5", "claude-opus-5.5"),
+            ("claude-fable-5-1", "claude-fable-5.1"),
+            ("claude-sonnet-4-6", "claude-sonnet-4.6"),
+            ("claude-haiku-4-5-20251001", "claude-haiku-4.5"),
+            ("claude-sonnet-4-20250514", "claude-sonnet-4"),
+            ("claude-opus-5-5-fast", "claude-opus-5.5-fast"),
+            ("claude-fable-5-1-20240229", "claude-fable-5.1"),
+        ] {
+            let mut body = model_mapping_request(incoming);
+            let mut expected = body.clone();
+            expected["model"] = json!(upstream);
+            assert!(prepare_copilot_request(&mut body, &config));
+            assert_eq!(body, expected, "incoming model: {incoming}");
+        }
+    }
+
+    #[test]
+    fn copilot_model_mapping_preserves_unknown_and_already_compatible_names() {
+        let config = copilot_backend_config();
+        for model in [
+            "claude-sonnet-5",
+            "claude-opus-5.5",
+            "claude-opus-5.5-fast",
+            "claude-haiku-4.5-20251001",
+            "claude-sonnet-5-fast",
+            "claude-opus-5-5-custom",
+            "claude-opus-5-5-20260923-fast",
+            "claude-opus-5-5-20250229",
+            "claude-opus-5-5-20260431",
+            "claude-opus-5-5-20261301",
+            "claude-opus-5-5-20260100",
+            "claude-opus-5-5-00000101",
+            "claude-opus-5-5-2026092",
+            "claude-opus-5-5-202609233",
+            "claude-opus-5-5-2026ab23",
+            "claude-opus-05-5",
+            "claude-opus-5-05",
+            "claude-opus-5-",
+            "claude-opus-3-5",
+            "claude-3-5-sonnet-20241022",
+            "claude-custom-5-5",
+            "copilot/claude-opus-5-5",
+            "gpt-5-5",
+            "my-custom-model",
+            "",
+        ] {
+            let mut body = model_mapping_request(model);
+            let expected = body.clone();
+            assert!(prepare_copilot_request(&mut body, &config));
+            assert_eq!(body, expected, "model must remain unchanged: {model}");
+        }
+    }
+
+    #[test]
+    fn copilot_model_aliases_take_precedence_and_are_used_verbatim() {
+        let mut config = copilot_backend_config();
+        config.model_alias.insert(
+            ProviderId::Copilot,
+            vec![
+                byokey_config::ModelAlias {
+                    alias: "claude-opus-5-5".into(),
+                    name: "custom-upstream".into(),
+                    fork: false,
+                },
+                byokey_config::ModelAlias {
+                    alias: "my-model".into(),
+                    name: "claude-fable-5-1".into(),
+                    fork: true,
+                },
+                byokey_config::ModelAlias {
+                    alias: "claude-haiku-4-5-20251001".into(),
+                    name: "claude-haiku-4-5-20251001".into(),
+                    fork: false,
+                },
+            ],
+        );
+        // A same-named alias belonging to another provider must not win.
+        config.model_alias.insert(
+            ProviderId::Claude,
+            vec![byokey_config::ModelAlias {
+                alias: "claude-opus-5-5".into(),
+                name: "wrong-provider-model".into(),
+                fork: false,
+            }],
+        );
+        for (incoming, upstream) in [
+            ("claude-opus-5-5", "custom-upstream"),
+            ("my-model", "claude-fable-5-1"),
+            ("claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"),
+            ("claude-sonnet-4-6", "claude-sonnet-4.6"),
+        ] {
+            let mut body = model_mapping_request(incoming);
+            let mut expected = body.clone();
+            expected["model"] = json!(upstream);
+            assert!(prepare_copilot_request(&mut body, &config));
+            assert_eq!(body, expected);
+        }
+    }
+
+    #[test]
+    fn copilot_model_mapping_never_changes_the_direct_anthropic_route() {
+        for yaml in [
+            "{}",
+            "providers:\n  claude:\n    backend: codex\n",
+            "model_alias:\n  copilot:\n    - alias: claude-opus-5-5\n      name: custom\n",
+        ] {
+            let config = byokey_config::Config::from_yaml(yaml).unwrap();
+            let mut body = model_mapping_request("claude-opus-5-5");
+            let expected = body.clone();
+            assert!(!prepare_copilot_request(&mut body, &config));
+            assert_eq!(body, expected);
+        }
+    }
+
+    #[test]
+    fn copilot_model_mapping_leaves_invalid_models_for_upstream_validation() {
+        let config = copilot_backend_config();
+        for mut body in [
+            json!({"messages": []}),
+            json!({"model": null}),
+            json!({"model": 42}),
+            json!({"model": {"alias": "claude-opus-5-5"}}),
+            Value::Null,
+        ] {
+            let expected = body.clone();
+            assert!(prepare_copilot_request(&mut body, &config));
+            assert_eq!(body, expected);
+        }
+    }
 
     // ── sanitize_thinking: tool_choice conflict ────────────────────────
 

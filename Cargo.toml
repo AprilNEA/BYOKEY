@@ -72,6 +72,7 @@ eventsource-stream = "0.2"
 # Serde
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 # Error
 thiserror = "2"
 anyhow = "1"
@@ -198,5 +199,7 @@ tarpc.workspace = true
 tokio-util.workspace = true
 futures-util.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
+tempfile = "3"
 regex.workspace = true
 utoipa.workspace = true
