@@ -69,7 +69,7 @@ impl AuthCodeFlow for Codex {
 
     async fn exchange_code(
         &self,
-        http: &rquest::Client,
+        http: &wreq::Client,
         creds: &OAuthCredentials,
         code: &str,
         verifier: &str,

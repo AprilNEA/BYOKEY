@@ -2,6 +2,7 @@
 name = "ampcode"
 version = "0.1.1"
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 description = "Unofficial Rust client for Ampcode (ampcode.com)"
 license.workspace = true

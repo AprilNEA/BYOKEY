@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Rust stable 1.85+ (recommended via [rustup](https://rustup.rs/))
+- Rust stable 1.98+ (recommended via [rustup](https://rustup.rs/))
 - SQLite 3 (system-level; pre-installed on macOS)
 
 ## Common Commands
@@ -24,7 +24,7 @@ cargo run -- serve                        # Start proxy (default :8018)
 - edition 2024
 - All async traits use the `async-trait` macro
 - Error types: use `ByokError` (`thiserror`) across crate boundaries, `anyhow` within a crate
-- HTTP client is `rquest` (not reqwest) — supports TLS fingerprint impersonation
+- HTTP client is `wreq` (not reqwest) — supports TLS fingerprint impersonation
 - HTTP server is `axum 0.8`
 - `Box<dyn ProviderExecutor>` does not implement `Debug`; don't call `unwrap_err()` on Results, use `is_err()` or pattern match
 

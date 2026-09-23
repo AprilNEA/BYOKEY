@@ -4,7 +4,7 @@
 //! Format: `OpenAI` -> Anthropic (translate), Anthropic -> `OpenAI` (translate).
 //!
 //! Transport (URL/header construction) is delegated to
-//! [`aigw::anthropic::Transport`], while HTTP sending uses `rquest`.
+//! [`aigw::anthropic::Transport`], while HTTP sending uses `wreq`.
 use crate::http_util::ProviderHttp;
 use crate::registry;
 use aigw::anthropic::translate::{AnthropicRequestTranslator, AnthropicResponseTranslator};
@@ -16,9 +16,9 @@ use byokey_types::{
     ChatRequest, ProviderId, RateLimitStore,
     traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
 };
-use rquest::Client;
 use secrecy::SecretString;
 use std::sync::Arc;
+use wreq::Client;
 
 /// Default Kiro API base URL (origin only — Transport appends `/v1/messages`).
 const DEFAULT_BASE_URL: &str = "https://api.kiro.dev";
@@ -105,7 +105,7 @@ impl ProviderExecutor for KiroExecutor {
             .translate_request(&aigw_request)
             .map_err(|e| byokey_types::ByokError::Translation(e.to_string()))?;
 
-        // Build rquest from TranslatedRequest URL/headers + body.
+        // Build the wreq request from TranslatedRequest URL/headers + body.
         let mut builder = self.ph.client().post(&translated.url);
         for (name, value) in &translated.headers {
             if let Ok(v) = value.to_str() {

@@ -46,7 +46,7 @@ impl VersionStore {
     ///
     /// Failures are logged and silently skipped — the store will simply
     /// be empty for that provider, and callers fall back to compile-time defaults.
-    pub async fn fetch(http: &rquest::Client) -> Self {
+    pub async fn fetch(http: &wreq::Client) -> Self {
         let providers = [
             (ProviderId::Claude, "claude"),
             (ProviderId::Codex, "codex"),
@@ -121,7 +121,7 @@ impl VersionStore {
     }
 }
 
-async fn fetch_one(http: &rquest::Client, provider_name: &str) -> Result<ProviderVersions, String> {
+async fn fetch_one(http: &wreq::Client, provider_name: &str) -> Result<ProviderVersions, String> {
     let url = format!("{BASE_URL}/{provider_name}.json");
     let resp = http
         .get(&url)

@@ -25,9 +25,9 @@ use byokey_types::{
 };
 use bytes::Bytes;
 use futures_util::{StreamExt as _, TryStreamExt as _, stream::try_unfold};
-use rquest::Client;
 use serde_json::Value;
 use std::sync::Arc;
+use wreq::Client;
 
 /// Default `OpenAI` API base URL.
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
@@ -96,7 +96,7 @@ impl CodexExecutor {
     // ── OAuth / Codex Responses API path ─────────────────────────────────────
 
     /// Issues a Codex Responses API request and returns raw bytes + HTTP status.
-    async fn codex_request(&self, body: &Value, token: &str) -> Result<rquest::Response> {
+    async fn codex_request(&self, body: &Value, token: &str) -> Result<wreq::Response> {
         let url = format!("{CODEX_BASE_URL}/responses");
         let session_id = random_uuid();
         let builder = self

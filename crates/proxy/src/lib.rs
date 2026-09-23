@@ -38,7 +38,7 @@ pub struct AppState {
     /// Token manager for OAuth-based providers.
     pub auth: Arc<AuthManager>,
     /// HTTP client for upstream requests.
-    pub http: rquest::Client,
+    pub http: wreq::Client,
     /// In-memory usage statistics with optional persistent backing.
     pub usage: Arc<UsageRecorder>,
     /// Per-provider, per-account rate limit snapshots from upstream responses.
@@ -93,19 +93,19 @@ impl AppState {
 }
 
 /// Build an HTTP client, optionally configured with a proxy URL.
-fn build_http_client(proxy_url: Option<&str>) -> rquest::Client {
+fn build_http_client(proxy_url: Option<&str>) -> wreq::Client {
     if let Some(url) = proxy_url {
-        match rquest::Proxy::all(url) {
+        match wreq::Proxy::all(url) {
             Ok(proxy) => {
-                return rquest::Client::builder()
+                return wreq::Client::builder()
                     .proxy(proxy)
                     .build()
-                    .unwrap_or_else(|_| rquest::Client::new());
+                    .unwrap_or_else(|_| wreq::Client::new());
             }
             Err(e) => {
                 tracing::warn!(url = url, error = %e, "invalid proxy_url, using direct connection");
             }
         }
     }
-    rquest::Client::new()
+    wreq::Client::new()
 }

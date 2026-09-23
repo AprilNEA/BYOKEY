@@ -2,6 +2,7 @@
 name = "byokey-auth"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace    = true
 description.workspace = true
 license.workspace    = true
@@ -12,11 +13,11 @@ homepage.workspace   = true
 workspace = true
 
 [dependencies]
-byokey-types = { workspace = true, features = ["rquest"] }
+byokey-types = { workspace = true, features = ["wreq"] }
 byokey-store.workspace = true
 byokey-config.workspace = true
 oauth2.workspace = true
-rquest.workspace = true
+wreq.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true

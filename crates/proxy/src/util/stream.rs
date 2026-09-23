@@ -94,11 +94,11 @@ fn parse_usage_sse_line<P: UsageParser>(parser: &mut P, line: &[u8]) {
     }
 }
 
-/// Converts an `rquest::Response` into a [`ByteStream`].
-pub(crate) fn response_to_stream(resp: rquest::Response) -> ByteStream {
+/// Converts a `wreq::Response` into a [`ByteStream`].
+pub(crate) fn response_to_stream(resp: wreq::Response) -> ByteStream {
     Box::pin(resp.bytes_stream().map(|r| {
         r.map_err(|e| {
-            tracing::error!(error = %e, "response_to_stream: rquest byte stream error");
+            tracing::error!(error = %e, "response_to_stream: wreq byte stream error");
             ByokError::from(e)
         })
     }))

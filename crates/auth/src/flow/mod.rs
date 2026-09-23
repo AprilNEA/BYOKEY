@@ -66,7 +66,7 @@ pub async fn login_with_events(
     account: Option<&str>,
     events: Option<mpsc::Sender<LoginProgress>>,
 ) -> Result<()> {
-    let http = rquest::Client::new();
+    let http = wreq::Client::new();
     let ev = events.as_ref();
     match provider {
         // Authorization Code + PKCE flows

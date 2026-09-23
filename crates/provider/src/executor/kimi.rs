@@ -47,7 +47,7 @@ impl KimiExecutor {
     #[builder]
     #[allow(clippy::needless_pass_by_value)]
     pub fn new(
-        http: rquest::Client,
+        http: wreq::Client,
         auth: Arc<AuthManager>,
         api_key: Option<String>,
         base_url: Option<String>,
@@ -155,7 +155,7 @@ impl ProviderExecutor for KimiExecutor {
                 .map_err(|e| ByokError::Translation(e.to_string()))?
         };
 
-        // Build rquest from TranslatedRequest URL/headers + body.
+        // Build the wreq request from TranslatedRequest URL/headers + body.
         let mut builder = self.ph.client().post(&translated.url);
         for (name, value) in &translated.headers {
             if let Ok(v) = value.to_str() {

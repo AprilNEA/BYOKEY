@@ -115,7 +115,7 @@ impl CopilotExecutor {
     /// Creates a new Copilot executor.
     #[builder]
     pub fn new(
-        http: rquest::Client,
+        http: wreq::Client,
         auth: Arc<AuthManager>,
         api_key: Option<String>,
         base_url: Option<String>,
@@ -585,7 +585,7 @@ impl ProviderExecutor for CopilotExecutor {
             }
             .map_err(|e| ByokError::Translation(e.to_string()))?;
 
-            // Build rquest from aigw's translated URL and headers.
+            // Build the wreq request from aigw's translated URL and headers.
             let mut builder = self.ph.client().post(&translated.url);
             for (name, value) in &translated.headers {
                 if let Ok(v) = value.to_str() {

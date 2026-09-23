@@ -106,7 +106,7 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
     let addr = format!("{effective_host}:{effective_port}");
 
     let store = Arc::new(crate::open_store(db).await?);
-    let auth = Arc::new(AuthManager::new(store.clone(), rquest::Client::new()));
+    let auth = Arc::new(AuthManager::new(store.clone(), wreq::Client::new()));
 
     // Background token refresh: check every 60s, refresh tokens within 5 min of expiry.
     let _refresh_handle = auth.spawn_refresh_loop(
@@ -115,7 +115,7 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
     );
 
     // Fetch remote version/fingerprint info (falls back to compile-time defaults).
-    let versions = byokey_proxy::VersionStore::fetch(&rquest::Client::new()).await;
+    let versions = byokey_proxy::VersionStore::fetch(&wreq::Client::new()).await;
 
     let usage_store: Arc<dyn byokey_types::UsageStore> = store;
     let state = AppState::new(

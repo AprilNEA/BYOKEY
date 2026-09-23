@@ -18,7 +18,7 @@
 &nbsp;
 [![license](https://img.shields.io/badge/license-MIT%20%7C%20Apache--2.0-444?style=flat-square&labelColor=000)](../LICENSE-MIT)
 &nbsp;
-[![rust](https://img.shields.io/badge/rust-1.85+-444?style=flat-square&labelColor=000&logo=rust&logoColor=fff)](https://www.rust-lang.org)
+[![rust](https://img.shields.io/badge/rust-1.98+-444?style=flat-square&labelColor=000&logo=rust&logoColor=fff)](https://www.rust-lang.org)
 
 </div>
 
@@ -143,7 +143,7 @@ cd BYOKEY
 cargo install --path .
 ```
 
-> **环境要求：** Rust 1.85+（edition 2024）、用于 SQLite 的 C 编译器，以及用于 ConnectRPC 代码生成的 `protoc`（`brew install protobuf` / `apt-get install protobuf-compiler` / `choco install protoc`）。
+> **环境要求：** Rust 1.98+（edition 2024）、用于 SQLite 的 C 编译器，以及用于 ConnectRPC 代码生成的 `protoc`（`brew install protobuf` / `apt-get install protobuf-compiler` / `choco install protoc`）。
 
 ## 快速开始
 

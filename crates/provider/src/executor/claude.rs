@@ -4,7 +4,7 @@
 //! Format: `OpenAI` -> Anthropic (translate), Anthropic -> `OpenAI` (translate).
 //!
 //! Transport (URL/header construction) is delegated to
-//! [`aigw::anthropic::Transport`], while HTTP sending uses `rquest` for TLS
+//! [`aigw::anthropic::Transport`], while HTTP sending uses `wreq` for TLS
 //! fingerprinting.
 use crate::cloak;
 use crate::device_profile::{DeviceProfile, DeviceProfileCache};
@@ -22,10 +22,10 @@ use byokey_types::{
 };
 use bytes::Bytes;
 use futures_util::{StreamExt as _, stream::try_unfold};
-use rquest::Client;
 use secrecy::SecretString;
 use serde_json::Value;
 use std::sync::Arc;
+use wreq::Client;
 
 /// Default Anthropic API base URL.
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
@@ -197,7 +197,7 @@ impl ClaudeExecutor {
     ///
     /// The transport pre-builds all standard Anthropic headers (auth, version,
     /// beta) plus device-fingerprint headers, so callers only need to copy them
-    /// into the `rquest` builder.
+    /// into the `wreq` builder.
     fn build_transport(
         &self,
         credential: &Credential,
@@ -278,7 +278,7 @@ impl ProviderExecutor for ClaudeExecutor {
             );
         }
 
-        // Build rquest from TranslatedRequest URL/headers + modified body.
+        // Build the wreq request from TranslatedRequest URL/headers + modified body.
         let api_url = format!("{}?beta=true", translated.url);
         let mut builder = self.ph.client().post(&api_url);
         for (name, value) in &translated.headers {

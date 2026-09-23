@@ -22,11 +22,11 @@ use byokey_types::{
     traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
 };
 use hmac::{Hmac, Mac};
-use rquest::Client;
 use secrecy::SecretString;
 use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use wreq::Client;
 
 /// Default iFlow API base URL (`/v1` suffix; aigw appends `/chat/completions`).
 const DEFAULT_BASE_URL: &str = "https://apis.iflow.cn/v1";
@@ -155,7 +155,7 @@ impl ProviderExecutor for IFlowExecutor {
             .unwrap_or(u64::MAX);
         let signature = create_signature(&token, &session_id, timestamp);
 
-        // Build rquest from TranslatedRequest URL/headers + body, then append signing headers.
+        // Build the wreq request from TranslatedRequest URL/headers + body, then append signing headers.
         let mut builder = self.ph.client().post(&translated.url);
         for (name, value) in &translated.headers {
             if let Ok(v) = value.to_str() {
