@@ -23,10 +23,10 @@ pub struct InjectArgs {
     /// Proxy base URL, without /v1 (overrides configured URL and listen address).
     #[arg(long)]
     url: Option<String>,
-    /// Also route all BYOKEY Claude Messages requests through this backend.
+    /// Also route Claude Messages through Copilot and add Claude Code model aliases.
     #[arg(long, value_parser = ["copilot"], conflicts_with = "url")]
     backend: Option<String>,
-    /// Disable experimental Claude Code betas (automatic for a configured Copilot backend).
+    /// Disable experimental betas (automatic for a configured Copilot backend without --url).
     #[arg(long)]
     disable_experimental_betas: bool,
 }
@@ -65,11 +65,13 @@ fn inject(args: InjectArgs) -> Result<()> {
     } else {
         None
     };
-    let disable_betas = args.disable_experimental_betas
-        || config
+    // An explicit URL can point at a different gateway with its own backend.
+    let copilot_backend = args.url.is_none()
+        && config
             .providers
             .get(&ProviderId::Claude)
             .is_some_and(|provider| provider.backend == Some(ProviderId::Copilot));
+    let disable_betas = args.disable_experimental_betas || copilot_backend;
     let url = config
         .claude_code
         .resolve_url(args.url.as_deref(), &config.host, config.port)?;
@@ -78,13 +80,13 @@ fn inject(args: InjectArgs) -> Result<()> {
     // malformed Claude settings file must not leave behind a backend change.
     config
         .claude_code
-        .validate_injection(&url, &settings_path, disable_betas)?;
+        .validate_injection(&url, &settings_path, disable_betas, copilot_backend)?;
     if let Some(update) = &backend_update {
         update.apply()?;
     }
     let injected = config
         .claude_code
-        .inject(&url, &settings_path, disable_betas);
+        .inject(&url, &settings_path, disable_betas, copilot_backend);
     let extras = match injected {
         Ok(extras) => extras,
         Err(error) => {
@@ -101,6 +103,9 @@ fn inject(args: InjectArgs) -> Result<()> {
     println!("ANTHROPIC_API_KEY set to a local placeholder");
     if disable_betas {
         println!("CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS set to 1");
+    }
+    if copilot_backend {
+        println!("Copilot model aliases merged into modelOverrides");
     }
     if extras > 0 {
         println!("merged {extras} extra setting(s) from claude_code.settings");

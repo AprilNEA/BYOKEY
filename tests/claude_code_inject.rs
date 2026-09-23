@@ -33,10 +33,12 @@ fn copilot_setup_preserves_both_documents_and_is_repeatable() {
     std::fs::write(&config, serde_json::to_vec(&json!({
         "port": 9018,
         "providers": {"claude": {"api_key": "preserve-provider-key"}, "gemini": {"enabled": false}},
-        "future_setting": {"keep": [1, 2, 3]}
+        "future_setting": {"keep": [1, 2, 3]},
+        "claude_code": {"settings": {"modelOverrides": {"claude-fable-5-1": "configured-fable"}}}
     })).unwrap()).unwrap();
     std::fs::write(&settings, serde_json::to_vec(&json!({
         "model": "my-selected-model",
+        "modelOverrides": {"claude-opus-5-5": "custom-opus", "claude-fable-5-1": "old-fable", "custom-model": "preserve-me"},
         "permissions": {"allow": ["Read"]},
         "env": {"MY_VARIABLE": "keep", "ANTHROPIC_BASE_URL": "https://old.example", "CLAUDE_CODE_EFFORT_LEVEL": "max"}
     })).unwrap()).unwrap();
@@ -53,6 +55,15 @@ fn copilot_setup_preserves_both_documents_and_is_repeatable() {
     assert_eq!(server["future_setting"]["keep"], json!([1, 2, 3]));
     let client = read_json(&settings);
     assert_eq!(client["model"], "my-selected-model");
+    assert_eq!(
+        client["modelOverrides"],
+        json!({
+            "claude-opus-5-5": "custom-opus",
+            "claude-fable-5-1": "configured-fable",
+            "claude-haiku-4-5-20251001": "claude-haiku-4.5",
+            "custom-model": "preserve-me"
+        })
+    );
     assert_eq!(client["permissions"]["allow"], json!(["Read"]));
     assert_eq!(client["env"]["MY_VARIABLE"], "keep");
     assert_eq!(client["env"]["CLAUDE_CODE_EFFORT_LEVEL"], "max");
@@ -83,6 +94,14 @@ fn copilot_setup_creates_missing_files() {
         read_json(&settings)["env"]["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"],
         "1"
     );
+    assert_eq!(
+        read_json(&settings)["modelOverrides"],
+        json!({
+            "claude-opus-5-5": "claude-opus-5.5",
+            "claude-fable-5-1": "claude-fable-5.1",
+            "claude-haiku-4-5-20251001": "claude-haiku-4.5"
+        })
+    );
 }
 
 #[test]
@@ -108,7 +127,13 @@ fn yaml_backend_update_preserves_unknown_configuration() {
 
 #[test]
 fn invalid_client_settings_leave_both_files_untouched() {
-    for invalid in ["{not json", "[]", "{\"env\":false}"] {
+    for invalid in [
+        "{not json",
+        "[]",
+        "{\"env\":false}",
+        "{\"modelOverrides\":false}",
+        "{\"modelOverrides\":{\"claude-opus-5-5\":42}}",
+    ] {
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("server.json");
         let settings = dir.path().join("client.json");
@@ -163,6 +188,7 @@ fn plain_injection_changes_only_client_and_honors_url_override() {
         "https://remote.example/proxy"
     );
     assert_eq!(client["env"]["MY_VARIABLE"], "configured");
+    assert!(client.get("modelOverrides").is_none());
     assert!(
         client["env"]
             .get("CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS")
@@ -177,6 +203,7 @@ fn plain_injection_changes_only_client_and_honors_url_override() {
         read_json(&settings)["env"]["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"],
         "1"
     );
+    assert!(read_json(&settings).get("modelOverrides").is_none());
 }
 
 #[test]
@@ -191,6 +218,14 @@ fn existing_copilot_backend_enables_compatibility_without_mutating_server() {
     assert_eq!(
         read_json(&settings)["env"]["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"],
         "1"
+    );
+    assert_eq!(
+        read_json(&settings)["modelOverrides"],
+        json!({
+            "claude-opus-5-5": "claude-opus-5.5",
+            "claude-fable-5-1": "claude-fable-5.1",
+            "claude-haiku-4-5-20251001": "claude-haiku-4.5"
+        })
     );
 }
 
@@ -251,4 +286,69 @@ fn aliases_of_the_same_missing_file_are_rejected_before_creating_directories() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("must be different files"));
     assert!(!dir.path().join("nested").exists());
     assert!(!dir.path().join("missing").exists());
+}
+
+#[test]
+fn invalid_configured_model_overrides_leave_both_files_untouched() {
+    for invalid in [json!(false), json!([]), json!({"claude-opus-5-5": 42})] {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("server.json");
+        let settings = dir.path().join("client.json");
+        let original = serde_json::to_vec(&json!({
+            "claude_code": {"settings": {"modelOverrides": invalid}}
+        }))
+        .unwrap();
+        std::fs::write(&config, &original).unwrap();
+        std::fs::write(&settings, "{\"model\":\"keep\"}").unwrap();
+        assert!(
+            !inject(&config, &settings, &["--backend", "copilot"])
+                .status
+                .success()
+        );
+        assert_eq!(std::fs::read(&config).unwrap(), original);
+        assert_eq!(
+            std::fs::read_to_string(&settings).unwrap(),
+            "{\"model\":\"keep\"}"
+        );
+    }
+}
+
+#[test]
+fn remote_url_does_not_inherit_local_copilot_compatibility() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("server.json");
+    let settings = dir.path().join("client.json");
+    let original = br#"{"providers":{"claude":{"backend":"copilot"}}}"#;
+    std::fs::write(&config, original).unwrap();
+    assert_success(&inject(
+        &config,
+        &settings,
+        &["--url", "https://other-gateway.example"],
+    ));
+    let client = read_json(&settings);
+    assert_eq!(
+        client["env"]["ANTHROPIC_BASE_URL"],
+        "https://other-gateway.example"
+    );
+    assert!(client.get("modelOverrides").is_none());
+    assert!(
+        client["env"]
+            .get("CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS")
+            .is_none()
+    );
+    assert_eq!(std::fs::read(&config).unwrap(), original);
+
+    assert_success(&inject(
+        &config,
+        &settings,
+        &[
+            "--url",
+            "https://other-gateway.example",
+            "--disable-experimental-betas",
+        ],
+    ));
+    let client = read_json(&settings);
+    assert_eq!(client["env"]["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"], "1");
+    assert!(client.get("modelOverrides").is_none());
+    assert_eq!(std::fs::read(&config).unwrap(), original);
 }

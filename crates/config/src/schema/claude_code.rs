@@ -10,11 +10,16 @@ use std::path::{Path, PathBuf};
 const BASE_URL: &str = "ANTHROPIC_BASE_URL";
 const API_KEY: &str = "ANTHROPIC_API_KEY";
 const DISABLE_EXPERIMENTAL_BETAS: &str = "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS";
+const COPILOT_MODEL_OVERRIDES: [(&str, &str); 3] = [
+    ("claude-opus-5-5", "claude-opus-5.5"),
+    ("claude-fable-5-1", "claude-fable-5.1"),
+    ("claude-haiku-4-5-20251001", "claude-haiku-4.5"),
+];
 
 /// Settings merged into Claude Code by `byokey claude-code inject`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ClaudeCodeConfig {
-    /// Claude Code settings. The `env` object is merged one variable at a time.
+    /// Claude Code settings. `env` and `modelOverrides` are merged key by key.
     #[serde(default)]
     pub settings: HashMap<String, Value>,
 }
@@ -76,11 +81,15 @@ impl ClaudeCodeConfig {
     /// Always sets the base URL and a placeholder API key. When
     /// `disable_experimental_betas` is true, also disables experimental beta
     /// features for upstream compatibility. Otherwise that setting is preserved.
-    /// No model settings are added unless explicitly present in `settings`.
+    /// With `copilot_backend`, adds `modelOverrides` defaults for Copilot model
+    /// IDs, preserving existing overrides. Explicit overrides in `settings` take
+    /// precedence over both existing entries and defaults. Model selection is
+    /// unchanged unless explicitly present in `settings`.
+    /// See <https://code.claude.com/docs/en/model-config#override-model-ids-per-version>.
     ///
     /// Writes atomically, preserving existing file permissions and following
     /// existing symlinks. Returns the number of additional settings merged,
-    /// counting each environment variable separately.
+    /// counting each environment variable and model override separately.
     ///
     /// # Errors
     ///
@@ -91,9 +100,14 @@ impl ClaudeCodeConfig {
         resolved_url: &str,
         settings_path: &Path,
         disable_experimental_betas: bool,
+        copilot_backend: bool,
     ) -> anyhow::Result<usize> {
-        let (path, content, extras) =
-            self.prepare_injection(resolved_url, settings_path, disable_experimental_betas)?;
+        let (path, content, extras) = self.prepare_injection(
+            resolved_url,
+            settings_path,
+            disable_experimental_betas,
+            copilot_backend,
+        )?;
         let parent = path.parent().filter(|path| !path.as_os_str().is_empty());
         let parent = parent.unwrap_or_else(|| Path::new("."));
         std::fs::create_dir_all(parent)?;
@@ -126,8 +140,14 @@ impl ClaudeCodeConfig {
         resolved_url: &str,
         settings_path: &Path,
         disable_experimental_betas: bool,
+        copilot_backend: bool,
     ) -> anyhow::Result<()> {
-        self.prepare_injection(resolved_url, settings_path, disable_experimental_betas)?;
+        self.prepare_injection(
+            resolved_url,
+            settings_path,
+            disable_experimental_betas,
+            copilot_backend,
+        )?;
         Ok(())
     }
 
@@ -136,6 +156,7 @@ impl ClaudeCodeConfig {
         resolved_url: &str,
         settings_path: &Path,
         disable_experimental_betas: bool,
+        copilot_backend: bool,
     ) -> anyhow::Result<(PathBuf, Vec<u8>, usize)> {
         validate_url(resolved_url)?;
         let extra_env = self.extra_env()?;
@@ -173,9 +194,9 @@ impl ClaudeCodeConfig {
             None => Map::new(),
         };
 
-        let mut extras = 0;
+        let mut extras = self.merge_model_overrides(&mut settings, copilot_backend)?;
         for (key, value) in &self.settings {
-            if key != "env" {
+            if key != "env" && key != "modelOverrides" {
                 settings.insert(key.clone(), value.clone());
                 extras += 1;
             }
@@ -206,6 +227,39 @@ impl ClaudeCodeConfig {
         Ok((path, content, extras))
     }
 
+    fn merge_model_overrides(
+        &self,
+        settings: &mut Map<String, Value>,
+        copilot_backend: bool,
+    ) -> anyhow::Result<usize> {
+        let existing = model_overrides_object(
+            settings.get("modelOverrides"),
+            "Claude Code settings.modelOverrides",
+        )?;
+        let extra = model_overrides_object(
+            self.settings.get("modelOverrides"),
+            "claude_code.settings.modelOverrides",
+        )?;
+        if existing.is_none() && extra.is_none() && !copilot_backend {
+            return Ok(0);
+        }
+        let mut overrides = Map::new();
+        if copilot_backend {
+            for (model, target) in COPILOT_MODEL_OVERRIDES {
+                overrides.insert(model.to_owned(), Value::String(target.to_owned()));
+            }
+        }
+        if let Some(existing) = existing {
+            overrides.extend(existing.clone());
+        }
+        let count = extra.map_or(0, Map::len);
+        if let Some(extra) = extra {
+            overrides.extend(extra.clone());
+        }
+        settings.insert("modelOverrides".to_owned(), Value::Object(overrides));
+        Ok(count)
+    }
+
     fn extra_env(&self) -> anyhow::Result<Option<&Map<String, Value>>> {
         match self.settings.get("env") {
             Some(Value::Object(env)) => Ok(Some(env)),
@@ -213,6 +267,23 @@ impl ClaudeCodeConfig {
             None => Ok(None),
         }
     }
+}
+
+fn model_overrides_object<'a>(
+    value: Option<&'a Value>,
+    label: &str,
+) -> anyhow::Result<Option<&'a Map<String, Value>>> {
+    let overrides = match value {
+        Some(Value::Object(overrides)) => overrides,
+        Some(_) => bail!("{label} must be a JSON object"),
+        None => return Ok(None),
+    };
+    for (model, target) in overrides {
+        if !target.is_string() {
+            bail!("{label}.{model} must be a string");
+        }
+    }
+    Ok(Some(overrides))
 }
 
 fn validate_url(url: &str) -> anyhow::Result<()> {
@@ -391,7 +462,11 @@ mod tests {
             "effortLevel": "high",
             "env": {"UPDATE": "new", "ANTHROPIC_BASE_URL": "http://unused", "ANTHROPIC_API_KEY": "ignored"}
         }));
-        assert_eq!(cfg.inject("http://127.0.0.1:8018", &path, true).unwrap(), 2);
+        assert_eq!(
+            cfg.inject("http://127.0.0.1:8018", &path, true, false)
+                .unwrap(),
+            2
+        );
         let actual = read_settings(&path);
         assert_eq!(
             actual,
@@ -412,7 +487,8 @@ mod tests {
         let path = directory.path().join("claude/settings.json");
         let cfg = ClaudeCodeConfig::default();
         assert_eq!(
-            cfg.inject("http://localhost:8018", &path, false).unwrap(),
+            cfg.inject("http://localhost:8018", &path, false, false)
+                .unwrap(),
             0
         );
         assert_eq!(
@@ -422,8 +498,134 @@ mod tests {
             }})
         );
         let before = std::fs::read(&path).unwrap();
-        cfg.inject("http://localhost:8018", &path, false).unwrap();
+        cfg.inject("http://localhost:8018", &path, false, false)
+            .unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn copilot_model_overrides_are_added_and_idempotent() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        let cfg = ClaudeCodeConfig::default();
+        assert_eq!(
+            cfg.inject("http://localhost:8018", &path, true, true)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            read_settings(&path)["modelOverrides"],
+            json!({
+                "claude-opus-5-5": "claude-opus-5.5",
+                "claude-fable-5-1": "claude-fable-5.1",
+                "claude-haiku-4-5-20251001": "claude-haiku-4.5"
+            })
+        );
+        assert!(read_settings(&path).get("model").is_none());
+        let before = std::fs::read(&path).unwrap();
+        cfg.inject("http://localhost:8018", &path, true, true)
+            .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn model_overrides_merge_with_explicit_then_existing_then_default_precedence() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        let original = json!({
+            "model": "claude-fable-5-1[1m]",
+            "permissions": {"allow": ["Read"]},
+            "env": {"KEEP": "yes"},
+            "modelOverrides": {
+                "claude-opus-5-5": "existing-opus",
+                "claude-fable-5-1": "existing-fable",
+                "custom": "existing-custom"
+            }
+        });
+        let cfg = config(json!({"modelOverrides": {
+            "claude-opus-5-5": "explicit-opus", "extra": "explicit-extra"
+        }}));
+        for copilot_backend in [false, true] {
+            std::fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
+            assert_eq!(
+                cfg.inject("http://localhost:8018", &path, false, copilot_backend)
+                    .unwrap(),
+                2
+            );
+            let actual = read_settings(&path);
+            let mut expected = json!({
+                "claude-opus-5-5": "explicit-opus",
+                "claude-fable-5-1": "existing-fable",
+                "custom": "existing-custom",
+                "extra": "explicit-extra"
+            });
+            if copilot_backend {
+                expected["claude-haiku-4-5-20251001"] = json!("claude-haiku-4.5");
+            }
+            assert_eq!(actual["modelOverrides"], expected);
+            assert_eq!(actual["model"], original["model"]);
+            assert_eq!(actual["permissions"], original["permissions"]);
+            assert_eq!(actual["env"]["KEEP"], "yes");
+        }
+    }
+
+    #[test]
+    fn generic_injection_does_not_add_model_overrides_even_with_beta_flag() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        for disable_experimental_betas in [false, true] {
+            ClaudeCodeConfig::default()
+                .inject(
+                    "http://localhost:8018",
+                    &path,
+                    disable_experimental_betas,
+                    false,
+                )
+                .unwrap();
+            assert!(read_settings(&path).get("modelOverrides").is_none());
+        }
+    }
+
+    #[test]
+    fn invalid_model_overrides_fail_preflight_without_mutation() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        for invalid in [
+            json!(null),
+            json!([]),
+            json!("invalid"),
+            json!({"opus": 42}),
+        ] {
+            for copilot_backend in [false, true] {
+                let existing = json!({"model": "keep", "modelOverrides": invalid});
+                let original = serde_json::to_vec(&existing).unwrap();
+                std::fs::write(&path, &original).unwrap();
+                // Even explicit valid overrides must not hide invalid existing data.
+                let cfg = config(json!({"modelOverrides": {"opus": "valid"}}));
+                assert!(
+                    cfg.validate_injection("http://localhost:8018", &path, true, copilot_backend)
+                        .is_err()
+                );
+                assert!(
+                    cfg.inject("http://localhost:8018", &path, true, copilot_backend)
+                        .is_err()
+                );
+                assert_eq!(std::fs::read(&path).unwrap(), original);
+
+                let original = b"{\"model\":\"keep\"}\n";
+                std::fs::write(&path, original).unwrap();
+                let cfg = config(json!({"modelOverrides": invalid}));
+                assert!(
+                    cfg.validate_injection("http://localhost:8018", &path, true, copilot_backend)
+                        .is_err()
+                );
+                assert!(
+                    cfg.inject("http://localhost:8018", &path, true, copilot_backend)
+                        .is_err()
+                );
+                assert_eq!(std::fs::read(&path).unwrap(), original);
+            }
+        }
     }
 
     #[test]
@@ -432,15 +634,17 @@ mod tests {
         let path = directory.path().join("settings.json");
         let cfg = config(json!({"env": {"CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "0"}}));
         assert_eq!(
-            cfg.inject("http://localhost:8018", &path, false).unwrap(),
+            cfg.inject("http://localhost:8018", &path, false, false)
+                .unwrap(),
             1
         );
         assert_eq!(read_settings(&path)["env"][DISABLE_EXPERIMENTAL_BETAS], "0");
         ClaudeCodeConfig::default()
-            .inject("http://localhost:8018", &path, false)
+            .inject("http://localhost:8018", &path, false, false)
             .unwrap();
         assert_eq!(read_settings(&path)["env"][DISABLE_EXPERIMENTAL_BETAS], "0");
-        cfg.inject("http://localhost:8018", &path, true).unwrap();
+        cfg.inject("http://localhost:8018", &path, true, false)
+            .unwrap();
         assert_eq!(read_settings(&path)["env"][DISABLE_EXPERIMENTAL_BETAS], "1");
     }
 
@@ -450,7 +654,7 @@ mod tests {
         let path = directory.path().join("settings.json");
         std::fs::write(&path, r#"{"model":"old","env":{"ANTHROPIC_MODEL":"old"}}"#).unwrap();
         config(json!({"model": "new", "env": {"ANTHROPIC_MODEL": "new"}}))
-            .inject("http://localhost:8018", &path, false)
+            .inject("http://localhost:8018", &path, false, false)
             .unwrap();
         assert_eq!(read_settings(&path)["model"], "new");
         assert_eq!(read_settings(&path)["env"]["ANTHROPIC_MODEL"], "new");
@@ -470,7 +674,7 @@ mod tests {
             std::fs::write(&path, original).unwrap();
             assert!(
                 ClaudeCodeConfig::default()
-                    .inject("http://localhost:8018", &path, true)
+                    .inject("http://localhost:8018", &path, true, false)
                     .is_err()
             );
             assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
@@ -482,7 +686,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("claude/settings.json");
         ClaudeCodeConfig::default()
-            .validate_injection("http://localhost:8018", &path, true)
+            .validate_injection("http://localhost:8018", &path, true, false)
             .unwrap();
         assert!(!path.parent().unwrap().exists());
     }
@@ -500,7 +704,7 @@ mod tests {
         ] {
             assert!(
                 config(settings)
-                    .inject("http://localhost:8018", &path, false)
+                    .inject("http://localhost:8018", &path, false, false)
                     .is_err()
             );
             assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
@@ -518,7 +722,7 @@ mod tests {
         std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
         symlink(&target, &path).unwrap();
         ClaudeCodeConfig::default()
-            .inject("http://localhost:8018", &path, true)
+            .inject("http://localhost:8018", &path, true, false)
             .unwrap();
         assert!(
             std::fs::symlink_metadata(&path)
