@@ -5,6 +5,15 @@
 //! - [`AccountsServiceImpl`] — provider account CRUD
 //! - [`AmpServiceImpl`] — local Amp CLI thread browsing
 
+// The generated ConnectRPC traits return `impl Future`, so a handler that
+// happens to be synchronous today still declares `async fn` to match the
+// convention the rest of the module follows. Several of these (e.g.
+// `set_routing_policy`) become genuinely async once wired up.
+#![allow(
+    clippy::unused_async_trait_impl,
+    reason = "handler signatures follow the generated trait, not the current body"
+)]
+
 use std::sync::Arc;
 
 use buffa::MessageField;
