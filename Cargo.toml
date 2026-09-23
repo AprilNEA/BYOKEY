@@ -136,10 +136,11 @@ sentry = { version = "0.47", default-features = false, features = [
 # OpenAPI
 utoipa = "5"
 # ConnectRPC (Rust server, buffa-based protobuf)
-connectrpc = { version = "0.3", default-features = false, features = ["axum", "gzip"] }
-connectrpc-build = "0.3"
-buffa = "0.3"
-buffa-types = { version = "0.3", features = ["json"] }
+# `json` became a feature in connectrpc 0.9; it was unconditional in 0.3.
+connectrpc = { version = "0.9", default-features = false, features = ["axum", "gzip", "json"] }
+connectrpc-build = "0.9"
+buffa = "0.9"
+buffa-types = { version = "0.9", features = ["json"] }
 http-body = "1"
 
 
