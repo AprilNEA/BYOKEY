@@ -42,9 +42,9 @@ dependencies = [
 
 [[package]]
 name = "aigw"
-version = "0.5.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92f47d9a1c9cc888993ae4c300bd026c0f42ec37ff81d0ca3ff305601c181c85"
+checksum = "f5b7f3cfcdda68446797bc6f428d0fdfe39cd5a55e0ecd8b4d97b06a33a4a2e2"
 dependencies = [
  "aigw-anthropic",
  "aigw-gemini",
@@ -54,9 +54,9 @@ dependencies = [
 
 [[package]]
 name = "aigw-anthropic"
-version = "0.5.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a8e7b2f7669fbf58f3559f531dd52f38a23ab02ac218674de4ad9964a9f5aec"
+checksum = "4b55e8940f078329c8bcc6c3e894e64f8ea3d7ae7528177dd86902b3057356ec"
 dependencies = [
  "aigw-core",
  "bon 3.9.1",
@@ -75,9 +75,9 @@ dependencies = [
 
 [[package]]
 name = "aigw-core"
-version = "0.5.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2107a26e388ff8e6b0e0da1b0b5a8f9505a034e6eba3996db8f55f633ef5f450"
+checksum = "584335975631094b6098e4f62523b57d101ab8d4d092a749a2bcc00c564d247c"
 dependencies = [
  "bon 3.9.1",
  "bytes",
@@ -90,9 +90,9 @@ dependencies = [
 
 [[package]]
 name = "aigw-gemini"
-version = "0.5.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff9e3fec2666fba5800bfdbf92682fb86818c8c846092851167a2382e817ab2d"
+checksum = "62bd1f9f69cc87c37b7f4b3ecbb32b3be6f674a5706e85aff76423590eeae8e7"
 dependencies = [
  "aigw-core",
  "bon 3.9.1",
@@ -111,9 +111,9 @@ dependencies = [
 
 [[package]]
 name = "aigw-openai"
-version = "0.5.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0baae10136d166e229cca63c827ffe492cda3295a66d612552ccc79a9d9a8c55"
+checksum = "a2119aa0c50c2daefe1bb098e12fa4e6f7ebdd3d69cd8f6d2a1877cea2deae00"
 dependencies = [
  "aigw-core",
  "bon 3.9.1",
@@ -132,9 +132,9 @@ dependencies = [
 
 [[package]]
 name = "aigw-openai-compat"
-version = "0.5.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a990799901e08f988d0b554ba0e5f0b8020b9020087dbe922b390afdbc3d104"
+checksum = "d47383717e02476d0ba354101c3d0735dd21e3da84a23c2c9b4fdda41fd615a9"
 dependencies = [
  "aigw-core",
  "aigw-openai",
@@ -2456,11 +2456,9 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "socket2",
- "system-configuration",
  "tokio",
  "tower-service",
  "tracing",
- "windows-registry",
 ]
 
 [[package]]
@@ -5451,7 +5449,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0136791f7c95b1f6dd99f9cc786b91bb81c3800b639b3478e561ddb7be95e5f1"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.1",
  "once_cell",
  "rustix 1.1.3",
  "windows-sys 0.61.2",
