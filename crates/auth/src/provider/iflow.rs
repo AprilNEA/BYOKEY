@@ -54,7 +54,7 @@ pub const USER_INFO_URL: &str = "https://iflow.cn/api/oauth/getUserInfo";
 ///
 /// Returns [`ByokError::Http`] on network failure or [`ByokError::Auth`] if the
 /// response is missing the `apiKey` field.
-pub async fn fetch_api_key(oauth_token: &str, http: &rquest::Client) -> Result<String> {
+pub async fn fetch_api_key(oauth_token: &str, http: &wreq::Client) -> Result<String> {
     let url = format!("{USER_INFO_URL}?accessToken={oauth_token}");
     let resp = http
         .get(&url)
@@ -108,7 +108,7 @@ impl AuthCodeFlow for IFlow {
 
     async fn exchange_code(
         &self,
-        http: &rquest::Client,
+        http: &wreq::Client,
         creds: &OAuthCredentials,
         code: &str,
         _verifier: &str,
@@ -135,7 +135,7 @@ impl AuthCodeFlow for IFlow {
         auth_code::send_and_parse_token(resp).await
     }
 
-    async fn post_process(&self, token: OAuthToken, http: &rquest::Client) -> Result<OAuthToken> {
+    async fn post_process(&self, token: OAuthToken, http: &wreq::Client) -> Result<OAuthToken> {
         let api_key = fetch_api_key(&token.access_token, http).await?;
         Ok(OAuthToken {
             access_token: api_key,

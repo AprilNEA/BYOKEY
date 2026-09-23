@@ -11,10 +11,10 @@ use byokey_types::{
     ByokError, ChatRequest, ProviderId, RateLimitStore,
     traits::{ProviderExecutor, ProviderResponse, Result as ProviderResult},
 };
-use rquest::Client;
 use std::collections::HashSet;
 use std::hash::BuildHasher;
 use std::sync::Arc;
+use wreq::Client;
 
 use crate::device_profile::DeviceProfileCache;
 use crate::executor::{
@@ -321,7 +321,7 @@ mod tests {
     fn make_auth() -> Arc<AuthManager> {
         Arc::new(AuthManager::new(
             Arc::new(InMemoryTokenStore::new()),
-            rquest::Client::new(),
+            wreq::Client::new(),
         ))
     }
 

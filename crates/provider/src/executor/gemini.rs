@@ -22,10 +22,10 @@ use byokey_types::{
     ChatRequest, ProviderId, RateLimitStore,
     traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
 };
-use rquest::Client;
 use secrecy::SecretString;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use wreq::Client;
 
 /// Google's OpenAI-compatible base URL (path `/chat/completions` appended by aigw).
 const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/openai";
@@ -135,7 +135,7 @@ impl ProviderExecutor for GeminiExecutor {
             )?
         };
 
-        // Build rquest from TranslatedRequest URL/headers + body.
+        // Build the wreq request from TranslatedRequest URL/headers + body.
         let mut builder = self.ph.client().post(&translated.url);
         for (name, value) in &translated.headers {
             if let Ok(v) = value.to_str() {

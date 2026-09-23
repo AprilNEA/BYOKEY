@@ -40,14 +40,14 @@ pub trait DeviceCodeFlow: Send + Sync {
     /// Send the device code request and return the parsed response.
     async fn request_device_code(
         &self,
-        http: &rquest::Client,
+        http: &wreq::Client,
         creds: &OAuthCredentials,
     ) -> Result<DeviceCodeResponse>;
 
     /// Send a single token poll request.
     async fn poll_token(
         &self,
-        http: &rquest::Client,
+        http: &wreq::Client,
         creds: &OAuthCredentials,
         device_code: &str,
     ) -> Result<PollResult>;
@@ -67,7 +67,7 @@ pub trait DeviceCodeFlow: Send + Sync {
 pub async fn run<P: DeviceCodeFlow>(
     provider: &P,
     auth: &AuthManager,
-    http: &rquest::Client,
+    http: &wreq::Client,
     account: Option<&str>,
     events: Option<&mpsc::Sender<LoginProgress>>,
 ) -> Result<()> {

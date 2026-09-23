@@ -96,7 +96,7 @@ impl DeviceCodeFlow for Qwen {
 
     async fn request_device_code(
         &self,
-        http: &rquest::Client,
+        http: &wreq::Client,
         creds: &OAuthCredentials,
     ) -> Result<DcResp> {
         let device_code_url = creds
@@ -121,7 +121,7 @@ impl DeviceCodeFlow for Qwen {
 
     async fn poll_token(
         &self,
-        http: &rquest::Client,
+        http: &wreq::Client,
         creds: &OAuthCredentials,
         device_code: &str,
     ) -> Result<PollResult> {

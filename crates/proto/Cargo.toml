@@ -2,6 +2,7 @@
 name = "byokey-proto"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 description = "BYOKEY ConnectRPC protocol definitions (generated from .proto)"
 license.workspace = true

@@ -70,9 +70,9 @@ pub enum ByokError {
 
 // ── Feature-gated From impls ──────────────────────────────────────────────────
 
-#[cfg(feature = "rquest")]
-impl From<rquest::Error> for ByokError {
-    fn from(e: rquest::Error) -> Self {
+#[cfg(feature = "wreq")]
+impl From<wreq::Error> for ByokError {
+    fn from(e: wreq::Error) -> Self {
         Self::Http(e.to_string())
     }
 }

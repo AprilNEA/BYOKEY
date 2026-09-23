@@ -13,9 +13,9 @@ use byokey_types::{
     ChatRequest, ProviderId, RateLimitStore,
     traits::{ProviderExecutor, ProviderResponse, Result},
 };
-use rquest::Client;
 use std::collections::HashMap;
 use std::{sync::Arc, time::Duration};
+use wreq::Client;
 
 /// Default cooldown duration for a key after a retryable error.
 const COOLDOWN_DURATION: Duration = Duration::from_secs(30);
@@ -152,7 +152,7 @@ mod tests {
     fn make_auth() -> Arc<AuthManager> {
         Arc::new(AuthManager::new(
             Arc::new(InMemoryTokenStore::new()),
-            rquest::Client::new(),
+            wreq::Client::new(),
         ))
     }
 

@@ -22,9 +22,9 @@ use byokey_types::{
 use bytes::Bytes;
 use futures_util::{StreamExt as _, stream::try_unfold};
 use http::StatusCode;
-use rquest::Client;
 use serde_json::{Value, json};
 use std::sync::Arc;
+use wreq::Client;
 
 /// Default primary Antigravity API base URL.
 const DEFAULT_PRIMARY_URL: &str = "https://daily-cloudcode-pa.googleapis.com";
@@ -94,7 +94,7 @@ impl AntigravityExecutor {
         token: &str,
         body: &Value,
         stream: bool,
-    ) -> Result<rquest::Response> {
+    ) -> Result<wreq::Response> {
         let accept = crate::http_util::accept_for_stream(stream);
         let auth_value = format!("Bearer {token}");
 

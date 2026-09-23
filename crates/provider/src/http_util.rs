@@ -8,10 +8,10 @@ use byokey_types::{
     traits::{ByteStream, ProviderResponse, Result},
 };
 use futures_util::StreamExt as _;
-use rquest::{Client, RequestBuilder};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use wreq::{Client, RequestBuilder};
 
 /// Optional rate-limit capture context attached to a `ProviderHttp`.
 #[derive(Clone)]
@@ -56,7 +56,7 @@ impl ProviderHttp {
 
     /// Extracts rate-limit-related headers from the response and writes
     /// them into the store (if a context is configured).
-    fn capture_ratelimit_headers(&self, headers: &rquest::header::HeaderMap) {
+    fn capture_ratelimit_headers(&self, headers: &wreq::header::HeaderMap) {
         let Some(ctx) = &self.rl_ctx else { return };
 
         let mut captured = HashMap::new();
@@ -101,7 +101,7 @@ impl ProviderHttp {
     ///
     /// Returns `ByokError::Upstream` on non-success HTTP status codes,
     /// or a transport error if the request fails to send.
-    pub async fn send(&self, builder: RequestBuilder) -> Result<rquest::Response> {
+    pub async fn send(&self, builder: RequestBuilder) -> Result<wreq::Response> {
         let resp = builder.send().await?;
         // Capture rate limit headers before consuming the body.
         self.capture_ratelimit_headers(resp.headers());
@@ -142,15 +142,15 @@ impl ProviderHttp {
         }
     }
 
-    /// Converts an `rquest::Response` into a `ByteStream`.
+    /// Converts a `wreq::Response` into a `ByteStream`.
     #[must_use]
-    pub fn byte_stream(resp: rquest::Response) -> ByteStream {
+    pub fn byte_stream(resp: wreq::Response) -> ByteStream {
         Box::pin(resp.bytes_stream().map(|r| r.map_err(ByokError::from)))
     }
 }
 
 /// Parse `Retry-After` header value (seconds integer).
-fn parse_retry_after_header(headers: &rquest::header::HeaderMap) -> Option<std::time::Duration> {
+fn parse_retry_after_header(headers: &wreq::header::HeaderMap) -> Option<std::time::Duration> {
     let val = headers.get("retry-after")?.to_str().ok()?;
     let secs: u64 = val.parse().ok()?;
     Some(std::time::Duration::from_secs(secs))
@@ -274,7 +274,7 @@ pub async fn resolve_bearer_token(
 
 /// Creates a test `AuthManager` and HTTP client pair for executor unit tests.
 ///
-/// Returns `(rquest::Client, Arc<AuthManager>)` backed by an in-memory token store.
+/// Returns `(wreq::Client, Arc<AuthManager>)` backed by an in-memory token store.
 #[cfg(test)]
 #[must_use]
 pub fn test_auth() -> (Client, Arc<byokey_auth::AuthManager>) {

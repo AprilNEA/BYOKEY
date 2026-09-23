@@ -5,13 +5,31 @@
 //! - [`AccountsServiceImpl`] — provider account CRUD
 //! - [`AmpServiceImpl`] — local Amp CLI thread browsing
 
+// The generated ConnectRPC traits return `impl Future`, so a handler that
+// happens to be synchronous today still declares `async fn` to match the
+// convention the rest of the module follows. Several of these (e.g.
+// `set_routing_policy`) become genuinely async once wired up.
+#![allow(
+    clippy::unused_async_trait_impl,
+    reason = "handler signatures follow the generated trait, not the current body"
+)]
+// The traits declare `ServiceResult<impl Encodable<M>>` so a handler may
+// return either the owned message or a borrowed view. Returning the owned
+// type refines that bound, which connectrpc's own guide calls the intended
+// use and tells callers to allow.
+#![allow(
+    refining_impl_trait,
+    reason = "handlers return the owned response type, as connectrpc's guide prescribes"
+)]
+
 use std::sync::Arc;
 
 use buffa::MessageField;
-use buffa::view::OwnedView;
 use buffa_types::google::protobuf::value::Kind;
 use buffa_types::google::protobuf::{ListValue, NullValue, Struct, Value};
-use connectrpc::{ConnectError, Context, Router as ConnectRouter};
+use connectrpc::{
+    ConnectError, RequestContext, Response, Router as ConnectRouter, ServiceRequest, ServiceResult,
+};
 use serde_json::Value as JsonValue;
 
 use byokey_proto::byokey::accounts as acct;
@@ -134,9 +152,9 @@ struct StatusServiceImpl(Arc<AppState>);
 impl stat::StatusService for StatusServiceImpl {
     async fn get_status(
         &self,
-        ctx: Context,
-        _: OwnedView<stat::GetStatusRequestView<'static>>,
-    ) -> Result<(stat::GetStatusResponse, Context), ConnectError> {
+        _ctx: RequestContext,
+        _: ServiceRequest<'_, stat::GetStatusRequest>,
+    ) -> ServiceResult<stat::GetStatusResponse> {
         let snapshot = self.0.config.load();
         let server = stat::ServerInfo {
             host: snapshot.host.clone(),
@@ -167,21 +185,18 @@ impl stat::StatusService for StatusServiceImpl {
                 ..Default::default()
             });
         }
-        Ok((
-            stat::GetStatusResponse {
-                server: server.into(),
-                providers,
-                ..Default::default()
-            },
-            ctx,
-        ))
+        Response::ok(stat::GetStatusResponse {
+            server: server.into(),
+            providers,
+            ..Default::default()
+        })
     }
 
     async fn get_usage(
         &self,
-        ctx: Context,
-        _: OwnedView<stat::GetUsageRequestView<'static>>,
-    ) -> Result<(stat::GetUsageResponse, Context), ConnectError> {
+        _ctx: RequestContext,
+        _: ServiceRequest<'_, stat::GetUsageRequest>,
+    ) -> ServiceResult<stat::GetUsageResponse> {
         let s = self.0.usage.snapshot();
         let models = s
             .models
@@ -200,38 +215,32 @@ impl stat::StatusService for StatusServiceImpl {
                 )
             })
             .collect();
-        Ok((
-            stat::GetUsageResponse {
-                total_requests: s.total_requests,
-                success_requests: s.success_requests,
-                failure_requests: s.failure_requests,
-                input_tokens: s.input_tokens,
-                output_tokens: s.output_tokens,
-                models,
-                ..Default::default()
-            },
-            ctx,
-        ))
+        Response::ok(stat::GetUsageResponse {
+            total_requests: s.total_requests,
+            success_requests: s.success_requests,
+            failure_requests: s.failure_requests,
+            input_tokens: s.input_tokens,
+            output_tokens: s.output_tokens,
+            models,
+            ..Default::default()
+        })
     }
 
     async fn get_usage_history(
         &self,
-        ctx: Context,
-        request: OwnedView<stat::GetUsageHistoryRequestView<'static>>,
-    ) -> Result<(stat::GetUsageHistoryResponse, Context), ConnectError> {
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, stat::GetUsageHistoryRequest>,
+    ) -> ServiceResult<stat::GetUsageHistoryResponse> {
         let req = request.to_owned_message();
         let Some(store) = self.0.usage.store() else {
             let to = now_seconds();
-            return Ok((
-                stat::GetUsageHistoryResponse {
-                    from: to - 86400,
-                    to,
-                    bucket_seconds: 3600,
-                    error: Some("no persistent usage store configured".into()),
-                    ..Default::default()
-                },
-                ctx,
-            ));
+            return Response::ok(stat::GetUsageHistoryResponse {
+                from: to - 86400,
+                to,
+                bucket_seconds: 3600,
+                error: Some("no persistent usage store configured".into()),
+                ..Default::default()
+            });
         };
         let to = req.to.unwrap_or_else(now_seconds);
         let from = req.from.unwrap_or(to - 86400);
@@ -257,34 +266,28 @@ impl stat::StatusService for StatusServiceImpl {
                 ..Default::default()
             })
             .collect();
-        Ok((
-            stat::GetUsageHistoryResponse {
-                from,
-                to,
-                bucket_seconds: bs,
-                buckets,
-                error: None,
-                ..Default::default()
-            },
-            ctx,
-        ))
+        Response::ok(stat::GetUsageHistoryResponse {
+            from,
+            to,
+            bucket_seconds: bs,
+            buckets,
+            error: None,
+            ..Default::default()
+        })
     }
 
     async fn get_usage_by_account(
         &self,
-        ctx: Context,
-        request: OwnedView<stat::GetUsageByAccountRequestView<'static>>,
-    ) -> Result<(stat::GetUsageByAccountResponse, Context), ConnectError> {
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, stat::GetUsageByAccountRequest>,
+    ) -> ServiceResult<stat::GetUsageByAccountResponse> {
         let req = request.to_owned_message();
         let Some(store) = self.0.usage.store() else {
-            return Ok((
-                stat::GetUsageByAccountResponse {
-                    rows: Vec::new(),
-                    error: Some("no persistent usage store configured".into()),
-                    ..Default::default()
-                },
-                ctx,
-            ));
+            return Response::ok(stat::GetUsageByAccountResponse {
+                rows: Vec::new(),
+                error: Some("no persistent usage store configured".into()),
+                ..Default::default()
+            });
         };
         let to = req.to.unwrap_or_else(now_seconds);
         let from = req
@@ -320,21 +323,18 @@ impl stat::StatusService for StatusServiceImpl {
                 ..Default::default()
             })
             .collect();
-        Ok((
-            stat::GetUsageByAccountResponse {
-                rows,
-                error: None,
-                ..Default::default()
-            },
-            ctx,
-        ))
+        Response::ok(stat::GetUsageByAccountResponse {
+            rows,
+            error: None,
+            ..Default::default()
+        })
     }
 
     async fn list_routing_policies(
         &self,
-        ctx: Context,
-        _: OwnedView<stat::ListRoutingPoliciesRequestView<'static>>,
-    ) -> Result<(stat::ListRoutingPoliciesResponse, Context), ConnectError> {
+        _ctx: RequestContext,
+        _: ServiceRequest<'_, stat::ListRoutingPoliciesRequest>,
+    ) -> ServiceResult<stat::ListRoutingPoliciesResponse> {
         let snapshot = self.0.config.load();
         let policies = snapshot
             .routing_policies
@@ -344,24 +344,22 @@ impl stat::StatusService for StatusServiceImpl {
                 family: entry.family.clone().unwrap_or_default(),
                 strategy: policy_strategy_to_proto(entry.strategy).into(),
                 accounts: entry.accounts.clone(),
-                weights: entry.weights.clone(),
+                // buffa 0.9 map fields are keyed by foldhash, not std's RandomState.
+                weights: entry.weights.iter().map(|(k, v)| (k.clone(), *v)).collect(),
                 ..Default::default()
             })
             .collect();
-        Ok((
-            stat::ListRoutingPoliciesResponse {
-                policies,
-                ..Default::default()
-            },
-            ctx,
-        ))
+        Response::ok(stat::ListRoutingPoliciesResponse {
+            policies,
+            ..Default::default()
+        })
     }
 
     async fn set_routing_policy(
         &self,
-        _ctx: Context,
-        _: OwnedView<stat::SetRoutingPolicyRequestView<'static>>,
-    ) -> Result<(stat::SetRoutingPolicyResponse, Context), ConnectError> {
+        _ctx: RequestContext,
+        _: ServiceRequest<'_, stat::SetRoutingPolicyRequest>,
+    ) -> ServiceResult<stat::SetRoutingPolicyResponse> {
         // TODO(slice-7): wire to ConfigWatcher hot-reload
         // Server-side mutation of settings.json is not yet implemented.
         // Edit settings.json directly until hot-reload is wired up.
@@ -372,9 +370,9 @@ impl stat::StatusService for StatusServiceImpl {
 
     async fn get_rate_limits(
         &self,
-        ctx: Context,
-        _: OwnedView<stat::GetRateLimitsRequestView<'static>>,
-    ) -> Result<(stat::GetRateLimitsResponse, Context), ConnectError> {
+        _ctx: RequestContext,
+        _: ServiceRequest<'_, stat::GetRateLimitsRequest>,
+    ) -> ServiceResult<stat::GetRateLimitsResponse> {
         let all = self.0.ratelimits.all();
         let mut by_prov: std::collections::HashMap<
             byokey_types::ProviderId,
@@ -387,7 +385,7 @@ impl stat::StatusService for StatusServiceImpl {
                 .push(stat::AccountRateLimit {
                     account_id: aid,
                     snapshot: MessageField::some(stat::RateLimitSnapshot {
-                        headers: snap.headers,
+                        headers: snap.headers.into_iter().collect(),
                         captured_at: snap.captured_at,
                         ..Default::default()
                     }),
@@ -406,13 +404,10 @@ impl stat::StatusService for StatusServiceImpl {
                 })
             })
             .collect();
-        Ok((
-            stat::GetRateLimitsResponse {
-                providers,
-                ..Default::default()
-            },
-            ctx,
-        ))
+        Response::ok(stat::GetRateLimitsResponse {
+            providers,
+            ..Default::default()
+        })
     }
 }
 
@@ -423,9 +418,9 @@ struct AccountsServiceImpl(Arc<AppState>);
 impl acct::AccountsService for AccountsServiceImpl {
     async fn list_accounts(
         &self,
-        ctx: Context,
-        _: OwnedView<acct::ListAccountsRequestView<'static>>,
-    ) -> Result<(acct::ListAccountsResponse, Context), ConnectError> {
+        _ctx: RequestContext,
+        _: ServiceRequest<'_, acct::ListAccountsRequest>,
+    ) -> ServiceResult<acct::ListAccountsResponse> {
         let mut providers = Vec::new();
         for pid in byokey_types::ProviderId::all() {
             let infos = self.0.auth.list_accounts(pid).await.unwrap_or_default();
@@ -467,20 +462,17 @@ impl acct::AccountsService for AccountsServiceImpl {
                 ..Default::default()
             });
         }
-        Ok((
-            acct::ListAccountsResponse {
-                providers,
-                ..Default::default()
-            },
-            ctx,
-        ))
+        Response::ok(acct::ListAccountsResponse {
+            providers,
+            ..Default::default()
+        })
     }
 
     async fn remove_account(
         &self,
-        ctx: Context,
-        request: OwnedView<acct::RemoveAccountRequestView<'static>>,
-    ) -> Result<(acct::RemoveAccountResponse, Context), ConnectError> {
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, acct::RemoveAccountRequest>,
+    ) -> ServiceResult<acct::RemoveAccountResponse> {
         let req = request.to_owned_message();
         let pid: byokey_types::ProviderId = req
             .provider
@@ -491,14 +483,14 @@ impl acct::AccountsService for AccountsServiceImpl {
             .remove_token_for(&pid, &req.account_id)
             .await
             .map_err(|e| byok_to_connect_error(&e))?;
-        Ok((acct::RemoveAccountResponse::default(), ctx))
+        Response::ok(acct::RemoveAccountResponse::default())
     }
 
     async fn activate_account(
         &self,
-        ctx: Context,
-        request: OwnedView<acct::ActivateAccountRequestView<'static>>,
-    ) -> Result<(acct::ActivateAccountResponse, Context), ConnectError> {
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, acct::ActivateAccountRequest>,
+    ) -> ServiceResult<acct::ActivateAccountResponse> {
         let req = request.to_owned_message();
         let pid: byokey_types::ProviderId = req
             .provider
@@ -509,14 +501,14 @@ impl acct::AccountsService for AccountsServiceImpl {
             .set_active_account(&pid, &req.account_id)
             .await
             .map_err(|e| byok_to_connect_error(&e))?;
-        Ok((acct::ActivateAccountResponse::default(), ctx))
+        Response::ok(acct::ActivateAccountResponse::default())
     }
 
     async fn add_api_key(
         &self,
-        ctx: Context,
-        request: OwnedView<acct::AddApiKeyRequestView<'static>>,
-    ) -> Result<(acct::AddApiKeyResponse, Context), ConnectError> {
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, acct::AddApiKeyRequest>,
+    ) -> ServiceResult<acct::AddApiKeyResponse> {
         let req = request.to_owned_message();
         let pid: byokey_types::ProviderId = req
             .provider
@@ -545,20 +537,17 @@ impl acct::AccountsService for AccountsServiceImpl {
             .save_token_for(&pid, &account_id, req.label.as_deref(), token)
             .await
             .map_err(|e| byok_to_connect_error(&e))?;
-        Ok((
-            acct::AddApiKeyResponse {
-                account_id,
-                ..Default::default()
-            },
-            ctx,
-        ))
+        Response::ok(acct::AddApiKeyResponse {
+            account_id,
+            ..Default::default()
+        })
     }
 
     async fn import_claude_code(
         &self,
-        ctx: Context,
-        request: OwnedView<acct::ImportClaudeCodeRequestView<'static>>,
-    ) -> Result<(acct::ImportClaudeCodeResponse, Context), ConnectError> {
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, acct::ImportClaudeCodeRequest>,
+    ) -> ServiceResult<acct::ImportClaudeCodeResponse> {
         let req = request.to_owned_message();
         let token = byokey_auth::provider::claude_code::load_token()
             .await
@@ -578,29 +567,17 @@ impl acct::AccountsService for AccountsServiceImpl {
             .save_token_for(&pid, &account_id, Some(label.as_str()), token)
             .await
             .map_err(|e| byok_to_connect_error(&e))?;
-        Ok((
-            acct::ImportClaudeCodeResponse {
-                account_id,
-                ..Default::default()
-            },
-            ctx,
-        ))
+        Response::ok(acct::ImportClaudeCodeResponse {
+            account_id,
+            ..Default::default()
+        })
     }
 
     async fn login(
         &self,
-        ctx: Context,
-        request: OwnedView<acct::LoginRequestView<'static>>,
-    ) -> Result<
-        (
-            std::pin::Pin<
-                Box<dyn futures_util::Stream<Item = Result<acct::LoginEvent, ConnectError>> + Send>,
-            >,
-            Context,
-        ),
-        ConnectError,
-    > {
-        use futures_util::StreamExt as _;
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, acct::LoginRequest>,
+    ) -> ServiceResult<connectrpc::ServiceStream<acct::LoginEvent>> {
         use tokio_stream::wrappers::ReceiverStream;
 
         let req = request.to_owned_message();
@@ -655,8 +632,7 @@ impl acct::AccountsService for AccountsServiceImpl {
             }
         });
 
-        let stream = ReceiverStream::new(event_rx).boxed();
-        Ok((stream, ctx))
+        Response::stream_ok(ReceiverStream::new(event_rx))
     }
 }
 
@@ -790,9 +766,9 @@ fn to_pb_detail(d: internal_threads::AmpThreadDetail) -> amp_pb::ThreadDetail {
 impl amp_pb::AmpService for AmpServiceImpl {
     async fn list_threads(
         &self,
-        ctx: Context,
-        request: OwnedView<amp_pb::ListThreadsRequestView<'static>>,
-    ) -> Result<(amp_pb::ListThreadsResponse, Context), ConnectError> {
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, amp_pb::ListThreadsRequest>,
+    ) -> ServiceResult<amp_pb::ListThreadsResponse> {
         let req = request.to_owned_message();
         let all = self.0.amp_threads.list();
         let want_messages = req.has_messages.unwrap_or(true);
@@ -813,21 +789,18 @@ impl amp_pb::AmpService for AmpServiceImpl {
             .take(limit)
             .map(to_pb_summary)
             .collect();
-        Ok((
-            amp_pb::ListThreadsResponse {
-                threads,
-                total: clamp_to_u32(total),
-                ..Default::default()
-            },
-            ctx,
-        ))
+        Response::ok(amp_pb::ListThreadsResponse {
+            threads,
+            total: clamp_to_u32(total),
+            ..Default::default()
+        })
     }
 
     async fn get_thread(
         &self,
-        ctx: Context,
-        request: OwnedView<amp_pb::GetThreadRequestView<'static>>,
-    ) -> Result<(amp_pb::GetThreadResponse, Context), ConnectError> {
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, amp_pb::GetThreadRequest>,
+    ) -> ServiceResult<amp_pb::GetThreadResponse> {
         let req = request.to_owned_message();
         if !internal_threads::is_valid_thread_id(&req.id) {
             return Err(ConnectError::invalid_argument("invalid thread ID format"));
@@ -845,20 +818,17 @@ impl amp_pb::AmpService for AmpServiceImpl {
         })
         .await
         .map_err(|e| ConnectError::internal(format!("spawn_blocking failed: {e}")))??;
-        Ok((
-            amp_pb::GetThreadResponse {
-                thread: MessageField::some(to_pb_detail(detail)),
-                ..Default::default()
-            },
-            ctx,
-        ))
+        Response::ok(amp_pb::GetThreadResponse {
+            thread: MessageField::some(to_pb_detail(detail)),
+            ..Default::default()
+        })
     }
 
     async fn inject_url(
         &self,
-        ctx: Context,
-        request: OwnedView<amp_pb::InjectUrlRequestView<'static>>,
-    ) -> Result<(amp_pb::InjectUrlResponse, Context), ConnectError> {
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, amp_pb::InjectUrlRequest>,
+    ) -> ServiceResult<amp_pb::InjectUrlResponse> {
         let req = request.to_owned_message();
         let snapshot = self.0.config.load();
         let resolved_url =
@@ -880,15 +850,12 @@ impl amp_pb::AmpService for AmpServiceImpl {
         .await
         .map_err(|e| ConnectError::internal(format!("spawn_blocking failed: {e}")))??;
 
-        Ok((
-            amp_pb::InjectUrlResponse {
-                resolved_url,
-                settings_path: settings_path.display().to_string(),
-                extras_merged: clamp_to_u32(extras),
-                ..Default::default()
-            },
-            ctx,
-        ))
+        Response::ok(amp_pb::InjectUrlResponse {
+            resolved_url,
+            settings_path: settings_path.display().to_string(),
+            extras_merged: clamp_to_u32(extras),
+            ..Default::default()
+        })
     }
 }
 

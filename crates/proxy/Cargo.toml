@@ -2,6 +2,7 @@
 name = "byokey-proxy"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace    = true
 description.workspace = true
 license.workspace    = true
@@ -12,7 +13,7 @@ homepage.workspace   = true
 workspace = true
 
 [dependencies]
-byokey-types = { workspace = true, features = ["rquest"] }
+byokey-types = { workspace = true, features = ["wreq"] }
 byokey-config.workspace = true
 byokey-auth.workspace = true
 byokey-provider.workspace = true
@@ -21,7 +22,7 @@ byokey-proto.workspace = true
 axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true
-rquest.workspace = true
+wreq.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

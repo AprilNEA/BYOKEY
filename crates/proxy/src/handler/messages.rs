@@ -378,7 +378,7 @@ pub async fn anthropic_messages(
         "application/json"
     };
 
-    // Apply Transport headers to rquest builder.
+    // Apply Transport headers to wreq builder.
     let mut builder = state.http.post(&api_url);
     for (name, value) in transport.headers() {
         if let Ok(v) = value.to_str() {
@@ -427,14 +427,14 @@ pub async fn anthropic_messages(
 
 /// Build a Copilot Messages API request with standard headers.
 fn build_copilot_messages_request(
-    http: &rquest::Client,
+    http: &wreq::Client,
     url: &str,
     token: &str,
     beta: &str,
     accept: &str,
     initiator: &str,
     body: &Value,
-) -> rquest::RequestBuilder {
+) -> wreq::RequestBuilder {
     http.post(url)
         .header("authorization", format!("Bearer {token}"))
         .header("anthropic-version", ANTHROPIC_VERSION)
@@ -606,7 +606,7 @@ async fn copilot_messages(
 
 /// Forward an upstream response back to the client, recording token usage.
 async fn forward_response(
-    resp: rquest::Response,
+    resp: wreq::Response,
     stream: bool,
     usage: &Arc<UsageRecorder>,
     model: &str,

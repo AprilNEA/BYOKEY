@@ -162,7 +162,7 @@ mod tests {
 
     fn make_state() -> Arc<AppState> {
         let store = Arc::new(InMemoryTokenStore::new());
-        let auth = Arc::new(AuthManager::new(store, rquest::Client::new()));
+        let auth = Arc::new(AuthManager::new(store, wreq::Client::new()));
         let config = Arc::new(arc_swap::ArcSwap::from_pointee(
             byokey_config::Config::default(),
         ));

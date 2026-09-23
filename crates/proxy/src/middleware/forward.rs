@@ -37,7 +37,7 @@ const FINGERPRINT_HEADERS: &[&str] = &[
 /// Stored in request extensions by [`forward_headers_middleware`].
 #[derive(Clone)]
 pub struct ForwardedHeaders {
-    pub headers: rquest::header::HeaderMap,
+    pub headers: wreq::header::HeaderMap,
 }
 
 pub async fn forward_headers_middleware(
@@ -49,7 +49,7 @@ pub async fn forward_headers_middleware(
     let amp_token = state.auth.get_token(&ProviderId::Amp).await.ok();
     let strip_auth = amp_token.is_some() || config.amp.upstream_key.is_some();
 
-    let mut out = rquest::header::HeaderMap::new();
+    let mut out = wreq::header::HeaderMap::new();
     for (name, value) in request.headers() {
         let name_str = name.as_str();
         if HOP_BY_HOP.contains(&name_str) || name_str == "host" {
@@ -65,8 +65,8 @@ pub async fn forward_headers_middleware(
             continue;
         }
         if let (Ok(n), Ok(v)) = (
-            rquest::header::HeaderName::from_bytes(name.as_ref()),
-            rquest::header::HeaderValue::from_bytes(value.as_bytes()),
+            wreq::header::HeaderName::from_bytes(name.as_ref()),
+            wreq::header::HeaderValue::from_bytes(value.as_bytes()),
         ) {
             out.insert(n, v);
         }
@@ -84,12 +84,12 @@ pub async fn forward_headers_middleware(
     next.run(request).await
 }
 
-fn inject_amp_auth(headers: &mut rquest::header::HeaderMap, token: &str) {
+fn inject_amp_auth(headers: &mut wreq::header::HeaderMap, token: &str) {
     if let (Ok(n_auth), Ok(v_auth), Ok(n_apikey), Ok(v_apikey)) = (
-        rquest::header::HeaderName::from_bytes(b"authorization"),
-        rquest::header::HeaderValue::from_str(&format!("Bearer {token}")),
-        rquest::header::HeaderName::from_bytes(b"x-api-key"),
-        rquest::header::HeaderValue::from_str(token),
+        wreq::header::HeaderName::from_bytes(b"authorization"),
+        wreq::header::HeaderValue::from_str(&format!("Bearer {token}")),
+        wreq::header::HeaderName::from_bytes(b"x-api-key"),
+        wreq::header::HeaderValue::from_str(token),
     ) {
         headers.insert(n_auth, v_auth);
         headers.insert(n_apikey, v_apikey);

@@ -2,6 +2,7 @@
 name = "byokey-provider"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace    = true
 description.workspace = true
 license.workspace    = true
@@ -12,7 +13,7 @@ homepage.workspace   = true
 workspace = true
 
 [dependencies]
-byokey-types = { workspace = true, features = ["rquest"] }
+byokey-types = { workspace = true, features = ["wreq"] }
 byokey-config.workspace = true
 byokey-auth.workspace = true
 loadwise-core.workspace = true
@@ -22,7 +23,7 @@ aigw-openai.workspace = true
 aigw-gemini.workspace = true
 reqwest.workspace = true
 secrecy.workspace = true
-rquest.workspace = true
+wreq.workspace = true
 rand.workspace = true
 eventsource-stream.workspace = true
 serde.workspace = true

@@ -16,6 +16,8 @@ exclude = ["desktop/src-tauri"]
 
 [workspace.package]
 edition = "2024"
+# Floor set by `wreq` 0.16 (rust-version = "1.98").
+rust-version = "1.98"
 version = "1.2.0"
 authors = ["AprilNEA <github@sku.moe>"]
 description = "Bring Your Own Keys — AI subscription-to-API proxy gateway"
@@ -54,7 +56,19 @@ listenfd = "1"
 axum = { version = "0.8", features = ["macros"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "request-id"] }
-rquest = { version = "5", features = ["full"] }
+wreq = { version = "0.16", features = [
+    "json",
+    "form",
+    "query",
+    "stream",
+    "charset",
+    "gzip",
+    "brotli",
+    "zstd",
+    "deflate",
+    "socks",
+    "system-proxy",
+] }
 eventsource-stream = "0.2"
 # Serde
 serde = { version = "1", features = ["derive"] }
@@ -122,10 +136,11 @@ sentry = { version = "0.47", default-features = false, features = [
 # OpenAPI
 utoipa = "5"
 # ConnectRPC (Rust server, buffa-based protobuf)
-connectrpc = { version = "0.3", default-features = false, features = ["axum", "gzip"] }
-connectrpc-build = "0.3"
-buffa = "0.3"
-buffa-types = { version = "0.3", features = ["json"] }
+# `json` became a feature in connectrpc 0.9; it was unconditional in 0.3.
+connectrpc = { version = "0.9", default-features = false, features = ["axum", "gzip", "json"] }
+connectrpc-build = "0.9"
+buffa = "0.9"
+buffa-types = { version = "0.9", features = ["json"] }
 http-body = "1"
 
 
@@ -141,6 +156,7 @@ pedantic = "warn"
 name = "byokey"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 description.workspace = true
 license.workspace = true
@@ -174,7 +190,7 @@ anyhow.workspace = true
 tokio.workspace = true
 listenfd = { workspace = true }
 arc-swap.workspace = true
-rquest.workspace = true
+wreq.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-appender.workspace = true

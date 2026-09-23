@@ -38,7 +38,7 @@ pub trait AuthCodeFlow: Send + Sync {
     /// and parses the response.
     async fn exchange_code(
         &self,
-        http: &rquest::Client,
+        http: &wreq::Client,
         creds: &OAuthCredentials,
         code: &str,
         pkce_verifier: &str,
@@ -47,7 +47,7 @@ pub trait AuthCodeFlow: Send + Sync {
 
     /// Post-process the token after exchange (e.g. iFlow exchanges for an API key).
     /// Default: identity.
-    async fn post_process(&self, token: OAuthToken, _http: &rquest::Client) -> Result<OAuthToken> {
+    async fn post_process(&self, token: OAuthToken, _http: &wreq::Client) -> Result<OAuthToken> {
         Ok(token)
     }
 }
@@ -61,7 +61,7 @@ pub trait AuthCodeFlow: Send + Sync {
 pub async fn run<P: AuthCodeFlow>(
     provider: &P,
     auth: &AuthManager,
-    http: &rquest::Client,
+    http: &wreq::Client,
     account: Option<&str>,
     events: Option<&mpsc::Sender<LoginProgress>>,
 ) -> Result<()> {
@@ -143,7 +143,7 @@ pub async fn run<P: AuthCodeFlow>(
 ///
 /// Returns an error if the response body cannot be parsed as JSON or is missing
 /// the `access_token` field.
-pub async fn send_and_parse_token(resp: rquest::Response) -> Result<OAuthToken> {
+pub async fn send_and_parse_token(resp: wreq::Response) -> Result<OAuthToken> {
     let status = resp.status();
     let json: serde_json::Value = resp
         .json()

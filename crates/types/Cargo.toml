@@ -2,6 +2,7 @@
 name = "byokey-types"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace    = true
 description.workspace = true
 license.workspace    = true
@@ -12,7 +13,7 @@ homepage.workspace   = true
 workspace = true
 
 [features]
-rquest = ["dep:rquest"]
+wreq = ["dep:wreq"]
 sqlx = ["dep:sqlx"]
 sea-orm = ["dep:sea-orm"]
 
@@ -25,7 +26,7 @@ futures-core.workspace = true
 bytes.workspace = true
 utoipa.workspace = true
 
-# Optional — enable `From<rquest::Error>` / `From<sqlx::Error>` / `From<sea_orm::DbErr>` for `ByokError`.
-rquest = { workspace = true, optional = true }
+# Optional — enable `From<wreq::Error>` / `From<sqlx::Error>` / `From<sea_orm::DbErr>` for `ByokError`.
+wreq = { workspace = true, optional = true }
 sqlx = { workspace = true, optional = true }
 sea-orm = { workspace = true, optional = true }

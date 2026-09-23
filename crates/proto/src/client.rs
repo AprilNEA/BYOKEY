@@ -21,7 +21,7 @@ impl ManagementClient {
     /// Build a plaintext HTTP client for a local management API endpoint.
     #[must_use]
     pub fn local_http(base_uri: http::Uri) -> Self {
-        Self::with_config(ClientConfig::new(base_uri).default_timeout(DEFAULT_TIMEOUT))
+        Self::with_config(ClientConfig::new(base_uri).with_default_timeout(DEFAULT_TIMEOUT))
     }
 
     /// Build a plaintext HTTP client with explicit ConnectRPC config.
