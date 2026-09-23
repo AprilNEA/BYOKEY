@@ -629,6 +629,15 @@ async fn forward_response(
         }
     }
     strip_gateway_headers(&mut upstream_headers);
+    // Both branches re-encode the body, so the upstream framing no longer
+    // describes it. A stale content-length makes hyper panic mid-response.
+    for framing in [
+        axum::http::header::CONTENT_LENGTH,
+        axum::http::header::TRANSFER_ENCODING,
+        axum::http::header::CONTENT_ENCODING,
+    ] {
+        upstream_headers.remove(framing);
+    }
 
     if stream {
         let raw = response_to_stream(resp);
@@ -885,5 +894,45 @@ mod tests {
         });
         sanitize_thinking(&mut body);
         assert!(body.get("temperature").is_none());
+    }
+
+    // ── forward_response: re-encoded bodies ────────────────────────────
+
+    #[tokio::test]
+    async fn non_stream_response_does_not_forward_upstream_content_length() {
+        // The body is parsed and re-serialized, so its length can change; the
+        // upstream content-length then disagrees with it and hyper panics.
+        let upstream_body = r#"{"id": "msg_1", "type": "message", "content": []}"#;
+        let upstream: wreq::Response = axum::http::Response::builder()
+            .header("content-type", "application/json")
+            .header("content-length", upstream_body.len())
+            .header("x-upstream-marker", "kept")
+            .body(upstream_body)
+            .unwrap()
+            .into();
+
+        let usage = Arc::new(UsageRecorder::new(None));
+        let Ok(response) =
+            forward_response(upstream, false, &usage, "m", "copilot", "a", false).await
+        else {
+            panic!("a 200 upstream response must forward");
+        };
+
+        assert_eq!(response.headers()["x-upstream-marker"], "kept");
+        let declared = response
+            .headers()
+            .get(axum::http::header::CONTENT_LENGTH)
+            .cloned();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        if let Some(declared) = declared {
+            assert_eq!(declared.to_str().unwrap(), body.len().to_string());
+        }
+        assert_ne!(
+            body.len(),
+            upstream_body.len(),
+            "fixture must change length"
+        );
     }
 }
