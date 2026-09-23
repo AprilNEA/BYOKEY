@@ -15,7 +15,7 @@ use axum::{
 };
 use byokey_provider::claude_headers::{ANTHROPIC_BETA, ANTHROPIC_VERSION};
 use byokey_provider::cloak::{derive_cc_entrypoint, inject_billing_header};
-use byokey_provider::{ConversationHeaders, CopilotExecutor, CopilotIdentity};
+use byokey_provider::{Conversation, CopilotCredentials, CopilotExecutor, CopilotIdentity};
 use byokey_types::{ByokError, ProviderId, ThinkingCapability, traits::ByteStream};
 use bytes::Bytes;
 use futures_util::{StreamExt as _, TryStreamExt as _};
@@ -401,21 +401,19 @@ pub async fn anthropic_messages(
     .await
 }
 
-/// Build a Copilot Messages API request with standard headers.
-#[allow(clippy::too_many_arguments)]
+/// Build a Copilot Messages API request as `creds`' account.
 fn build_copilot_messages_request(
     http: &wreq::Client,
-    url: &str,
-    token: &str,
+    creds: &CopilotCredentials,
     beta: &str,
     accept: &str,
     identity: &CopilotIdentity,
-    conversation: &ConversationHeaders,
+    conversation: &Conversation,
     body: &Value,
 ) -> wreq::RequestBuilder {
     let mut builder = http
-        .post(url)
-        .header("authorization", format!("Bearer {token}"))
+        .post(format!("{}/v1/messages", creds.endpoint))
+        .header("authorization", format!("Bearer {}", creds.token))
         .header("anthropic-version", ANTHROPIC_VERSION)
         .header("anthropic-beta", beta)
         .header("content-type", "application/json")
@@ -423,8 +421,11 @@ fn build_copilot_messages_request(
     for (name, value) in identity
         .api_headers()
         .into_iter()
-        .chain(conversation.iter())
+        .chain(creds.device.headers())
     {
+        builder = builder.header(name, value);
+    }
+    for (name, value) in conversation.headers(&creds.device) {
         builder = builder.header(name, value);
     }
     builder.json(body)
@@ -488,7 +489,7 @@ async fn copilot_messages(
         .get("messages")
         .and_then(Value::as_array)
         .map_or(&[][..], Vec::as_slice);
-    let conversation = ConversationHeaders::from_messages(messages);
+    let conversation = Conversation::from_messages(messages);
     let model_name = body
         .get("model")
         .and_then(Value::as_str)
@@ -498,8 +499,8 @@ async fn copilot_messages(
     let mut last_err = None;
     for attempt in 0..max_attempts {
         tracing::Span::current().record("attempt", attempt);
-        let (token, endpoint) = match executor.copilot_token().await {
-            Ok(t) => t,
+        let creds = match executor.copilot_token().await {
+            Ok(c) => c,
             Err(e) => {
                 if max_attempts > 1 {
                     tracing::warn!(attempt, error = %e, "copilot token failed, trying next account");
@@ -510,10 +511,8 @@ async fn copilot_messages(
                 return Err(ApiError::from(e));
             }
         };
-        let url = format!("{endpoint}/v1/messages");
-
         tracing::info!(
-            url = %url,
+            endpoint = %creds.endpoint,
             model = %body.get("model").and_then(|v| v.as_str()).unwrap_or("unknown"),
             stream, ?conversation, attempt,
             "routing Anthropic messages through Copilot"
@@ -521,8 +520,7 @@ async fn copilot_messages(
 
         let resp = build_copilot_messages_request(
             &state.http,
-            &url,
-            &token,
+            &creds,
             beta,
             accept,
             &identity,
