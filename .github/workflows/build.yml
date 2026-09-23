@@ -3,16 +3,27 @@ name: Build
 on:
   release:
     types: [created]
+  # Rebuild an existing release, e.g. to fill in a target that failed. A rerun
+  # replays the workflow as of the tagged commit; this runs the current one.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build (e.g. v1.4.1)"
+        required: true
 
 permissions:
   contents: write
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+  SENTRY_CLI_VERSION: "3.8.0"
 
 jobs:
   build:
     name: ${{ matrix.target }}
     # Only build for the root byokey tag (v*). Skip per-crate tags like
     # byokey-proto-v* or byokey-daemon-v* that release-plz may emit.
-    if: startsWith(github.event.release.tag_name, 'v')
+    if: startsWith(github.event.release.tag_name || inputs.tag, 'v')
     runs-on: ${{ matrix.os }}
     env:
       # Lift secrets to job-level env so conditional steps can gate on them.
@@ -39,6 +50,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.TAG }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -58,9 +71,22 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Install sentry-cli (Unix)
+        # A pinned binary from GitHub releases. sentry.io/get-cli installs
+        # "latest" through Sentry's release registry, which kept failing on
+        # the x86_64 Linux runner and took that target out of v1.4.1.
         if: env.SENTRY_AUTH_TOKEN != '' && runner.os != 'Windows'
         shell: bash
-        run: curl -sL https://sentry.io/get-cli/ | INSTALL_DIR=/usr/local/bin bash
+        run: |
+          case "$(uname -s)" in
+            Darwin) suffix=Darwin-universal ;;
+            Linux) suffix="Linux-$(uname -m)" ;;
+          esac
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL --retry 5 --retry-all-errors \
+            -o "$RUNNER_TEMP/bin/sentry-cli" \
+            "https://github.com/getsentry/sentry-cli/releases/download/${SENTRY_CLI_VERSION}/sentry-cli-${suffix}"
+          chmod +x "$RUNNER_TEMP/bin/sentry-cli"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Upload Rust debug symbols to Sentry
         # Skipped on Windows: sentry-cli's Windows support is spotty and
@@ -74,32 +100,35 @@ jobs:
             "target/${{ matrix.target }}/release/"
 
       - name: Package (Unix)
-        if: github.event_name == 'release' && runner.os != 'Windows'
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           BIN="target/${{ matrix.target }}/release/byokey"
-          ARCHIVE="byokey-${{ github.event.release.tag_name }}-${{ matrix.target }}.tar.gz"
+          ARCHIVE="byokey-${TAG}-${{ matrix.target }}.tar.gz"
           tar czf "$ARCHIVE" -C "$(dirname "$BIN")" "$(basename "$BIN")"
           echo "ASSET=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Package (Windows)
-        if: github.event_name == 'release' && runner.os == 'Windows'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $archive = "byokey-${{ github.event.release.tag_name }}-${{ matrix.target }}.zip"
+          $archive = "byokey-$env:TAG-${{ matrix.target }}.zip"
           Compress-Archive -Path "target\${{ matrix.target }}\release\byokey.exe" -DestinationPath $archive
           "ASSET=$archive" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Upload to Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ env.TAG }}
           files: ${{ env.ASSET }}
+          # A rebuild only fills in what is missing. Replacing a published
+          # archive would change its checksum under anyone who fetched it.
+          overwrite_files: false
 
   update-homebrew:
     name: Update Homebrew
     needs: build
-    if: always() && github.event_name == 'release' && !cancelled() && startsWith(github.event.release.tag_name, 'v')
+    if: always() && !cancelled() && startsWith(github.event.release.tag_name || inputs.tag, 'v')
     runs-on: ubuntu-latest
     steps:
       - name: Generate token
@@ -115,4 +144,4 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           repository: AprilNEA/homebrew-tap
           event-type: update-formula
-          client-payload: '{"version": "${{ github.event.release.tag_name }}"}'
+          client-payload: '{"version": "${{ env.TAG }}"}'
