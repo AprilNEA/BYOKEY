@@ -13,9 +13,9 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use byokey_provider::CopilotExecutor;
 use byokey_provider::claude_headers::{ANTHROPIC_BETA, ANTHROPIC_VERSION};
 use byokey_provider::cloak::{derive_cc_entrypoint, inject_billing_header};
+use byokey_provider::{ConversationHeaders, CopilotExecutor, CopilotIdentity};
 use byokey_types::{ByokError, ProviderId, ThinkingCapability, traits::ByteStream};
 use bytes::Bytes;
 use futures_util::{StreamExt as _, TryStreamExt as _};
@@ -31,14 +31,6 @@ use crate::{AppState, UsageRecorder, error::ApiError};
 /// Default thinking budget (tokens) for `Auto` mode on legacy Claude models
 /// that require an explicit `budget_tokens` value with `thinking.type: "enabled"`.
 const DEFAULT_AUTO_BUDGET: u32 = 10_000;
-
-// Copilot identification headers (matching VS Code Copilot Chat extension).
-const COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.35.0";
-const COPILOT_EDITOR_VERSION: &str = "vscode/1.107.0";
-const COPILOT_PLUGIN_VERSION: &str = "copilot-chat/0.35.0";
-const COPILOT_INTEGRATION_ID: &str = "vscode-chat";
-const COPILOT_OPENAI_INTENT: &str = "conversation-panel";
-const COPILOT_GITHUB_API_VERSION: &str = "2025-04-01";
 
 /// Handles `POST /v1/messages` — Anthropic native format passthrough.
 ///
@@ -264,22 +256,6 @@ fn build_beta_header(body: &mut Value, client_headers: &HeaderMap) -> String {
     betas
 }
 
-/// Detect the `X-Initiator` value from Anthropic-format messages.
-fn detect_initiator(body: &Value) -> &'static str {
-    let is_agent = body
-        .get("messages")
-        .and_then(Value::as_array)
-        .is_some_and(|msgs| {
-            msgs.iter().any(|m| {
-                matches!(
-                    m.get("role").and_then(Value::as_str),
-                    Some("assistant" | "tool")
-                )
-            })
-        });
-    if is_agent { "agent" } else { "user" }
-}
-
 use byokey_provider::executor::claude::build_fingerprint_headers;
 
 #[tracing::instrument(skip_all, fields(
@@ -426,29 +402,32 @@ pub async fn anthropic_messages(
 }
 
 /// Build a Copilot Messages API request with standard headers.
+#[allow(clippy::too_many_arguments)]
 fn build_copilot_messages_request(
     http: &wreq::Client,
     url: &str,
     token: &str,
     beta: &str,
     accept: &str,
-    initiator: &str,
+    identity: &CopilotIdentity,
+    conversation: &ConversationHeaders,
     body: &Value,
 ) -> wreq::RequestBuilder {
-    http.post(url)
+    let mut builder = http
+        .post(url)
         .header("authorization", format!("Bearer {token}"))
         .header("anthropic-version", ANTHROPIC_VERSION)
         .header("anthropic-beta", beta)
         .header("content-type", "application/json")
-        .header("accept", accept)
-        .header("user-agent", COPILOT_USER_AGENT)
-        .header("editor-version", COPILOT_EDITOR_VERSION)
-        .header("editor-plugin-version", COPILOT_PLUGIN_VERSION)
-        .header("copilot-integration-id", COPILOT_INTEGRATION_ID)
-        .header("openai-intent", COPILOT_OPENAI_INTENT)
-        .header("x-github-api-version", COPILOT_GITHUB_API_VERSION)
-        .header("x-initiator", initiator)
-        .json(body)
+        .header("accept", accept);
+    for (name, value) in identity
+        .api_headers()
+        .into_iter()
+        .chain(conversation.iter())
+    {
+        builder = builder.header(name, value);
+    }
+    builder.json(body)
 }
 
 /// Route Anthropic-format request to Copilot's native `/v1/messages` endpoint.
@@ -479,12 +458,14 @@ async fn copilot_messages(
         .cloned()
         .unwrap_or_default();
 
+    let identity = CopilotIdentity::from_versions(state.versions.get(&ProviderId::Copilot));
     let executor = CopilotExecutor::builder()
         .http(state.http.clone())
         .auth(state.auth.clone())
         .maybe_api_key(copilot_config.api_key)
         .maybe_base_url(copilot_config.base_url)
         .ratelimit(state.ratelimits.clone())
+        .identity(identity.clone())
         .build();
 
     let accounts = state
@@ -503,7 +484,11 @@ async fn copilot_messages(
     } else {
         "application/json"
     };
-    let initiator = detect_initiator(&body);
+    let messages = body
+        .get("messages")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    let conversation = ConversationHeaders::from_messages(messages);
     let model_name = body
         .get("model")
         .and_then(Value::as_str)
@@ -530,7 +515,7 @@ async fn copilot_messages(
         tracing::info!(
             url = %url,
             model = %body.get("model").and_then(|v| v.as_str()).unwrap_or("unknown"),
-            stream, initiator, attempt,
+            stream, ?conversation, attempt,
             "routing Anthropic messages through Copilot"
         );
 
@@ -540,7 +525,8 @@ async fn copilot_messages(
             &token,
             beta,
             accept,
-            initiator,
+            &identity,
+            &conversation,
             &body,
         )
         .send()
