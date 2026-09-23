@@ -22,13 +22,6 @@ Expose any provider as OpenAI- or Anthropic-compatible API — locally or in the
 
 </div>
 
-<p align="center">
-    <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="./docs/public/screenshot-dark.png">
-        <img src="./docs/public/screenshot-light.png" alt="BYOKEY screenshot" width="860"/>
-    </picture>
-</p>
-
 ```
 Subscriptions                                     Tools
 
