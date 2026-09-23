@@ -8,11 +8,25 @@ semver_check = false
 
 # Root binary crate — public release artefact.
 # git_tag_name produces v0.1.0 instead of the default byokey-v0.1.0.
+# Its changelog is the only one kept, so it pulls in the commits of the
+# internal crates it ships; by default it would list only commits touching
+# the root package's own files.
 [[package]]
 name = "byokey"
 git_tag_name = "v{{ version }}"
 git_release_enable = true
 git_tag_enable = true
+changelog_include = [
+    "byokey-types",
+    "byokey-config",
+    "byokey-store",
+    "byokey-auth",
+    "byokey-provider",
+    "byokey-proto",
+    "byokey-proxy",
+    "byokey-daemon",
+    "byokey-tui",
+]
 
 # Internal library crates — published to crates.io, but no individual
 # git tags or GitHub releases (only the root byokey tag is created).
