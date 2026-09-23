@@ -17,7 +17,7 @@ members = [
 edition = "2024"
 # Floor set by `wreq` 0.16 (rust-version = "1.98").
 rust-version = "1.98"
-version = "1.4.1"
+version = "1.4.2"
 authors = ["AprilNEA <github@sku.moe>"]
 description = "Bring Your Own Keys — AI subscription-to-API proxy gateway"
 license = "MIT OR Apache-2.0"
@@ -29,15 +29,15 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Workspace crates
-byokey-types = { version = "1.4.1", path = "crates/types" }
-byokey-config = { version = "1.4.1", path = "crates/config" }
-byokey-store = { version = "1.4.1", path = "crates/store" }
-byokey-auth = { version = "1.4.1", path = "crates/auth" }
-byokey-provider = { version = "1.4.1", path = "crates/provider" }
-byokey-proto = { version = "1.4.1", path = "crates/proto" }
-byokey-proxy = { version = "1.4.1", path = "crates/proxy" }
-byokey-daemon = { version = "1.4.1", path = "crates/daemon" }
-byokey-tui = { version = "1.4.1", path = "crates/tui" }
+byokey-types = { version = "1.4.2", path = "crates/types" }
+byokey-config = { version = "1.4.2", path = "crates/config" }
+byokey-store = { version = "1.4.2", path = "crates/store" }
+byokey-auth = { version = "1.4.2", path = "crates/auth" }
+byokey-provider = { version = "1.4.2", path = "crates/provider" }
+byokey-proto = { version = "1.4.2", path = "crates/proto" }
+byokey-proxy = { version = "1.4.2", path = "crates/proxy" }
+byokey-daemon = { version = "1.4.2", path = "crates/daemon" }
+byokey-tui = { version = "1.4.2", path = "crates/tui" }
 ampcode = { version = "0.1.2", path = "crates/ampcode" }
 loadwise-core = "0.1.0"
 aigw = { version = "0.6.1", default-features = false, features = ["anthropic", "anthropic-claude-code", "openai", "openai-compat", "gemini"] }
