@@ -583,8 +583,6 @@ impl ProviderExecutor for CopilotExecutor {
             for (name, value) in conversation.headers(&creds.device) {
                 builder = builder.header(name, value);
             }
-            // Prevent compressed SSE streams from breaking the line scanner.
-            builder = builder.header("accept-encoding", "identity");
             // Attach the translated body (already serialized JSON bytes by aigw).
             let builder = builder.body(translated.body.to_vec());
 
