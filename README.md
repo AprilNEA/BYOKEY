@@ -25,7 +25,7 @@ Expose any provider as OpenAI- or Anthropic-compatible API — locally or in the
 ```
 Subscriptions                                     Tools
 
-Claude Pro  ─┐                              ┌──  Amp Code
+Claude Pro  ─┐                              ┌──  Claude Code
 OpenAI Plus ─┼──  byokey serve  ────────────┼──  Cursor · Windsurf
 Copilot     ─┘                              ├──  Factory CLI (Droid)
                                             └──  any OpenAI / Anthropic client
@@ -38,7 +38,6 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
 - **Token persistence** — SQLite at `~/.byokey/tokens.db`; survives restarts
 - **API key passthrough** — Set raw keys in config to skip OAuth entirely
 - **Deploy anywhere** — Run locally as a CLI, or deploy as a shared AI gateway
-- **Agent-ready** — Native support for [Amp Code](https://ampcode.com); [Factory CLI (Droid)](https://factory.ai) coming soon
 - **Hot-reload config** — YAML-based with sensible defaults
 
 ## Supported Providers
@@ -152,7 +151,7 @@ cargo install --path .
 # 1. Authenticate (opens browser or shows a device code)
 byokey login claude
 byokey login codex
-byokey login copilot
+byokey login copilot           # as OpenCode; `--client vscode` to log in as VS Code
 
 # 2. Start the proxy
 byokey serve
@@ -161,37 +160,6 @@ byokey serve
 export OPENAI_BASE_URL=http://localhost:8018/v1
 export OPENAI_API_KEY=any          # byokey ignores the key value
 ```
-
-**For Claude Code:**
-
-Point Claude Code at BYOKEY:
-
-```jsonc
-// ~/.claude/settings.json
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "http://localhost:8018",
-    "ANTHROPIC_API_KEY": "byokey-local"
-  }
-}
-```
-
-Or let byokey write it for you: `byokey claude-code inject`.
-Restart Claude Code to apply the settings.
-
-**For Amp:**
-
-`byokey serve` spins up a second listener on port `18018` (configurable via
-`amp.port`) dedicated to the Amp-compatible router. Point the Amp CLI at it:
-
-```jsonc
-// ~/.config/amp/settings.json
-{
-  "amp.url": "http://localhost:18018"
-}
-```
-
-Or let byokey write it for you: `byokey amp inject`.
 
 ## CLI Reference
 
@@ -211,8 +179,6 @@ Commands:
   tui           Launch the interactive terminal UI
   accounts      List all accounts for a provider
   switch        Switch the active account for a provider
-  claude-code   Claude Code configuration utilities
-  amp           Amp-related utilities
   openapi       Export the OpenAPI specification as JSON
   completions   Generate shell completions
   help          Print help
@@ -233,9 +199,7 @@ Options:
       --log-file <PATH> Log file with daily rotation (default: stdout)
 ```
 
-`serve` also opens a second HTTP listener on `amp.port` (default `18018`) for
-the Amp-compatible router, and binds a Unix control socket at
-`~/.byokey/control.sock` used by `stop` / `reload`. If the process is launched
+`serve` also binds a Unix control socket at `~/.byokey/control.sock` used by `stop` / `reload`. If the process is launched
 with a pre-opened socket via `systemfd`, `systemd`, or `launchd`, the inherited
 fd is adopted in place of a fresh bind.
 
@@ -254,6 +218,7 @@ Supported names: `claude`, `codex`, `copilot`, `gemini`, `kiro`,
 ```
 Options:
       --account <NAME>  Account identifier (default: `default`)
+      --client <CLIENT> Client to log in as; Copilot: `opencode` (default) or `vscode`
       --db <PATH>       SQLite DB path [default: ~/.byokey/tokens.db]
 ```
 
@@ -272,13 +237,6 @@ ConnectRPC management API at `http://127.0.0.1:8018` by default; override with
 **`byokey service <install|uninstall|start|stop|status>`** — Registers byokey
 as an OS-managed service. Uses `launchd` on macOS, `systemd` on Linux, and
 Windows SCM on Windows.
-
-**`byokey claude-code inject`** — Writes `env.ANTHROPIC_BASE_URL` and a
-placeholder `env.ANTHROPIC_API_KEY` (plus extras from `claude_code.settings`)
-into `~/.claude/settings.json`, preserving unrelated settings and model choices.
-
-**`byokey amp inject`** — Writes `amp.url` (and any extras from
-`amp.settings` in your byokey config) into `~/.config/amp/settings.json`.
 
 </details>
 

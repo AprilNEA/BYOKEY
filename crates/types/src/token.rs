@@ -20,6 +20,10 @@ pub struct OAuthToken {
     pub expires_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_type: Option<String>,
+    /// The client the token was issued to, for providers that log in as more
+    /// than one (see [`CopilotClient`](crate::CopilotClient)).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<String>,
 }
 
 impl OAuthToken {
@@ -30,7 +34,15 @@ impl OAuthToken {
             refresh_token: None,
             expires_at: None,
             token_type: Some("Bearer".to_string()),
+            client: None,
         }
+    }
+
+    /// Record the client the token was issued to.
+    #[must_use]
+    pub fn with_client(mut self, client: impl Into<String>) -> Self {
+        self.client = Some(client.into());
+        self
     }
 
     /// Set the expiry to `expires_in_secs` seconds from now.
@@ -140,6 +152,7 @@ mod tests {
             refresh_token: Some("ref".into()),
             expires_at: Some(past_secs(100)),
             token_type: None,
+            client: None,
         };
         assert!(t.is_expired());
         assert_eq!(t.state(), TokenState::Expired);
@@ -152,6 +165,7 @@ mod tests {
             refresh_token: None,
             expires_at: Some(past_secs(100)),
             token_type: None,
+            client: None,
         };
         assert_eq!(t.state(), TokenState::Invalid);
     }
@@ -168,6 +182,7 @@ mod tests {
             refresh_token: Some("ref".into()),
             expires_at: Some(soon),
             token_type: None,
+            client: None,
         };
         assert!(t.is_expired());
     }
@@ -185,6 +200,7 @@ mod tests {
             refresh_token: Some("ref".into()),
             expires_at: Some(expires),
             token_type: None,
+            client: None,
         };
         assert!(!t.is_expired());
         assert!(t.should_proactive_refresh());
@@ -205,6 +221,7 @@ mod tests {
             refresh_token: Some("ref".into()),
             expires_at: Some(past_secs(10)),
             token_type: None,
+            client: None,
         };
         assert!(t.is_expired());
         assert!(!t.should_proactive_refresh());

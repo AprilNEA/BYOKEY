@@ -1,7 +1,7 @@
 mod actions;
 mod control_server;
 
-use actions::{amp, auth, claude_code, daemon, serve};
+use actions::{auth, claude_code, daemon, serve};
 
 use anyhow::Result;
 use byokey_store::SqliteTokenStore;
@@ -89,6 +89,10 @@ enum Commands {
         /// Account identifier (e.g. `work`, `personal`). Defaults to `default`.
         #[arg(long, value_name = "NAME")]
         account: Option<String>,
+        /// Client to log in as, for providers with more than one.
+        /// Copilot: `opencode` (default) or `vscode`.
+        #[arg(long, value_name = "CLIENT")]
+        client: Option<String>,
         #[command(flatten)]
         store: StoreArgs,
     },
@@ -169,11 +173,6 @@ enum Commands {
         #[command(flatten)]
         store: StoreArgs,
     },
-    /// Amp proxy injection.
-    Amp {
-        #[command(subcommand)]
-        action: amp::AmpAction,
-    },
     /// Claude Code CLI configuration.
     ClaudeCode {
         #[command(subcommand)]
@@ -199,11 +198,12 @@ async fn run(command: Commands) -> Result<()> {
         Commands::Login {
             provider,
             account,
+            client,
             store,
         } => {
             auth::AuthCmd::new(store.db)
                 .await?
-                .login(provider, account)
+                .login(provider, account, client)
                 .await
         }
         Commands::AddApiKey {
@@ -271,7 +271,6 @@ async fn run(command: Commands) -> Result<()> {
                 .switch(provider, account)
                 .await
         }
-        Commands::Amp { action } => amp::cmd_amp(action),
         Commands::ClaudeCode { action } => claude_code::cmd_claude_code(action),
         Commands::Openapi => {
             use utoipa::OpenApi as _;

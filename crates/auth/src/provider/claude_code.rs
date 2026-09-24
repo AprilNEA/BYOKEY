@@ -67,6 +67,7 @@ pub async fn load_token() -> Result<Option<OAuthToken>, ByokError> {
         // `OAuthToken::expires_at` expects Unix seconds.
         expires_at: secrets.oauth.expires_at_ms.map(|ms| ms / 1_000),
         token_type: Some("Bearer".to_string()),
+        client: None,
     }))
 }
 
@@ -172,6 +173,7 @@ mod tests {
             refresh_token: secrets.oauth.refresh_token,
             expires_at: secrets.oauth.expires_at_ms.map(|ms| ms / 1000),
             token_type: Some("Bearer".to_string()),
+            client: None,
         };
         assert_eq!(token.expires_at, Some(1_712_345_678));
     }

@@ -25,7 +25,7 @@
 ```
 订阅                                              工具
 
-Claude Pro  ─┐                              ┌──  Amp Code
+Claude Pro  ─┐                              ┌──  Claude Code
 OpenAI Plus ─┼──  byokey serve  ────────────┼──  Cursor · Windsurf
 Copilot     ─┘                              ├──  Factory CLI (Droid)
                                             └──  任意 OpenAI / Anthropic 客户端
@@ -38,7 +38,6 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
 - **Token 持久化** — SQLite 存储于 `~/.byokey/tokens.db`，重启后依然有效
 - **API Key 直通** — 在配置中设置原始 Key，跳过 OAuth
 - **随处部署** — 本地 CLI 运行，或部署为共享 AI 网关
-- **Agent 就绪** — 原生支持 [Amp Code](https://ampcode.com)；[Factory CLI (Droid)](https://factory.ai) 即将到来
 - **热重载配置** — 基于 YAML，所有选项均有合理默认值
 
 ## 支持的 Provider
@@ -144,7 +143,7 @@ cargo install --path .
 # 1. 认证（会打开浏览器或显示设备码）
 byokey login claude
 byokey login codex
-byokey login copilot
+byokey login copilot           # 以 OpenCode 身份；`--client vscode` 以 VS Code 身份登录
 
 # 2. 启动代理
 byokey serve
@@ -153,37 +152,6 @@ byokey serve
 export OPENAI_BASE_URL=http://localhost:8018/v1
 export OPENAI_API_KEY=any          # byokey 忽略 key 的值
 ```
-
-**对于 Claude Code：**
-
-将 Claude Code 指向 BYOKEY：
-
-```jsonc
-// ~/.claude/settings.json
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "http://localhost:8018",
-    "ANTHROPIC_API_KEY": "byokey-local"
-  }
-}
-```
-
-或者让 byokey 自动写入：`byokey claude-code inject`。
-重启 Claude Code 以应用设置。
-
-**对于 Amp：**
-
-`byokey serve` 会额外监听一个端口 `18018`（可通过 `amp.port` 配置），
-专用于 Amp 兼容路由。将 Amp CLI 指向该端口：
-
-```jsonc
-// ~/.config/amp/settings.json
-{
-  "amp.url": "http://localhost:18018"
-}
-```
-
-或者让 byokey 自动写入：`byokey amp inject`。
 
 ## CLI 参考
 
@@ -203,8 +171,6 @@ Commands:
   tui           启动交互式终端 UI
   accounts      列出某个 Provider 的所有账户
   switch        切换某个 Provider 的活动账户
-  claude-code   Claude Code 配置工具
-  amp           Amp 相关工具
   openapi       导出 OpenAPI 规范（JSON 格式）
   completions   生成 Shell 补全脚本
   help          打印帮助信息
@@ -225,8 +191,7 @@ Options:
       --log-file <PATH> 日志文件路径，按天轮转（默认输出到 stdout）
 ```
 
-`serve` 还会在 `amp.port`（默认 `18018`）上启动第二个 HTTP 监听器用于 Amp
-兼容路由，并在 `~/.byokey/control.sock` 绑定一个 Unix 控制套接字，供
+`serve` 还会在 `~/.byokey/control.sock` 绑定一个 Unix 控制套接字，供
 `stop` / `reload` 使用。若进程通过 `systemfd`、`systemd` 或 `launchd`
 以预打开套接字的方式启动，将直接复用继承的 fd 而不重新绑定。
 
@@ -245,6 +210,7 @@ Options:
 ```
 Options:
       --account <NAME>  账户标识（默认：`default`）
+      --client <CLIENT> 登录所用的客户端；Copilot：`opencode`（默认）或 `vscode`
       --db <PATH>       SQLite 数据库路径 [默认: ~/.byokey/tokens.db]
 ```
 
@@ -263,13 +229,6 @@ Options:
 **`byokey service <install|uninstall|start|stop|status>`** — 将 byokey
 注册为系统托管服务。macOS 上使用 `launchd`、Linux 上使用 `systemd`、
 Windows 上使用 SCM。
-
-**`byokey claude-code inject`** — 将 `env.ANTHROPIC_BASE_URL` 和占位用的
-`env.ANTHROPIC_API_KEY`（以及 `claude_code.settings` 的额外设置）写入
-`~/.claude/settings.json`，保留其他设置和模型选择。
-
-**`byokey amp inject`** — 将 `amp.url`（以及 byokey 配置中 `amp.settings`
-的额外字段）写入 `~/.config/amp/settings.json`。
 
 </details>
 

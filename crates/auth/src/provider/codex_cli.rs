@@ -73,6 +73,7 @@ pub async fn load_token() -> Result<Option<OAuthToken>, ByokError> {
         refresh_token: t.refresh_token,
         expires_at,
         token_type: Some("Bearer".to_string()),
+        client: None,
     }))
 }
 

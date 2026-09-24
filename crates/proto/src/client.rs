@@ -5,7 +5,7 @@ use std::time::Duration;
 use connectrpc::ConnectError;
 use connectrpc::client::{ClientConfig, HttpClient};
 
-use crate::byokey::{accounts as acct, amp, status as stat};
+use crate::byokey::{accounts as acct, status as stat};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -14,7 +14,6 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct ManagementClient {
     status: stat::StatusServiceClient<HttpClient>,
     accounts: acct::AccountsServiceClient<HttpClient>,
-    amp: amp::AmpServiceClient<HttpClient>,
 }
 
 impl ManagementClient {
@@ -35,8 +34,7 @@ impl ManagementClient {
     pub fn with_transport(transport: HttpClient, config: ClientConfig) -> Self {
         Self {
             status: stat::StatusServiceClient::new(transport.clone(), config.clone()),
-            accounts: acct::AccountsServiceClient::new(transport.clone(), config.clone()),
-            amp: amp::AmpServiceClient::new(transport, config),
+            accounts: acct::AccountsServiceClient::new(transport, config),
         }
     }
 
@@ -48,11 +46,6 @@ impl ManagementClient {
     #[must_use]
     pub fn accounts(&self) -> &acct::AccountsServiceClient<HttpClient> {
         &self.accounts
-    }
-
-    #[must_use]
-    pub fn amp(&self) -> &amp::AmpServiceClient<HttpClient> {
-        &self.amp
     }
 
     /// Fetch server and provider status.

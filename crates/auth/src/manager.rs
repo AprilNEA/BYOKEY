@@ -604,6 +604,7 @@ mod tests {
             refresh_token: None,
             expires_at: Some(past_ts(100)),
             token_type: None,
+            client: None,
         };
         m.save_token(&ProviderId::Gemini, tok).await.unwrap();
         let err = m.get_token(&ProviderId::Gemini).await.unwrap_err();
@@ -644,6 +645,7 @@ mod tests {
             refresh_token: Some("ref".into()),
             expires_at: Some(past_ts(100)),
             token_type: None,
+            client: None,
         };
         m.save_token(&ProviderId::Copilot, tok).await.unwrap();
 

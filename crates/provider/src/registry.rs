@@ -563,9 +563,6 @@ mod tests {
     #[test]
     fn test_model_lists_non_empty() {
         for provider in ProviderId::all() {
-            if *provider == ProviderId::Amp {
-                continue; // Amp is not a model provider
-            }
             let models = models_for_provider(provider);
             assert!(
                 !models.is_empty(),

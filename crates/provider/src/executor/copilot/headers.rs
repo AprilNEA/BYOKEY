@@ -1,24 +1,37 @@
-//! Request headers that present BYOKEY to GitHub as VS Code Copilot Chat.
+//! Request headers that present BYOKEY to GitHub as a Copilot client.
 //!
-//! Mirrors VS Code 1.139 / Copilot Chat 0.67 (`microsoft/vscode`,
+//! `OpenCode` mirrors `packages/opencode/src/plugin/github-copilot/copilot.ts`
+//! in `anomalyco/opencode`: a user agent, a pinned API version, and the
+//! per-request initiator, interaction and vision headers.
+//!
+//! VS Code mirrors VS Code 1.139 / Copilot Chat 0.67 (`microsoft/vscode`,
 //! `extensions/copilot`): `networkRequest` and `ChatMLFetcher` build the
 //! per-request headers, and `@vscode/copilot-api`'s `CAPIClient` mixes in the
-//! client identity and device ids last. Every Copilot request — OpenAI-format
-//! chat completions and the native Anthropic Messages passthrough alike — takes
-//! its headers from here, so the two paths cannot drift apart.
+//! client identity and device ids last.
+//!
+//! Every Copilot request — OpenAI-format chat completions and the native
+//! Anthropic Messages passthrough alike — takes its headers from here, so the
+//! two paths cannot drift apart.
 
+use super::CopilotCredentials;
 use super::device::{CopilotDevice, uuid_from};
 use crate::versions::ProviderVersions;
+use byokey_types::CopilotClient;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 // Compile-time fallbacks for when `assets.byokey.io/versions/copilot.json`
 // is unreachable. Keep them in step with that file.
+const DEFAULT_OPENCODE_VERSION: &str = "1.18.32";
+const DEFAULT_OPENCODE_API_VERSION: &str = "2026-06-01";
 const DEFAULT_USER_AGENT: &str = "GitHubCopilotChat/0.67.0";
 const DEFAULT_EDITOR_VERSION: &str = "vscode/1.139.0";
 const DEFAULT_PLUGIN_VERSION: &str = "copilot-chat/0.67.0";
 /// What `CAPIClient` stamps on chat requests, overriding the caller's value.
 const DEFAULT_API_VERSION: &str = "2026-08-01";
+
+/// `OpenCode`'s intent for every chat request.
+const OPENCODE_INTENT: &str = "conversation-edits";
 
 /// Pinned by `CopilotTokenManager` for the token and user-info calls.
 const GITHUB_REST_API_VERSION: &str = "2025-04-01";
@@ -28,11 +41,13 @@ const LIBRARY_VERSION: &str = "electron-fetch";
 /// `locationToIntent(ChatLocation.Agent)`. Also the `X-Interaction-Type`,
 /// since a proxy has no signal for the subagent/compaction/background
 /// overrides.
-const INTENT: &str = "conversation-agent";
+const VSCODE_INTENT: &str = "conversation-agent";
 
-/// The editor and extension versions a Copilot request claims to come from.
+/// The client versions a Copilot request claims to come from.
 #[derive(Clone, Debug)]
 pub struct CopilotIdentity {
+    opencode_user_agent: String,
+    opencode_api_version: String,
     user_agent: String,
     editor_version: String,
     plugin_version: String,
@@ -56,6 +71,11 @@ impl CopilotIdentity {
                 .unwrap_or_else(|| default.to_owned())
         };
         Self {
+            opencode_user_agent: format!(
+                "opencode/{}",
+                pick(|v| &v.opencode_version, DEFAULT_OPENCODE_VERSION)
+            ),
+            opencode_api_version: pick(|v| &v.opencode_api_version, DEFAULT_OPENCODE_API_VERSION),
             user_agent: pick(|v| &v.user_agent, DEFAULT_USER_AGENT),
             editor_version: pick(|v| &v.editor_version, DEFAULT_EDITOR_VERSION),
             plugin_version: pick(|v| &v.plugin_version, DEFAULT_PLUGIN_VERSION),
@@ -63,27 +83,78 @@ impl CopilotIdentity {
         }
     }
 
-    /// Headers for the `api.github.com` token and user-info calls. These go
-    /// through the fetcher alone, without `CAPIClient`'s editor headers.
-    pub(super) fn github_headers(&self) -> [(&'static str, &str); 3] {
-        [
-            ("user-agent", &self.user_agent),
-            ("x-github-api-version", GITHUB_REST_API_VERSION),
-            ("x-vscode-user-agent-library-version", LIBRARY_VERSION),
-        ]
+    /// Headers for the `api.github.com` token and user-info calls. VS Code
+    /// sends these through the fetcher alone, without `CAPIClient`'s editor
+    /// headers.
+    pub(super) fn github_headers(&self, client: CopilotClient) -> Vec<(&'static str, &str)> {
+        match client {
+            CopilotClient::OpenCode => vec![("user-agent", &self.opencode_user_agent)],
+            CopilotClient::VsCode => vec![
+                ("user-agent", &self.user_agent),
+                ("x-github-api-version", GITHUB_REST_API_VERSION),
+                ("x-vscode-user-agent-library-version", LIBRARY_VERSION),
+            ],
+        }
     }
 
-    /// Client identity sent on every Copilot API request.
+    /// Every header one Copilot API request attempt carries, besides
+    /// authorization and content negotiation.
     #[must_use]
-    pub fn api_headers(&self) -> [(&'static str, &str); 6] {
-        [
-            ("user-agent", &self.user_agent),
-            ("editor-version", &self.editor_version),
-            ("editor-plugin-version", &self.plugin_version),
-            ("copilot-integration-id", INTEGRATION_ID),
-            ("x-github-api-version", &self.api_version),
-            ("x-vscode-user-agent-library-version", LIBRARY_VERSION),
-        ]
+    pub fn request_headers(
+        &self,
+        creds: &CopilotCredentials,
+        conversation: &Conversation,
+    ) -> Vec<(&'static str, String)> {
+        let initiator = if conversation.user_initiated {
+            "user"
+        } else {
+            "agent"
+        };
+        let mut headers = match creds.client {
+            CopilotClient::OpenCode => vec![
+                ("user-agent", self.opencode_user_agent.clone()),
+                ("x-github-api-version", self.opencode_api_version.clone()),
+                ("openai-intent", OPENCODE_INTENT.to_owned()),
+                (
+                    "x-interaction-id",
+                    interaction_id(&creds.device, conversation.session),
+                ),
+                ("x-initiator", initiator.to_owned()),
+            ],
+            CopilotClient::VsCode => {
+                // Each attempt is its own request, so it gets a fresh request
+                // id, as `ChatMLFetcher` does per fetch.
+                let request_id = uuid::Uuid::new_v4().to_string();
+                let mut headers: Vec<_> = [
+                    ("user-agent", self.user_agent.as_str()),
+                    ("editor-version", &self.editor_version),
+                    ("editor-plugin-version", &self.plugin_version),
+                    ("copilot-integration-id", INTEGRATION_ID),
+                    ("x-github-api-version", &self.api_version),
+                    ("x-vscode-user-agent-library-version", LIBRARY_VERSION),
+                ]
+                .into_iter()
+                .chain(creds.device.headers())
+                .map(|(k, v)| (k, v.to_owned()))
+                .collect();
+                headers.extend([
+                    ("x-request-id", request_id.clone()),
+                    ("x-agent-task-id", request_id),
+                    ("openai-intent", VSCODE_INTENT.to_owned()),
+                    ("x-interaction-type", VSCODE_INTENT.to_owned()),
+                    (
+                        "x-interaction-id",
+                        interaction_id(&creds.device, conversation.turn),
+                    ),
+                    ("x-initiator", initiator.to_owned()),
+                ]);
+                headers
+            }
+        };
+        if conversation.vision {
+            headers.push(("copilot-vision-request", "true".to_owned()));
+        }
+        headers
     }
 }
 
@@ -94,8 +165,10 @@ impl CopilotIdentity {
 pub struct Conversation {
     user_initiated: bool,
     vision: bool,
-    /// Identifies the user turn; stable across its tool-loop iterations.
+    /// Identifies the conversation: VS Code mints an interaction per user
+    /// turn, `OpenCode` keys it by session.
     turn: [u8; 32],
+    session: [u8; 32],
 }
 
 impl Conversation {
@@ -106,40 +179,23 @@ impl Conversation {
             vision: messages
                 .iter()
                 .any(|m| m.get("content").is_some_and(has_image)),
-            turn: turn_anchor(messages),
+            turn: anchor(messages, messages.iter().rposition(is_user_prompt)),
+            session: anchor(messages, (!messages.is_empty()).then_some(0)),
         }
     }
+}
 
-    /// Headers for one HTTP attempt. Each attempt is its own request, so it
-    /// gets a fresh request id, as `ChatMLFetcher` does per fetch.
-    #[must_use]
-    pub fn headers(&self, device: &CopilotDevice) -> Vec<(&'static str, String)> {
-        let request_id = uuid::Uuid::new_v4().to_string();
-        let interaction_id = uuid_from(
-            &Sha256::new()
-                .chain_update(device.session_id())
-                .chain_update(self.turn)
-                .finalize()
-                .into(),
-        )
-        .to_string();
-
-        let mut headers = vec![
-            ("x-request-id", request_id.clone()),
-            ("x-agent-task-id", request_id),
-            ("openai-intent", INTENT.to_owned()),
-            ("x-interaction-type", INTENT.to_owned()),
-            ("x-interaction-id", interaction_id),
-            (
-                "x-initiator",
-                if self.user_initiated { "user" } else { "agent" }.to_owned(),
-            ),
-        ];
-        if self.vision {
-            headers.push(("copilot-vision-request", "true".to_owned()));
-        }
-        headers
-    }
+/// A UUID for `anchor`, scoped to the device's session so it does not
+/// repeat across accounts or processes.
+fn interaction_id(device: &CopilotDevice, anchor: [u8; 32]) -> String {
+    uuid_from(
+        &Sha256::new()
+            .chain_update(device.session_id())
+            .chain_update(anchor)
+            .finalize()
+            .into(),
+    )
+    .to_string()
 }
 
 /// Whether `message` is a prompt the user typed, as opposed to the agent loop
@@ -160,13 +216,13 @@ fn is_user_prompt(message: &Value) -> bool {
             })
 }
 
-/// Hash of the prompt that opened the current user turn and its position.
+/// Hash of the message at `opener` and its position.
 ///
-/// Every tool-loop iteration of a turn shares that prompt, so it keys the
-/// interaction id VS Code mints once per turn. `cache_control` markers are
-/// dropped first: agents move them between requests of the same turn.
-fn turn_anchor(messages: &[Value]) -> [u8; 32] {
-    let opener = messages.iter().rposition(is_user_prompt);
+/// Later requests of the same turn (opened by the last user prompt) or
+/// session (opened by the first message) resend that message unchanged, so
+/// the hash keys the interaction they belong to. `cache_control` markers are
+/// dropped first: agents move them between requests.
+fn anchor(messages: &[Value], opener: Option<usize>) -> [u8; 32] {
     let mut hasher = Sha256::new();
     if let Some(index) = opener {
         let mut prompt = messages[index].clone();
@@ -207,12 +263,24 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn device() -> CopilotDevice {
-        CopilotDevice::for_credential("ghu_test")
+    fn creds(client: CopilotClient) -> CopilotCredentials {
+        CopilotCredentials {
+            token: "ghu_test".to_owned(),
+            endpoint: "https://api.githubcopilot.com".to_owned(),
+            client,
+            device: CopilotDevice::for_credential("ghu_test"),
+        }
+    }
+
+    fn headers_as(client: CopilotClient, messages: &Value) -> Vec<(&'static str, String)> {
+        CopilotIdentity::default().request_headers(
+            &creds(client),
+            &Conversation::from_messages(messages.as_array().unwrap()),
+        )
     }
 
     fn headers(messages: &Value) -> Vec<(&'static str, String)> {
-        Conversation::from_messages(messages.as_array().unwrap()).headers(&device())
+        headers_as(CopilotClient::VsCode, messages)
     }
 
     fn get<'a>(headers: &'a [(&'static str, String)], name: &str) -> Option<&'a str> {
@@ -295,10 +363,52 @@ mod tests {
     }
 
     #[test]
+    fn opencode_keys_the_interaction_by_session_across_turns() {
+        let first = json!([{"role": "user", "content": "fix it"}]);
+        let next = json!([
+            {"role": "user", "content": "fix it"},
+            {"role": "assistant", "content": "done"},
+            {"role": "user", "content": "now test it"}
+        ]);
+        let other_session = json!([{"role": "user", "content": "write docs"}]);
+        let id =
+            |m| get(&headers_as(CopilotClient::OpenCode, m), "x-interaction-id").map(str::to_owned);
+        assert_eq!(id(&first), id(&next));
+        assert_ne!(id(&first), id(&other_session));
+    }
+
+    #[test]
+    fn opencode_does_not_claim_to_be_vscode() {
+        let h = headers_as(
+            CopilotClient::OpenCode,
+            &json!([{"role": "user", "content": "hi"}]),
+        );
+        assert_eq!(get(&h, "openai-intent"), Some(OPENCODE_INTENT));
+        assert!(get(&h, "user-agent").unwrap().starts_with("opencode/"));
+        for vscode_only in ["editor-version", "vscode-machineid", "x-request-id"] {
+            assert_eq!(get(&h, vscode_only), None, "{vscode_only}");
+        }
+    }
+
+    #[test]
+    fn opencode_marks_tool_loop_iterations_as_agent() {
+        let h = headers_as(
+            CopilotClient::OpenCode,
+            &json!([
+                {"role": "user", "content": "list files"},
+                {"role": "assistant", "tool_calls": [{"id": "c1", "type": "function",
+                    "function": {"name": "ls", "arguments": "{}"}}]},
+                {"role": "tool", "tool_call_id": "c1", "content": "a.rs"}
+            ]),
+        );
+        assert_eq!(get(&h, "x-initiator"), Some("agent"));
+    }
+
+    #[test]
     fn each_attempt_gets_its_own_request_id_mirrored_as_task_id() {
-        let conversation = Conversation::from_messages(&[json!({"role": "user", "content": "hi"})]);
-        let a = conversation.headers(&device());
-        let b = conversation.headers(&device());
+        let messages = json!([{"role": "user", "content": "hi"}]);
+        let a = headers(&messages);
+        let b = headers(&messages);
         assert_ne!(get(&a, "x-request-id"), get(&b, "x-request-id"));
         assert_eq!(get(&a, "x-request-id"), get(&a, "x-agent-task-id"));
     }
@@ -342,17 +452,29 @@ mod tests {
     fn runtime_versions_override_defaults_per_field() {
         let versions: ProviderVersions = serde_json::from_value(json!({
             "user_agent": "GitHubCopilotChat/9.9.9",
-            "github_api_version": "2099-01-01"
+            "github_api_version": "2099-01-01",
+            "opencode_version": "9.0.0"
         }))
         .unwrap();
         let id = CopilotIdentity::from_versions(Some(&versions));
-        let api = id.api_headers();
-        let get = |name| api.iter().find(|(k, _)| *k == name).map(|(_, v)| *v);
-        assert_eq!(get("user-agent"), Some("GitHubCopilotChat/9.9.9"));
-        assert_eq!(get("x-github-api-version"), Some("2099-01-01"));
-        assert_eq!(get("editor-version"), Some(DEFAULT_EDITOR_VERSION));
+        let api = id.request_headers(
+            &creds(CopilotClient::VsCode),
+            &Conversation::from_messages(&[]),
+        );
+        assert_eq!(get(&api, "user-agent"), Some("GitHubCopilotChat/9.9.9"));
+        assert_eq!(get(&api, "x-github-api-version"), Some("2099-01-01"));
+        assert_eq!(get(&api, "editor-version"), Some(DEFAULT_EDITOR_VERSION));
+        let opencode = id.request_headers(
+            &creds(CopilotClient::OpenCode),
+            &Conversation::from_messages(&[]),
+        );
+        assert_eq!(get(&opencode, "user-agent"), Some("opencode/9.0.0"));
+        assert_eq!(
+            get(&opencode, "x-github-api-version"),
+            Some(DEFAULT_OPENCODE_API_VERSION)
+        );
         // The REST calls keep their own pinned version.
-        let rest = id.github_headers();
+        let rest = id.github_headers(CopilotClient::VsCode);
         assert!(rest.contains(&("x-github-api-version", GITHUB_REST_API_VERSION)));
     }
 }

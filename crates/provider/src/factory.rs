@@ -168,7 +168,6 @@ pub fn make_executor_with_cache(
                 .maybe_user_agent(ua)
                 .build(),
         )),
-        ProviderId::Amp => None, // Amp is not a model provider
     }
 }
 

@@ -1,11 +1,9 @@
-pub mod amp;
 pub mod claude_code;
 pub mod model;
 pub mod payload;
 pub mod provider;
 pub mod runtime;
 
-pub use amp::AmpConfig;
 pub use claude_code::ClaudeCodeConfig;
 pub use model::ModelAlias;
 pub use payload::{PayloadFilterRule, PayloadRule, PayloadRules};
@@ -38,9 +36,6 @@ pub struct Config {
     /// Provider configuration map.
     #[serde(default)]
     pub providers: HashMap<ProviderId, ProviderConfig>,
-    /// `AmpCode` proxy integration configuration.
-    #[serde(default)]
-    pub amp: AmpConfig,
     /// Claude Code CLI integration configuration.
     #[serde(default)]
     pub claude_code: ClaudeCodeConfig,
@@ -80,7 +75,6 @@ impl Default for Config {
             port: default_port(),
             host: default_host(),
             providers: HashMap::new(),
-            amp: AmpConfig::default(),
             claude_code: ClaudeCodeConfig::default(),
             proxy_url: None,
             model_alias: HashMap::new(),

@@ -5,7 +5,7 @@ pub(crate) mod stream;
 use axum::{
     body::Body,
     http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
+    response::Response,
 };
 use byokey_types::ByokError;
 use serde_json::Value;
@@ -58,14 +58,6 @@ pub(crate) fn extract_usage(json: &Value, input_ptr: &str, output_ptr: &str) -> 
             .and_then(Value::as_u64)
             .unwrap_or(0),
     )
-}
-
-pub(crate) fn bad_gateway(e: impl std::fmt::Display) -> Response {
-    (
-        StatusCode::BAD_GATEWAY,
-        axum::Json(serde_json::json!({"error": {"message": e.to_string()}})),
-    )
-        .into_response()
 }
 
 pub(crate) fn sse_response(

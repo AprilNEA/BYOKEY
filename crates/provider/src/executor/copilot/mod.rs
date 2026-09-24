@@ -1,6 +1,8 @@
 //! GitHub Copilot executor — OpenAI-compatible API.
 //!
-//! Auth: device code flow → GitHub token → exchange for short-lived Copilot API token.
+//! Auth: device code flow → GitHub token. `OpenCode` tokens authenticate API
+//! requests directly; VS Code tokens are first exchanged for a short-lived
+//! Copilot API token.
 //! Format: `OpenAI` passthrough via `aigw::openai_compat` for URL/header/request building.
 //!         Streaming: raw byte passthrough (Option P). Non-streaming: aigw response translator.
 mod device;
@@ -19,7 +21,7 @@ use aigw_core::translate::{RequestTranslator as _, ResponseTranslator as _};
 use async_trait::async_trait;
 use byokey_auth::AuthManager;
 use byokey_types::{
-    AccountInfo, ByokError, ChatRequest, ProviderId, RateLimitStore,
+    AccountInfo, ByokError, ChatRequest, CopilotClient, OAuthToken, ProviderId, RateLimitStore,
     traits::{ProviderExecutor, ProviderResponse, Result},
 };
 use secrecy::SecretString;
@@ -69,7 +71,7 @@ const QUOTA_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 /// Default GitHub Copilot Chat Completions API base URL.
 const DEFAULT_BASE_URL: &str = "https://api.githubcopilot.com";
 
-/// Endpoint to exchange a GitHub OAuth token for a short-lived Copilot API token.
+/// Endpoint to exchange a VS Code GitHub token for a short-lived Copilot API token.
 const COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/token";
 
 /// Copilot usage/quota endpoint (returns `quota_snapshots`).
@@ -80,22 +82,22 @@ struct CachedToken {
     token: String,
     api_endpoint: String,
     expires_at: Instant,
-    /// `true` = Pro/Business/Enterprise, `false` = Free tier.
-    is_pro: bool,
 }
 
 /// Everything needed to send one Copilot API request as a given account.
 #[derive(Clone, Debug)]
 pub struct CopilotCredentials {
-    /// Short-lived Copilot API token.
+    /// Bearer token for the Copilot API.
     pub token: String,
     /// API base URL, without a path suffix.
     pub endpoint: String,
+    /// The client the requests present themselves as.
+    pub client: CopilotClient,
     /// The machine the account appears to be using.
     pub device: CopilotDevice,
 }
 
-/// GitHub token → short-lived Copilot API token.
+/// VS Code GitHub token → short-lived Copilot API token.
 ///
 /// Process-wide because executors are built per request; an instance-owned
 /// cache would never be hit and every request would re-run the exchange.
@@ -147,21 +149,46 @@ impl CopilotExecutor {
         }
     }
 
-    /// A GET against `api.github.com` authenticated with the GitHub token.
-    fn github_request(&self, url: &str, github_token: &str) -> wreq::RequestBuilder {
+    /// A GET against `api.github.com` authenticated with `client`'s GitHub token.
+    fn github_request(
+        &self,
+        url: &str,
+        client: CopilotClient,
+        github_token: &str,
+    ) -> wreq::RequestBuilder {
         let mut builder = self
             .ph
             .client()
             .get(url)
             .header("authorization", format!("token {github_token}"));
-        for (name, value) in self.identity.github_headers() {
+        for (name, value) in self.identity.github_headers(client) {
             builder = builder.header(name, value);
         }
         builder
     }
 
-    /// Exchange a GitHub token for a Copilot API token and cache the result.
-    ///
+    fn default_endpoint(&self) -> String {
+        self.base_url
+            .as_deref()
+            .unwrap_or(DEFAULT_BASE_URL)
+            .trim_end_matches('/')
+            .to_owned()
+    }
+
+    /// The credentials for requests as the account holding `token`.
+    async fn credentials_for(&self, token: &OAuthToken) -> Result<CopilotCredentials> {
+        match CopilotClient::of(token)? {
+            CopilotClient::OpenCode => Ok(CopilotCredentials {
+                token: token.access_token.clone(),
+                endpoint: self.default_endpoint(),
+                client: CopilotClient::OpenCode,
+                device: CopilotDevice::for_credential(&token.access_token),
+            }),
+            CopilotClient::VsCode => self.exchange_and_cache(&token.access_token).await,
+        }
+    }
+
+    /// Exchange a VS Code GitHub token for a Copilot API token and cache the result.
     async fn exchange_and_cache(&self, github_token: &str) -> Result<CopilotCredentials> {
         // Check cache first
         {
@@ -172,6 +199,7 @@ impl CopilotExecutor {
                 return Ok(CopilotCredentials {
                     token: cached.token.clone(),
                     endpoint: cached.api_endpoint.clone(),
+                    client: CopilotClient::VsCode,
                     device: CopilotDevice::for_credential(github_token),
                 });
             }
@@ -179,7 +207,7 @@ impl CopilotExecutor {
 
         // Exchange GitHub token for Copilot API token
         let resp = self
-            .github_request(COPILOT_TOKEN_URL, github_token)
+            .github_request(COPILOT_TOKEN_URL, CopilotClient::VsCode, github_token)
             .send()
             .await?;
 
@@ -213,19 +241,13 @@ impl CopilotExecutor {
             Duration::from_mins(25) // default TTL
         };
 
-        let default_base = self.base_url.as_deref().unwrap_or(DEFAULT_BASE_URL);
         let api_endpoint = json
             .pointer("/endpoints/api")
             .and_then(Value::as_str)
-            .unwrap_or(default_base)
-            .trim_end_matches('/')
-            .to_string();
-
-        // If "copilot_plan" is absent or not "copilot_free", assume Pro+.
-        let is_pro = json
-            .get("copilot_plan")
-            .and_then(Value::as_str)
-            .is_none_or(|plan| plan != "copilot_free");
+            .map_or_else(
+                || self.default_endpoint(),
+                |url| url.trim_end_matches('/').to_owned(),
+            );
 
         // Cache the new token
         {
@@ -236,7 +258,6 @@ impl CopilotExecutor {
                     token: api_token.clone(),
                     api_endpoint: api_endpoint.clone(),
                     expires_at: Instant::now() + ttl,
-                    is_pro,
                 },
             );
         }
@@ -244,26 +265,21 @@ impl CopilotExecutor {
         Ok(CopilotCredentials {
             token: api_token,
             endpoint: api_endpoint,
+            client: CopilotClient::VsCode,
             device: CopilotDevice::for_credential(github_token),
         })
-    }
-
-    /// Obtain a Copilot API token for a specific account.
-    async fn copilot_token_for_account(&self, account_id: &str) -> Result<CopilotCredentials> {
-        let github_token = self
-            .auth
-            .get_token_for(&ProviderId::Copilot, account_id)
-            .await?
-            .access_token;
-        self.exchange_and_cache(&github_token).await
     }
 
     /// Fetch quota snapshot for a single GitHub account.
     ///
     /// Returns `(percent_remaining, unlimited)` on success, `None` on any failure.
-    async fn fetch_quota(&self, github_token: &str) -> Option<(f64, bool)> {
+    async fn fetch_quota(&self, token: &OAuthToken) -> Option<(f64, bool)> {
         let resp = self
-            .github_request(COPILOT_USER_URL, github_token)
+            .github_request(
+                COPILOT_USER_URL,
+                CopilotClient::of(token).ok()?,
+                &token.access_token,
+            )
             .send()
             .await
             .ok()?;
@@ -303,7 +319,7 @@ impl CopilotExecutor {
             .get_token_for(&ProviderId::Copilot, account_id)
             .await
         {
-            Ok(t) => t.access_token,
+            Ok(t) => t,
             Err(e) => {
                 tracing::warn!(account_id, error = %e, "failed to get token for quota fetch");
                 return;
@@ -379,7 +395,7 @@ impl CopilotExecutor {
         Ok(best.account_id.clone())
     }
 
-    /// Force the next `copilot_token()` call to re-evaluate account selection.
+    /// Force the next `credentials()` call to re-evaluate account selection.
     ///
     /// # Panics
     ///
@@ -391,62 +407,43 @@ impl CopilotExecutor {
 
     /// Resolves the credentials for the next Copilot API request.
     ///
-    /// When `api_key` is set it is used directly (skip token exchange).
+    /// A configured `api_key` is a bearer token sent as the default client.
     /// With multiple accounts, selects the account with the most remaining quota.
     /// Otherwise falls back to the active account.
     ///
     /// # Errors
     ///
-    /// Returns [`ByokError::Auth`] if the token exchange fails.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal token cache mutex is poisoned.
-    pub async fn copilot_token(&self) -> Result<CopilotCredentials> {
+    /// Returns [`ByokError::Auth`] if no account is usable or the VS Code
+    /// token exchange fails.
+    pub async fn credentials(&self) -> Result<CopilotCredentials> {
         if let Some(key) = &self.api_key {
-            let endpoint = self
-                .base_url
-                .as_deref()
-                .unwrap_or(DEFAULT_BASE_URL)
-                .trim_end_matches('/')
-                .to_string();
             return Ok(CopilotCredentials {
                 token: key.clone(),
-                endpoint,
+                endpoint: self.default_endpoint(),
+                client: CopilotClient::default(),
                 device: CopilotDevice::for_credential(key),
             });
         }
 
         let accounts = self.auth.list_accounts(&ProviderId::Copilot).await?;
-
-        if accounts.len() > 1 {
+        let token = if accounts.len() > 1 {
             let account_id = self.select_account(&accounts).await?;
-            return self.copilot_token_for_account(&account_id).await;
-        }
-
-        // Single or no account: use active account (original behavior).
-        let github_token = self
-            .auth
-            .get_token(&ProviderId::Copilot)
-            .await?
-            .access_token;
-        self.exchange_and_cache(&github_token).await
+            self.auth
+                .get_token_for(&ProviderId::Copilot, &account_id)
+                .await?
+        } else {
+            self.auth.get_token(&ProviderId::Copilot).await?
+        };
+        self.credentials_for(&token).await
     }
 
     /// Builds an [`OpenAICompatProvider`] for a single request as `creds`' account.
     ///
-    /// The client identity and device ids go into `default_headers` so aigw
-    /// includes them in every request it builds. [`Conversation`] headers
-    /// depend on the request and are appended separately after translation.
-    fn build_provider(&self, creds: &CopilotCredentials) -> Result<OpenAICompatProvider> {
-        let mut default_headers: BTreeMap<String, String> = self
-            .identity
-            .api_headers()
-            .into_iter()
-            .chain(creds.device.headers())
-            .map(|(k, v)| (k.to_owned(), v.to_owned()))
-            .collect();
-        default_headers.insert("content-type".to_owned(), "application/json".to_owned());
+    /// Client headers depend on the request, so they are appended after
+    /// translation rather than set as `default_headers`.
+    fn build_provider(creds: &CopilotCredentials) -> Result<OpenAICompatProvider> {
+        let default_headers =
+            BTreeMap::from([("content-type".to_owned(), "application/json".to_owned())]);
 
         OpenAICompatProvider::new(OpenAICompatConfig {
             name: "copilot".to_owned(),
@@ -463,60 +460,6 @@ impl CopilotExecutor {
             quirks: Quirks::default(),
         })
         .map_err(|e| ByokError::Config(e.to_string()))
-    }
-
-    /// Returns `true` if any cached Copilot token belongs to a Pro/Business/Enterprise plan.
-    ///
-    /// With multiple accounts, returns `true` if **any** account is Pro+.
-    /// Defaults to `true` (Pro) if the plan cannot be determined (e.g. no cached token yet
-    /// or the `copilot_plan` field was absent in the token exchange response).
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal token cache mutex is poisoned.
-    pub async fn is_pro(&self) -> bool {
-        let accounts = self
-            .auth
-            .list_accounts(&ProviderId::Copilot)
-            .await
-            .unwrap_or_default();
-
-        if accounts.len() > 1 {
-            // Check all cached tokens: any Pro → true.
-            let cache = TOKEN_CACHE.lock().unwrap();
-            let now = Instant::now();
-            let mut found_any = false;
-            for cached in cache.values() {
-                if cached.expires_at > now {
-                    found_any = true;
-                    if cached.is_pro {
-                        return true;
-                    }
-                }
-            }
-            // If we found cached tokens but none are Pro, return false.
-            if found_any {
-                return false;
-            }
-            // No cached tokens yet: conservative default.
-            return true;
-        }
-
-        // Single account: original behavior.
-        if let Ok(github_token) = self
-            .auth
-            .get_token(&ProviderId::Copilot)
-            .await
-            .map(|t| t.access_token)
-        {
-            let cache = TOKEN_CACHE.lock().unwrap();
-            if let Some(cached) = cache.get(&github_token)
-                && cached.expires_at > Instant::now()
-            {
-                return cached.is_pro;
-            }
-        }
-        true // conservative default: assume Pro
     }
 }
 
@@ -545,7 +488,7 @@ impl ProviderExecutor for CopilotExecutor {
 
         let mut last_err = None;
         for attempt in 0..max_attempts {
-            let creds = match self.copilot_token().await {
+            let creds = match self.credentials().await {
                 Ok(c) => c,
                 Err(e) => {
                     if max_attempts > 1 {
@@ -559,7 +502,7 @@ impl ProviderExecutor for CopilotExecutor {
             };
 
             // Build aigw provider + translator for this account.
-            let provider = self.build_provider(&creds)?;
+            let provider = Self::build_provider(&creds)?;
             let translator = OpenAICompatRequestTranslator::new(&provider)
                 .map_err(|e| ByokError::Config(e.to_string()))?;
 
@@ -580,7 +523,7 @@ impl ProviderExecutor for CopilotExecutor {
                     builder = builder.header(name.as_str(), v);
                 }
             }
-            for (name, value) in conversation.headers(&creds.device) {
+            for (name, value) in self.identity.request_headers(&creds, &conversation) {
                 builder = builder.header(name, value);
             }
             // Attach the translated body (already serialized JSON bytes by aigw).
@@ -664,7 +607,6 @@ mod tests {
                 token: "copilot-api-token".to_owned(),
                 api_endpoint: "https://api.individual.githubcopilot.com".to_owned(),
                 expires_at: Instant::now() + Duration::from_mins(10),
-                is_pro: true,
             },
         );
 

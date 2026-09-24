@@ -21,7 +21,6 @@ use std::sync::Arc;
 /// sensitive-header blocklist. Matched case-insensitively.
 const EXTRA_SENSITIVE_HEADERS: &[&str] = &[
     "x-goog-api-key",
-    "x-amp-token",
     "api-key",
     "anthropic-version",
     "openai-organization",
