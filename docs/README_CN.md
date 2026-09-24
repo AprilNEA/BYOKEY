@@ -111,6 +111,17 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       <sub>glm-4.5<br>glm-z1-flash<br>kimi-k2</sub>
     </td>
   </tr>
+  <tr>
+    <td align="center" width="200" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="https://assets.byokey.io/icons/providers/cursor-dark.svg">
+        <img src="https://assets.byokey.io/icons/providers/cursor.svg" width="36" alt="Cursor">
+      </picture><br>
+      <b>Cursor</b><br>
+      <kbd>OAuth · API key</kbd><br>
+      <sub>claude-opus-5-5<br>gpt-5.6-sol<br>composer-2.5<br>……套餐内的全部模型</sub>
+    </td>
+  </tr>
 </table>
 
 ## 安装
@@ -210,7 +221,7 @@ Options:
 
 为指定 Provider 运行相应的 OAuth 流程。
 支持的名称：`claude`、`codex`、`copilot`、`gemini`、`kiro`、
-`antigravity`、`qwen`、`kimi`、`iflow`。
+`antigravity`、`qwen`、`kimi`、`iflow`、`cursor`。
 
 ```
 Options:
@@ -268,9 +279,19 @@ providers:
   # 仅 OAuth（无 api_key）— 先运行 `byokey login codex`
   codex:
     enabled: true
+
+  # cursor.com/dashboard 生成的 `crsr_…` Key，或运行 `byokey login cursor`
+  cursor:
+    api_key: "crsr_..."
 ```
 
 所有字段均可选；未指定的 Provider 默认启用，并使用数据库中存储的 OAuth Token。
+
+**Cursor** 提供 Cursor 套餐内的全部模型，包括 `claude-opus-5-5-high-fast`、
+`gpt-5.6-sol-low-fast` 这类变体。在 `/v1/chat/completions` 和 `/v1/messages`
+上都以 `cursor/<model>` 指定，例如
+`byokey claude start --model cursor/claude-opus-5-5-low-fast` 就会让 Claude Code
+走 Cursor。设置 `providers.claude.backend: cursor` 可以把 Claude Code 的全部请求都转给 Cursor。
 
 ## 贡献
 

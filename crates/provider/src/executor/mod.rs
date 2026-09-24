@@ -9,6 +9,7 @@ pub mod claude;
 pub mod codex;
 pub mod codex_ws;
 pub mod copilot;
+pub mod cursor;
 pub mod gemini;
 pub mod iflow;
 pub mod kimi;
@@ -22,6 +23,7 @@ pub use codex_ws::CodexWsExecutor;
 pub use copilot::{
     Conversation, CopilotCredentials, CopilotDevice, CopilotExecutor, CopilotIdentity,
 };
+pub use cursor::CursorExecutor;
 pub use gemini::GeminiExecutor;
 pub use iflow::IFlowExecutor;
 pub use kimi::KimiExecutor;

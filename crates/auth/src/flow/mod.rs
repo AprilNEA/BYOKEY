@@ -11,7 +11,7 @@ use byokey_types::{ByokError, CopilotClient, OAuthToken, ProviderId, Result};
 use tokio::sync::mpsc;
 
 use crate::AuthManager;
-use crate::provider::{antigravity, claude, codex, copilot, gemini, iflow, kimi, qwen};
+use crate::provider::{antigravity, claude, codex, copilot, cursor, gemini, iflow, kimi, qwen};
 
 /// Progress event emitted by streaming login flows.
 ///
@@ -106,6 +106,7 @@ pub async fn login_with_events(
         }
         ProviderId::Qwen => device_code::run(&qwen::Qwen::new(), auth, &http, account, ev).await,
         ProviderId::Kimi => device_code::run(&kimi::Kimi, auth, &http, account, ev).await,
+        ProviderId::Cursor => cursor::login(auth, &http, account, ev).await,
         ProviderId::Kiro => Err(ByokError::Auth(
             "Kiro OAuth login not yet implemented".into(),
         )),

@@ -338,6 +338,42 @@ const REGISTRY: &[ModelEntry] = &[
         id: "kimi-k2",
         providers: &[ProviderId::IFlow],
         thinking: None,
+    }, // Cursor: a sample of its live catalog. Any other Cursor model name is
+    // routed with a `cursor/` prefix.
+    ModelEntry {
+        id: "claude-opus-5-5",
+        providers: &[ProviderId::Cursor],
+        thinking: None,
+    },
+    ModelEntry {
+        id: "claude-opus-5-5-low-fast",
+        providers: &[ProviderId::Cursor],
+        thinking: None,
+    },
+    ModelEntry {
+        id: "claude-sonnet-5",
+        providers: &[ProviderId::Cursor],
+        thinking: None,
+    },
+    ModelEntry {
+        id: "gpt-5.6-sol",
+        providers: &[ProviderId::Cursor],
+        thinking: None,
+    },
+    ModelEntry {
+        id: "gpt-5.6-sol-low-fast",
+        providers: &[ProviderId::Cursor],
+        thinking: None,
+    },
+    ModelEntry {
+        id: "composer-2.5",
+        providers: &[ProviderId::Cursor],
+        thinking: None,
+    },
+    ModelEntry {
+        id: "composer-2.5-fast",
+        providers: &[ProviderId::Cursor],
+        thinking: None,
     },
 ];
 

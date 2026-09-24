@@ -111,6 +111,17 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       <sub>glm-4.5<br>glm-z1-flash<br>kimi-k2</sub>
     </td>
   </tr>
+  <tr>
+    <td align="center" width="200" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="https://assets.byokey.io/icons/providers/cursor-dark.svg">
+        <img src="https://assets.byokey.io/icons/providers/cursor.svg" width="36" alt="Cursor">
+      </picture><br>
+      <b>Cursor</b><br>
+      <kbd>OAuth · API key</kbd><br>
+      <sub>claude-opus-5-5<br>gpt-5.6-sol<br>composer-2.5<br>…every model on your plan</sub>
+    </td>
+  </tr>
 </table>
 
 ## Installation
@@ -218,7 +229,7 @@ the control socket. No process restart, no dropped connections.
 
 Runs the appropriate OAuth flow for the given provider.
 Supported names: `claude`, `codex`, `copilot`, `gemini`, `kiro`,
-`antigravity`, `qwen`, `kimi`, `iflow`.
+`antigravity`, `qwen`, `kimi`, `iflow`, `cursor`.
 
 ```
 Options:
@@ -276,10 +287,21 @@ providers:
   # OAuth-only (no api_key) — use `byokey login codex` first
   codex:
     enabled: true
+
+  # A `crsr_…` key from cursor.com/dashboard, or `byokey login cursor`
+  cursor:
+    api_key: "crsr_..."
 ```
 
 All fields are optional; unspecified providers are enabled by default and use
 the OAuth token stored in the database.
+
+**Cursor** serves every model on your Cursor plan, including variants such as
+`claude-opus-5-5-high-fast` or `gpt-5.6-sol-low-fast`. Name them as
+`cursor/<model>`, on `/v1/chat/completions` and `/v1/messages` alike, so
+`byokey claude start --model cursor/claude-opus-5-5-low-fast` runs Claude Code
+on Cursor. Set `providers.claude.backend: cursor` to send all of Claude Code's
+traffic there.
 
 ## Contributing
 

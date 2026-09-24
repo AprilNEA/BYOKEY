@@ -400,19 +400,10 @@ impl AuthManager {
             )));
         }
 
-        // Fetch credentials (client_id, client_secret, token_url) from CDN.
-        let provider_name = provider.to_string();
-        let creds = credentials::fetch(&provider_name, &self.http).await?;
-        let token_url = creds.token_url.as_deref().ok_or_else(|| {
-            ByokError::Auth(format!("no token_url in credentials for {provider}"))
-        })?;
-
-        // Build the refresh request.
-        let refresh_result = if *provider == ProviderId::IFlow {
-            self.refresh_iflow(&creds, token_url, refresh_token).await
+        let refresh_result = if *provider == ProviderId::Cursor {
+            crate::provider::cursor::exchange(&self.http, refresh_token).await
         } else {
-            self.refresh_standard(&creds, token_url, refresh_token)
-                .await
+            self.refresh_oauth(provider, refresh_token).await
         };
 
         let new_token = match refresh_result {
@@ -441,6 +432,28 @@ impl AuthManager {
         self.store.save(provider, &new_token).await?;
         tracing::info!(%provider, "token refreshed successfully");
         Ok(new_token)
+    }
+
+    /// Refresh through the provider's `OAuth2` token endpoint (from the CDN
+    /// credentials).
+    async fn refresh_oauth(
+        &self,
+        provider: &ProviderId,
+        refresh_token: &str,
+    ) -> Result<OAuthToken> {
+        // Fetch credentials (client_id, client_secret, token_url) from CDN.
+        let provider_name = provider.to_string();
+        let creds = credentials::fetch(&provider_name, &self.http).await?;
+        let token_url = creds.token_url.as_deref().ok_or_else(|| {
+            ByokError::Auth(format!("no token_url in credentials for {provider}"))
+        })?;
+
+        if *provider == ProviderId::IFlow {
+            self.refresh_iflow(&creds, token_url, refresh_token).await
+        } else {
+            self.refresh_standard(&creds, token_url, refresh_token)
+                .await
+        }
     }
 
     /// Standard `OAuth2` refresh: POST form with `grant_type=refresh_token`.

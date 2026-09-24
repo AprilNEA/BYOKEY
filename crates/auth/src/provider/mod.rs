@@ -10,6 +10,7 @@ pub mod claude_code;
 pub mod codex;
 pub mod codex_cli;
 pub mod copilot;
+pub mod cursor;
 pub mod gemini;
 pub mod iflow;
 pub mod kimi;

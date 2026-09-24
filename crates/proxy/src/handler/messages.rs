@@ -1,9 +1,10 @@
 //! Anthropic Messages API passthrough handler.
 //!
 //! Accepts requests in native Anthropic format and forwards them to
-//! either `api.anthropic.com/v1/messages` (default) or
+//! either `api.anthropic.com/v1/messages` (default),
 //! `api.githubcopilot.com/v1/messages` when `claude.backend: copilot`
-//! is configured.
+//! is configured, or Cursor (see [`super::cursor_messages`]) for
+//! `claude.backend: cursor` and `cursor/<model>` model names.
 //!
 //! The response (streaming SSE or complete JSON) is returned as-is.
 
@@ -285,6 +286,20 @@ pub async fn anthropic_messages(
 
     if claude_config.backend.as_ref() == Some(&ProviderId::Copilot) {
         return copilot_messages(&state, body, stream, &beta).await;
+    }
+
+    // Cursor: `claude.backend: cursor`, or a `cursor/<model>` model name.
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let (hint, bare) = byokey_provider::parse_qualified_model(&model);
+    if hint == Some(ProviderId::Cursor)
+        || claude_config.backend.as_ref() == Some(&ProviderId::Cursor)
+    {
+        let bare = bare.to_owned();
+        return super::cursor_messages::cursor_messages(&state, body, &bare, stream).await;
     }
 
     // Default: passthrough to Anthropic API.

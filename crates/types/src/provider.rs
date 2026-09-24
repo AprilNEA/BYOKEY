@@ -16,6 +16,7 @@ pub enum ProviderId {
     Qwen,
     Kimi,
     IFlow,
+    Cursor,
 }
 
 impl fmt::Display for ProviderId {
@@ -30,6 +31,7 @@ impl fmt::Display for ProviderId {
             Self::Qwen => write!(f, "qwen"),
             Self::Kimi => write!(f, "kimi"),
             Self::IFlow => write!(f, "iflow"),
+            Self::Cursor => write!(f, "cursor"),
         }
     }
 }
@@ -54,6 +56,7 @@ impl std::str::FromStr for ProviderId {
             "qwen" | "alibaba" => Ok(Self::Qwen),
             "kimi" | "moonshot" => Ok(Self::Kimi),
             "iflow" | "zai" | "glm" => Ok(Self::IFlow),
+            "cursor" => Ok(Self::Cursor),
             other => Err(crate::ByokError::UnsupportedProvider(other.to_string())),
         }
     }
@@ -73,6 +76,7 @@ impl ProviderId {
             Self::Qwen => "Qwen (Alibaba)",
             Self::Kimi => "Kimi (Moonshot)",
             Self::IFlow => "iFlow (Z.ai)",
+            Self::Cursor => "Cursor",
         }
     }
 
@@ -89,6 +93,7 @@ impl ProviderId {
             Self::Qwen,
             Self::Kimi,
             Self::IFlow,
+            Self::Cursor,
         ]
     }
 }
@@ -120,6 +125,7 @@ mod tests {
         assert_eq!(ProviderId::Qwen.to_string(), "qwen");
         assert_eq!(ProviderId::Kimi.to_string(), "kimi");
         assert_eq!(ProviderId::IFlow.to_string(), "iflow");
+        assert_eq!(ProviderId::Cursor.to_string(), "cursor");
     }
 
     #[test]
@@ -139,6 +145,7 @@ mod tests {
         assert_eq!(ProviderId::from_str("qwen").unwrap(), ProviderId::Qwen);
         assert_eq!(ProviderId::from_str("kimi").unwrap(), ProviderId::Kimi);
         assert_eq!(ProviderId::from_str("iflow").unwrap(), ProviderId::IFlow);
+        assert_eq!(ProviderId::from_str("cursor").unwrap(), ProviderId::Cursor);
     }
 
     #[test]
@@ -165,20 +172,10 @@ mod tests {
 
     #[test]
     fn test_serde_roundtrip() {
-        for p in [
-            ProviderId::Claude,
-            ProviderId::Codex,
-            ProviderId::Gemini,
-            ProviderId::Kiro,
-            ProviderId::Copilot,
-            ProviderId::Antigravity,
-            ProviderId::Qwen,
-            ProviderId::Kimi,
-            ProviderId::IFlow,
-        ] {
-            let json = serde_json::to_string(&p).unwrap();
+        for p in ProviderId::all() {
+            let json = serde_json::to_string(p).unwrap();
             let back: ProviderId = serde_json::from_str(&json).unwrap();
-            assert_eq!(back, p);
+            assert_eq!(&back, p);
         }
     }
 

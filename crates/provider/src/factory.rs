@@ -19,7 +19,8 @@ use wreq::Client;
 use crate::device_profile::DeviceProfileCache;
 use crate::executor::{
     AntigravityExecutor, ClaudeExecutor, CodexExecutor, CodexWsExecutor, CopilotExecutor,
-    CopilotIdentity, GeminiExecutor, IFlowExecutor, KimiExecutor, KiroExecutor, QwenExecutor,
+    CopilotIdentity, CursorExecutor, GeminiExecutor, IFlowExecutor, KimiExecutor, KiroExecutor,
+    QwenExecutor,
 };
 use crate::versions::VersionStore;
 use crate::{registry, retry};
@@ -156,6 +157,13 @@ pub fn make_executor_with_cache(
                 .maybe_base_url(base_url)
                 .maybe_ratelimit(ratelimit)
                 .maybe_user_agent(ua)
+                .build(),
+        )),
+        ProviderId::Cursor => Some(Box::new(
+            CursorExecutor::builder()
+                .http(http)
+                .auth(auth)
+                .maybe_api_key(api_key)
                 .build(),
         )),
         ProviderId::Kimi => Some(Box::new(
