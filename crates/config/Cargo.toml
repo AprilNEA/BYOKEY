@@ -23,5 +23,6 @@ anyhow.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-http.workspace = true
+
+[dev-dependencies]
 tempfile = "3"

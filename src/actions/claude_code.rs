@@ -1,34 +1,38 @@
+//! `byokey claude-code inject`: point Claude Code at BYOKEY.
+
 use anyhow::{Context as _, Result, bail};
-use byokey_config::{ClaudeCodeConfig, Config};
-use byokey_types::ProviderId;
+use byokey_config::Config;
 use clap::{Args, Subcommand};
 use serde_json::{Map, Value};
 use std::io::Write as _;
-use std::path::{Component, Path, PathBuf};
+use std::net::IpAddr;
+use std::path::{Path, PathBuf};
+
+const BASE_URL: &str = "ANTHROPIC_BASE_URL";
+const AUTH_TOKEN: &str = "ANTHROPIC_AUTH_TOKEN";
+/// BYOKEY ignores client credentials, but Claude Code needs one to be set.
+/// `ANTHROPIC_AUTH_TOKEN` does so without the approval prompt that
+/// `ANTHROPIC_API_KEY` triggers.
+const PLACEHOLDER_TOKEN: &str = "byokey";
 
 #[derive(Subcommand, Debug)]
 pub enum ClaudeCodeAction {
-    /// Point Claude Code at BYOKEY while preserving model and other settings.
+    /// Point Claude Code at BYOKEY, keeping its other settings.
     Inject(InjectArgs),
 }
 
 #[derive(Args, Debug)]
 pub struct InjectArgs {
-    /// BYOKEY configuration file (JSON or YAML; defaults to ~/.config/byokey/settings.json).
+    /// BYOKEY configuration file [default: ~/.config/byokey/settings.json].
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
-    /// Claude Code settings file (defaults to $CLAUDE_CONFIG_DIR/settings.json or ~/.claude/settings.json).
+    /// Claude Code settings file
+    /// [default: $CLAUDE_CONFIG_DIR/settings.json or ~/.claude/settings.json].
     #[arg(long, value_name = "FILE")]
     settings: Option<PathBuf>,
-    /// Proxy base URL, without /v1 (overrides configured URL and listen address).
+    /// BYOKEY base URL, without `/v1` [default: the configured listen address].
     #[arg(long)]
     url: Option<String>,
-    /// Also route Claude Messages through Copilot and add Claude Code model aliases.
-    #[arg(long, value_parser = ["copilot"], conflicts_with = "url")]
-    backend: Option<String>,
-    /// Disable experimental betas (automatic for a configured Copilot backend without --url).
-    #[arg(long)]
-    disable_experimental_betas: bool,
 }
 
 pub fn cmd_claude_code(action: ClaudeCodeAction) -> Result<()> {
@@ -38,257 +42,256 @@ pub fn cmd_claude_code(action: ClaudeCodeAction) -> Result<()> {
 }
 
 fn inject(args: InjectArgs) -> Result<()> {
-    let config_path = args
-        .config
-        .clone()
-        .map_or_else(byokey_daemon::paths::config_path, Ok)?;
-    let mut config = load_config(&config_path, args.config.is_some(), args.backend.is_some())?;
-    let settings_path = args.settings.map_or_else(
-        || {
-            ClaudeCodeConfig::default_settings_path()
-                .ok_or_else(|| anyhow::anyhow!("cannot determine Claude Code settings directory"))
+    let config = load_config(args.config)?;
+    let extras = &config.claude_code.settings;
+    let url = match args.url {
+        Some(url) => url,
+        None => match configured_url(extras)? {
+            Some(url) => url.to_owned(),
+            None => local_url(&config.host, config.port),
         },
-        Ok,
-    )?;
-    if same_file(&config_path, &settings_path) {
-        bail!("BYOKEY configuration and Claude Code settings must be different files");
-    }
+    };
+    validate_url(&url)?;
 
-    let backend_update = if args.backend.is_some() {
-        let update = BackendUpdate::prepare(&config_path)?;
-        config
-            .providers
-            .entry(ProviderId::Claude)
-            .or_default()
-            .backend = Some(ProviderId::Copilot);
-        Some(update)
+    let path = match args.settings {
+        Some(path) => path,
+        None => default_settings_path().context("cannot locate the Claude Code settings")?,
+    };
+    // Write through a symlink (e.g. from a dotfiles manager) to its target.
+    let path = if path.is_symlink() {
+        path.canonicalize()?
     } else {
-        None
+        path
     };
-    // An explicit URL can point at a different gateway with its own backend.
-    let copilot_backend = args.url.is_none()
-        && config
-            .providers
-            .get(&ProviderId::Claude)
-            .is_some_and(|provider| provider.backend == Some(ProviderId::Copilot));
-    let disable_betas = args.disable_experimental_betas || copilot_backend;
-    let url = config
-        .claude_code
-        .resolve_url(args.url.as_deref(), &config.host, config.port)?;
-
-    // Validate both documents before changing either one. In particular, a
-    // malformed Claude settings file must not leave behind a backend change.
-    config
-        .claude_code
-        .validate_injection(&url, &settings_path, disable_betas, copilot_backend)?;
-    if let Some(update) = &backend_update {
-        update.apply()?;
-    }
-    let injected = config
-        .claude_code
-        .inject(&url, &settings_path, disable_betas, copilot_backend);
-    let extras = match injected {
-        Ok(extras) => extras,
-        Err(error) => {
-            if let Some(update) = &backend_update {
-                update.rollback().context(
-                    "Claude Code injection failed and BYOKEY configuration could not be restored",
-                )?;
-            }
-            return Err(error);
-        }
+    let settings = match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .with_context(|| format!("invalid JSON in {}", path.display()))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Map::new(),
+        Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
     };
 
-    println!("ANTHROPIC_BASE_URL set to {url}");
-    println!("ANTHROPIC_API_KEY set to a local placeholder");
-    if disable_betas {
-        println!("CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS set to 1");
-    }
-    if copilot_backend {
-        println!("Copilot model aliases merged into modelOverrides");
-    }
-    if extras > 0 {
-        println!("merged {extras} extra setting(s) from claude_code.settings");
-    }
-    println!("config: {}", settings_path.display());
-    if backend_update.is_some() {
-        println!(
-            "Claude Messages backend set to copilot in {}",
-            config_path.display()
-        );
-        println!("Authenticate with `byokey login copilot` if needed.");
-        println!(
-            "Start BYOKEY, or restart an existing server with: byokey restart --config {}",
-            shell_quote(&config_path)
-        );
-    }
-    warn_auth_conflicts(&settings_path)?;
+    let merged = merge(settings, extras, &url)?;
+    let mut bytes = serde_json::to_vec_pretty(&merged)?;
+    bytes.push(b'\n');
+    write_atomic(&path, &bytes).with_context(|| format!("write {}", path.display()))?;
+
+    println!("Claude Code now uses BYOKEY at {url}: {}", path.display());
     println!("Restart Claude Code to apply the settings.");
     Ok(())
 }
 
-fn load_config(path: &Path, explicit: bool, create: bool) -> Result<Config> {
-    if path.exists() {
-        Config::from_file(path).with_context(|| format!("load BYOKEY config {}", path.display()))
-    } else if explicit && !create {
-        bail!("BYOKEY config does not exist: {}", path.display());
-    } else {
-        Ok(Config::default())
-    }
-}
-
-fn same_file(a: &Path, b: &Path) -> bool {
-    a == b
-        || destination_path(a)
-            .zip(destination_path(b))
-            .is_some_and(|(a, b)| a == b)
-}
-
-fn destination_path(path: &Path) -> Option<PathBuf> {
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir().ok()?.join(path)
+fn load_config(explicit: Option<PathBuf>) -> Result<Config> {
+    let path = match explicit {
+        Some(path) => path,
+        None => {
+            let path = byokey_daemon::paths::config_path()?;
+            if !path.exists() {
+                return Ok(Config::default());
+            }
+            path
+        }
     };
-    let mut resolved = PathBuf::new();
-    for component in absolute.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                resolved.pop();
-            }
-            component => {
-                resolved.push(component.as_os_str());
-                // Resolve existing ancestors before interpreting later `..`
-                // components, which may otherwise traverse the wrong symlink
-                // parent. Missing components are normalized until an existing
-                // ancestor is reached again.
-                if let Ok(canonical) = resolved.canonicalize() {
-                    resolved = canonical;
+    Config::from_file(&path).with_context(|| format!("load BYOKEY config {}", path.display()))
+}
+
+/// Merge BYOKEY's connection settings and the configured `extras` into
+/// Claude Code's `settings`, keeping everything else.
+fn merge(
+    mut settings: Map<String, Value>,
+    extras: &Map<String, Value>,
+    url: &str,
+) -> Result<Map<String, Value>> {
+    let extra_env = extra_env(extras)?;
+    for (key, value) in extras {
+        if key != "env" {
+            settings.insert(key.clone(), value.clone());
+        }
+    }
+
+    let Value::Object(env) = settings
+        .entry("env")
+        .or_insert_with(|| Value::Object(Map::new()))
+    else {
+        bail!("Claude Code settings `env` must be an object");
+    };
+    env.insert(AUTH_TOKEN.to_owned(), PLACEHOLDER_TOKEN.into());
+    if let Some(extra_env) = extra_env {
+        env.extend(extra_env.clone());
+    }
+    env.insert(BASE_URL.to_owned(), url.into());
+    Ok(settings)
+}
+
+/// `claude_code.settings.env`, which Claude Code requires to hold strings.
+fn extra_env(extras: &Map<String, Value>) -> Result<Option<&Map<String, Value>>> {
+    let Some(env) = extras.get("env") else {
+        return Ok(None);
+    };
+    let env = env
+        .as_object()
+        .context("claude_code.settings.env must be an object")?;
+    if let Some((key, _)) = env.iter().find(|(_, value)| !value.is_string()) {
+        bail!("claude_code.settings.env.{key} must be a string");
+    }
+    Ok(Some(env))
+}
+
+fn configured_url(extras: &Map<String, Value>) -> Result<Option<&str>> {
+    Ok(extra_env(extras)?.and_then(|env| env.get(BASE_URL)?.as_str()))
+}
+
+/// The address a local client reaches BYOKEY's listener at: a wildcard bind
+/// address becomes loopback.
+fn local_url(host: &str, port: u16) -> String {
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    let host = match host.parse::<IpAddr>() {
+        Ok(ip) if ip.is_unspecified() && ip.is_ipv4() => "127.0.0.1".to_owned(),
+        Ok(ip) if ip.is_unspecified() => "[::1]".to_owned(),
+        Ok(IpAddr::V6(ip)) => format!("[{ip}]"),
+        _ => host.to_owned(),
+    };
+    format!("http://{host}:{port}")
+}
+
+fn validate_url(url: &str) -> Result<()> {
+    let uri: wreq::Uri = url
+        .parse()
+        .with_context(|| format!("invalid base URL {url}"))?;
+    if !matches!(uri.scheme_str(), Some("http" | "https")) || uri.host().is_none() {
+        bail!("base URL must be an http(s) URL with a host: {url}");
+    }
+    Ok(())
+}
+
+fn default_settings_path() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|d| !d.is_empty()) {
+        return Some(PathBuf::from(dir).join("settings.json"));
+    }
+    std::env::home_dir().map(|home| home.join(".claude").join("settings.json"))
+}
+
+/// Replace `path` atomically, keeping its permissions.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let dir = path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let mut file = tempfile::NamedTempFile::new_in(dir)?;
+    if let Ok(metadata) = std::fs::metadata(path) {
+        file.as_file().set_permissions(metadata.permissions())?;
+    }
+    file.write_all(bytes)?;
+    file.as_file().sync_all()?;
+    file.persist(path)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn object(value: Value) -> Map<String, Value> {
+        match value {
+            Value::Object(map) => map,
+            _ => unreachable!("test fixture is an object"),
+        }
+    }
+
+    #[test]
+    fn merge_points_at_byokey_and_keeps_other_settings() {
+        let settings = object(json!({
+            "model": "claude-opus-5-5",
+            "permissions": {"allow": ["Read"]},
+            "env": {"KEEP": "1", "ANTHROPIC_BASE_URL": "https://old.example"}
+        }));
+        let merged = merge(settings, &Map::new(), "http://127.0.0.1:8018").unwrap();
+        assert_eq!(
+            Value::Object(merged),
+            json!({
+                "model": "claude-opus-5-5",
+                "permissions": {"allow": ["Read"]},
+                "env": {
+                    "KEEP": "1",
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:8018",
+                    "ANTHROPIC_AUTH_TOKEN": "byokey"
                 }
-            }
-        }
-    }
-    Some(resolved)
-}
-
-fn shell_quote(path: &Path) -> String {
-    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
-}
-
-fn warn_auth_conflicts(path: &Path) -> Result<()> {
-    let settings: Value = serde_json::from_slice(&std::fs::read(path)?)?;
-    let mut conflicts = Vec::new();
-    for name in ["ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"] {
-        if settings["env"][name]
-            .as_str()
-            .is_some_and(|value| !value.is_empty())
-            || std::env::var_os(name).is_some_and(|value| !value.is_empty())
-        {
-            conflicts.push(name);
-        }
-    }
-    if settings["apiKeyHelper"]
-        .as_str()
-        .is_some_and(|value| !value.is_empty())
-    {
-        conflicts.push("apiKeyHelper");
-    }
-    if !conflicts.is_empty() {
-        eprintln!(
-            "note: existing {} preserved; Claude Code may report conflicting credentials alongside ANTHROPIC_API_KEY",
-            conflicts.join(", ")
+            })
         );
     }
-    Ok(())
-}
 
-struct BackendUpdate {
-    path: PathBuf,
-    original: Option<Vec<u8>>,
-    contents: Vec<u8>,
-}
-
-impl BackendUpdate {
-    fn prepare(path: &Path) -> Result<Self> {
-        // Preserve symlinks used by dotfile managers, including their target's
-        // extension-independent format (the selected config path chooses it).
-        let target = match std::fs::symlink_metadata(path) {
-            Ok(metadata) if metadata.file_type().is_symlink() => path.canonicalize()?,
-            Ok(_) => path.to_path_buf(),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => path.to_path_buf(),
-            Err(error) => return Err(error.into()),
-        };
-        let original = match std::fs::read(&target) {
-            Ok(contents) => Some(contents),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error.into()),
-        };
-        let json = path
-            .extension()
-            .is_some_and(|extension| extension == "json");
-        let mut document: Value = match original.as_deref() {
-            Some(contents) if json => serde_json::from_slice(contents)?,
-            Some(contents) => serde_yaml::from_slice(contents)?,
-            None => Value::Object(Map::new()),
-        };
-        let root = document
-            .as_object_mut()
-            .ok_or_else(|| anyhow::anyhow!("BYOKEY configuration must be an object"))?;
-        let providers = object_entry(root, "providers")?;
-        let claude = object_entry(providers, "claude")?;
-        claude.insert("backend".into(), Value::String("copilot".into()));
-        let contents = if json {
-            format!("{}\n", serde_json::to_string_pretty(&document)?).into_bytes()
-        } else {
-            serde_yaml::to_string(&document)?.into_bytes()
-        };
-        Ok(Self {
-            path: target,
-            original,
-            contents,
-        })
+    #[test]
+    fn configured_extras_override_per_key_and_env_variable() {
+        let settings = object(json!({"model": "old", "env": {"KEEP": "1", "X": "old"}}));
+        let extras = object(json!({
+            "model": "new",
+            "env": {"X": "new", "ANTHROPIC_AUTH_TOKEN": "gateway-token"}
+        }));
+        let merged = Value::Object(merge(settings, &extras, "http://h:1").unwrap());
+        assert_eq!(merged["model"], "new");
+        assert_eq!(merged["env"]["KEEP"], "1");
+        assert_eq!(merged["env"]["X"], "new");
+        assert_eq!(merged["env"]["ANTHROPIC_AUTH_TOKEN"], "gateway-token");
     }
 
-    fn apply(&self) -> Result<()> {
-        atomic_write(&self.path, &self.contents)
-            .with_context(|| format!("save BYOKEY config {}", self.path.display()))
+    #[test]
+    fn configured_base_url_is_the_default_url() {
+        let extras = object(json!({"env": {"ANTHROPIC_BASE_URL": "https://gw.example"}}));
+        assert_eq!(configured_url(&extras).unwrap(), Some("https://gw.example"));
+        assert_eq!(configured_url(&Map::new()).unwrap(), None);
     }
 
-    fn rollback(&self) -> Result<()> {
-        if let Some(original) = &self.original {
-            atomic_write(&self.path, original)
-        } else {
-            std::fs::remove_file(&self.path).map_err(Into::into)
+    #[test]
+    fn malformed_env_is_rejected() {
+        let settings = object(json!({"env": "not an object"}));
+        assert!(merge(settings, &Map::new(), "http://h:1").is_err());
+        let extras = object(json!({"env": {"X": 1}}));
+        assert!(merge(Map::new(), &extras, "http://h:1").is_err());
+    }
+
+    #[test]
+    fn wildcard_listen_addresses_become_loopback() {
+        assert_eq!(local_url("0.0.0.0", 8018), "http://127.0.0.1:8018");
+        assert_eq!(local_url("::", 8018), "http://[::1]:8018");
+        assert_eq!(local_url("[::]", 8018), "http://[::1]:8018");
+        assert_eq!(local_url("2001:db8::1", 8018), "http://[2001:db8::1]:8018");
+        assert_eq!(local_url("localhost", 8018), "http://localhost:8018");
+    }
+
+    #[test]
+    fn only_http_urls_with_a_host_are_accepted() {
+        assert!(validate_url("http://127.0.0.1:8018").is_ok());
+        assert!(validate_url("https://gw.example/proxy").is_ok());
+        for bad in ["localhost:8018", "ftp://host", "http:///path", ""] {
+            assert!(validate_url(bad).is_err(), "{bad}");
         }
     }
-}
 
-fn object_entry<'a>(
-    object: &'a mut Map<String, Value>,
-    key: &str,
-) -> Result<&'a mut Map<String, Value>> {
-    object
-        .entry(key.to_string())
-        .or_insert_with(|| Value::Object(Map::new()))
-        .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("BYOKEY configuration {key} must be an object"))
-}
+    #[cfg(unix)]
+    #[test]
+    fn write_keeps_permissions_symlink_and_key_order() {
+        use std::os::unix::fs::{PermissionsExt as _, symlink};
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.json");
+        let link = dir.path().join("settings.json");
+        std::fs::write(&target, r#"{"zeta": 1, "alpha": 2}"#).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+        symlink(&target, &link).unwrap();
 
-fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    std::fs::create_dir_all(parent)?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    if let Ok(metadata) = std::fs::metadata(path) {
-        temporary
-            .as_file()
-            .set_permissions(metadata.permissions())?;
+        let settings: Map<String, Value> =
+            serde_json::from_slice(&std::fs::read(&link).unwrap()).unwrap();
+        let merged = merge(settings, &Map::new(), "http://h:1").unwrap();
+        write_atomic(
+            &link.canonicalize().unwrap(),
+            &serde_json::to_vec(&merged).unwrap(),
+        )
+        .unwrap();
+
+        assert!(link.is_symlink());
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        let written = std::fs::read_to_string(&target).unwrap();
+        assert!(written.find("zeta") < written.find("alpha"), "{written}");
     }
-    temporary.write_all(contents)?;
-    temporary.flush()?;
-    temporary.persist(path)?;
-    Ok(())
 }
