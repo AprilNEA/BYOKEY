@@ -424,6 +424,22 @@ fn build_copilot_messages_request(
     builder.json(body)
 }
 
+/// Drop request fields Copilot's `/v1/messages` rejects with "Extra inputs
+/// are not permitted": the per-message `output_config` of the
+/// `per-turn-control` beta and the top-level `safeguards`, both of which
+/// Claude Code sends by default.
+fn strip_copilot_unsupported(body: &mut Value) {
+    let Some(body) = body.as_object_mut() else {
+        return;
+    };
+    body.remove("safeguards");
+    if let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) {
+        for message in messages.iter_mut().filter_map(Value::as_object_mut) {
+            message.remove("output_config");
+        }
+    }
+}
+
 /// Route Anthropic-format request to Copilot's native `/v1/messages` endpoint.
 ///
 /// Copilot provides a native Anthropic-compatible Messages API at
@@ -440,10 +456,11 @@ fn build_copilot_messages_request(
 ))]
 async fn copilot_messages(
     state: &Arc<AppState>,
-    body: Value,
+    mut body: Value,
     stream: bool,
     beta: &str,
 ) -> Result<Response, ApiError> {
+    strip_copilot_unsupported(&mut body);
     let copilot_config = state
         .config
         .load()
@@ -696,6 +713,33 @@ async fn forward_response(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn copilot_request_drops_fields_copilot_rejects_and_keeps_the_rest() {
+        let mut body = json!({
+            "model": "claude-fable-5-1",
+            "safeguards": {"mode": "default"},
+            "output_config": {"effort": "high"},
+            "context_management": {"edits": []},
+            "messages": [
+                {"role": "user", "content": "hi", "output_config": {"effort": "low"}},
+                {"role": "assistant", "content": "hello"}
+            ]
+        });
+        strip_copilot_unsupported(&mut body);
+        assert_eq!(
+            body,
+            json!({
+                "model": "claude-fable-5-1",
+                "output_config": {"effort": "high"},
+                "context_management": {"edits": []},
+                "messages": [
+                    {"role": "user", "content": "hi"},
+                    {"role": "assistant", "content": "hello"}
+                ]
+            })
+        );
+    }
 
     // ── sanitize_thinking: tool_choice conflict ────────────────────────
 
