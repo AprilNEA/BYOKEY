@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0](https://github.com/AprilNEA/BYOKEY/compare/v2.0.0...v2.1.0) - 2026-09-24
+
+### Added
+
+- *(cursor)* add Cursor provider
+- *(cli)* add `byokey claude start` to launch Claude Code against BYOKEY
+
+### Fixed
+
+- *(proxy)* drop request fields Copilot's Messages API rejects
+
+### Other
+
+- *(deps)* bump aigw to 0.7.0
+
 ## [2.0.0](https://github.com/AprilNEA/BYOKEY/compare/v1.5.0...v2.0.0) - 2026-09-24
 
 ### Breaking
