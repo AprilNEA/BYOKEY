@@ -849,7 +849,7 @@ checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 
 [[package]]
 name = "byokey"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -879,7 +879,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-auth"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -902,7 +902,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-config"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -919,7 +919,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-daemon"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "futures-util",
  "serde",
@@ -933,7 +933,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-proto"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "buffa",
  "buffa-types",
@@ -947,7 +947,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-provider"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "aigw",
  "aigw-core",
@@ -984,7 +984,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-proxy"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "aigw",
  "aigw-core",
@@ -1021,7 +1021,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-store"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1038,7 +1038,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-tui"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "anyhow",
  "byokey-proto",
@@ -1049,7 +1049,7 @@ dependencies = [
 
 [[package]]
 name = "byokey-types"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "async-trait",
  "bytes",

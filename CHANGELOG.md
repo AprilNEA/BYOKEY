@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1](https://github.com/AprilNEA/BYOKEY/compare/v1.5.0...v1.5.1) - 2026-09-24
+
+### Other
+
+- remove Amp support
+
 ## [1.5.0](https://github.com/AprilNEA/BYOKEY/compare/v1.4.1...v1.5.0) - 2026-09-24
 
 ### Added
