@@ -210,42 +210,6 @@ impl UsageParser for CodexParser {
     }
 }
 
-pub(crate) struct GeminiParser {
-    input: u64,
-    output: u64,
-}
-
-impl GeminiParser {
-    pub(crate) fn new() -> Self {
-        Self {
-            input: 0,
-            output: 0,
-        }
-    }
-}
-
-impl UsageParser for GeminiParser {
-    fn parse_line(&mut self, ev: &Value) {
-        if ev.get("usageMetadata").is_some() {
-            if let Some(v) = ev
-                .pointer("/usageMetadata/promptTokenCount")
-                .and_then(Value::as_u64)
-            {
-                self.input = v;
-            }
-            if let Some(v) = ev
-                .pointer("/usageMetadata/candidatesTokenCount")
-                .and_then(Value::as_u64)
-            {
-                self.output = v;
-            }
-        }
-    }
-    fn finish(self) -> (u64, u64) {
-        (self.input, self.output)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

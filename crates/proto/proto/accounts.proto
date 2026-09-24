@@ -17,7 +17,7 @@ service AccountsService {
   // completes or fails. Clients should keep the stream open to receive
   // the stage progression below.
   //
-  // Stage progression (Auth Code flow — Claude, Codex, Gemini, Amp, etc.):
+  // Stage progression (Auth Code flow — Claude, Codex, Gemini, etc.):
   //   STARTED → OPENED_BROWSER → EXCHANGING → DONE/FAILED
   //
   // Stage progression (Device Code flow — Copilot, Qwen, Kimi):

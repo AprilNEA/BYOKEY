@@ -1,9 +1,8 @@
 //! BYOKEY management `ConnectRPC` services.
 //!
-//! Three services split by domain:
+//! Two services split by domain:
 //! - [`StatusServiceImpl`] — server health, usage, rate limits
 //! - [`AccountsServiceImpl`] — provider account CRUD
-//! - [`AmpServiceImpl`] — local Amp CLI thread browsing
 
 // The generated ConnectRPC traits return `impl Future`, so a handler that
 // happens to be synchronous today still declares `async fn` to match the
@@ -25,33 +24,26 @@
 use std::sync::Arc;
 
 use buffa::MessageField;
-use buffa_types::google::protobuf::value::Kind;
-use buffa_types::google::protobuf::{ListValue, NullValue, Struct, Value};
 use connectrpc::{
     ConnectError, RequestContext, Response, Router as ConnectRouter, ServiceRequest, ServiceResult,
 };
-use serde_json::Value as JsonValue;
 
 use byokey_proto::byokey::accounts as acct;
-use byokey_proto::byokey::amp as amp_pb;
 use byokey_proto::byokey::status as stat;
 
 use crate::AppState;
-use crate::handler::amp::threads as internal_threads;
 
 // ───────────────────────── public entry point ─────────────────────
 
-/// Build a [`ConnectRouter`] with all three management services registered.
+/// Build a [`ConnectRouter`] with all management services registered.
 #[must_use]
 pub fn build_router(state: Arc<AppState>) -> ConnectRouter {
     use acct::AccountsServiceExt as _;
-    use amp_pb::AmpServiceExt as _;
     use stat::StatusServiceExt as _;
 
     let router = ConnectRouter::new();
     let router = Arc::new(StatusServiceImpl(state.clone())).register(router);
-    let router = Arc::new(AccountsServiceImpl(state.clone())).register(router);
-    Arc::new(AmpServiceImpl(state)).register(router)
+    Arc::new(AccountsServiceImpl(state)).register(router)
 }
 
 // ───────────────────────── helpers ────────────────────────────────
@@ -69,51 +61,6 @@ fn byok_to_connect_error(e: &byokey_types::ByokError) -> ConnectError {
         }
         ByokError::ProviderUnavailable(_) => ConnectError::unavailable(msg),
         _ => ConnectError::internal(msg),
-    }
-}
-
-fn json_to_pb_value(v: JsonValue) -> Value {
-    let kind = match v {
-        JsonValue::Null => Kind::NullValue(NullValue::NULL_VALUE.into()),
-        JsonValue::Bool(b) => Kind::BoolValue(b),
-        JsonValue::Number(n) => Kind::NumberValue(n.as_f64().unwrap_or(0.0)),
-        JsonValue::String(s) => Kind::StringValue(s),
-        JsonValue::Array(arr) => {
-            let values = arr.into_iter().map(json_to_pb_value).collect();
-            Kind::ListValue(Box::new(ListValue {
-                values,
-                ..Default::default()
-            }))
-        }
-        JsonValue::Object(map) => {
-            let fields = map
-                .into_iter()
-                .map(|(k, v)| (k, json_to_pb_value(v)))
-                .collect();
-            Kind::StructValue(Box::new(Struct {
-                fields,
-                ..Default::default()
-            }))
-        }
-    };
-    Value {
-        kind: Some(kind),
-        ..Default::default()
-    }
-}
-
-fn json_to_pb_struct(v: JsonValue) -> Struct {
-    if let JsonValue::Object(map) = v {
-        let fields = map
-            .into_iter()
-            .map(|(k, v)| (k, json_to_pb_value(v)))
-            .collect();
-        Struct {
-            fields,
-            ..Default::default()
-        }
-    } else {
-        Struct::default()
     }
 }
 
@@ -659,208 +606,6 @@ fn progress_to_pb(p: &byokey_auth::flow::LoginProgress) -> acct::LoginEvent {
         error: None,
         user_code,
         ..Default::default()
-    }
-}
-
-// ═══════════════════════ AmpService ══════════════════════════════
-
-struct AmpServiceImpl(Arc<AppState>);
-
-fn to_pb_summary(s: &internal_threads::AmpThreadSummary) -> amp_pb::ThreadSummary {
-    amp_pb::ThreadSummary {
-        id: s.id.clone(),
-        created: s.created,
-        title: s.title.clone(),
-        message_count: clamp_to_u32(s.message_count),
-        agent_mode: s.agent_mode.clone(),
-        last_model: s.last_model.clone(),
-        total_input_tokens: s.total_input_tokens,
-        total_output_tokens: s.total_output_tokens,
-        file_size_bytes: s.file_size_bytes,
-        ..Default::default()
-    }
-}
-
-fn to_pb_content_block(b: internal_threads::AmpContentBlock) -> amp_pb::ContentBlock {
-    use amp_pb::content_block::Block;
-    let block = Some(match b {
-        internal_threads::AmpContentBlock::Text { text } => Block::Text(text),
-        internal_threads::AmpContentBlock::Thinking { thinking } => Block::Thinking(thinking),
-        internal_threads::AmpContentBlock::ToolUse { id, name, input } => {
-            Block::ToolUse(Box::new(amp_pb::ToolUse {
-                id,
-                name,
-                input: MessageField::some(json_to_pb_struct(input)),
-                ..Default::default()
-            }))
-        }
-        internal_threads::AmpContentBlock::ToolResult { tool_use_id, run } => {
-            Block::ToolResult(Box::new(amp_pb::ToolResult {
-                tool_use_id,
-                run: MessageField::some(amp_pb::ToolRun {
-                    status: run.status,
-                    result: run.result.map(json_to_pb_value).into(),
-                    error: run.error.map(json_to_pb_value).into(),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }))
-        }
-        internal_threads::AmpContentBlock::Unknown { original_type } => {
-            Block::UnknownType(original_type.unwrap_or_default())
-        }
-    });
-    amp_pb::ContentBlock {
-        block,
-        ..Default::default()
-    }
-}
-
-fn to_pb_message(m: internal_threads::AmpMessage) -> amp_pb::Message {
-    amp_pb::Message {
-        role: m.role,
-        message_id: m.message_id,
-        content: m.content.into_iter().map(to_pb_content_block).collect(),
-        usage: m
-            .usage
-            .map(|u| amp_pb::Usage {
-                model: u.model,
-                input_tokens: u.input_tokens,
-                output_tokens: u.output_tokens,
-                cache_creation_input_tokens: u.cache_creation_input_tokens,
-                cache_read_input_tokens: u.cache_read_input_tokens,
-                total_input_tokens: u.total_input_tokens,
-                ..Default::default()
-            })
-            .into(),
-        state: m
-            .state
-            .map(|s| amp_pb::MessageState {
-                state_type: s.state_type,
-                stop_reason: s.stop_reason,
-                ..Default::default()
-            })
-            .into(),
-        ..Default::default()
-    }
-}
-
-fn to_pb_detail(d: internal_threads::AmpThreadDetail) -> amp_pb::ThreadDetail {
-    amp_pb::ThreadDetail {
-        id: d.id,
-        v: d.v,
-        created: d.created,
-        title: d.title,
-        agent_mode: d.agent_mode,
-        messages: d.messages.into_iter().map(to_pb_message).collect(),
-        relationships: d
-            .relationships
-            .into_iter()
-            .map(|r| amp_pb::Relationship {
-                thread_id: r.thread_id,
-                rel_type: r.rel_type,
-                role: r.role,
-                ..Default::default()
-            })
-            .collect(),
-        env: d.env.map(json_to_pb_struct).into(),
-        ..Default::default()
-    }
-}
-
-impl amp_pb::AmpService for AmpServiceImpl {
-    async fn list_threads(
-        &self,
-        _ctx: RequestContext,
-        request: ServiceRequest<'_, amp_pb::ListThreadsRequest>,
-    ) -> ServiceResult<amp_pb::ListThreadsResponse> {
-        let req = request.to_owned_message();
-        let all = self.0.amp_threads.list();
-        let want_messages = req.has_messages.unwrap_or(true);
-        let filtered: Vec<_> = all
-            .iter()
-            .filter(|s| !want_messages || s.message_count > 0)
-            .collect();
-        let total = filtered.len();
-        let limit = usize::try_from(req.limit.unwrap_or(50))
-            .unwrap_or(50)
-            .min(200);
-        let offset = usize::try_from(req.offset.unwrap_or(0))
-            .unwrap_or(0)
-            .min(total);
-        let threads = filtered
-            .into_iter()
-            .skip(offset)
-            .take(limit)
-            .map(to_pb_summary)
-            .collect();
-        Response::ok(amp_pb::ListThreadsResponse {
-            threads,
-            total: clamp_to_u32(total),
-            ..Default::default()
-        })
-    }
-
-    async fn get_thread(
-        &self,
-        _ctx: RequestContext,
-        request: ServiceRequest<'_, amp_pb::GetThreadRequest>,
-    ) -> ServiceResult<amp_pb::GetThreadResponse> {
-        let req = request.to_owned_message();
-        if !internal_threads::is_valid_thread_id(&req.id) {
-            return Err(ConnectError::invalid_argument("invalid thread ID format"));
-        }
-        let path = internal_threads::threads_dir().join(format!("{}.json", req.id));
-        #[allow(clippy::result_large_err)]
-        let detail = tokio::task::spawn_blocking(move || {
-            if !path.exists() {
-                return Err(ConnectError::not_found("thread not found"));
-            }
-            internal_threads::parse_detail(&path).map_err(|e| {
-                tracing::error!(error = %e, "failed to parse amp thread");
-                ConnectError::internal("failed to parse thread")
-            })
-        })
-        .await
-        .map_err(|e| ConnectError::internal(format!("spawn_blocking failed: {e}")))??;
-        Response::ok(amp_pb::GetThreadResponse {
-            thread: MessageField::some(to_pb_detail(detail)),
-            ..Default::default()
-        })
-    }
-
-    async fn inject_url(
-        &self,
-        _ctx: RequestContext,
-        request: ServiceRequest<'_, amp_pb::InjectUrlRequest>,
-    ) -> ServiceResult<amp_pb::InjectUrlResponse> {
-        let req = request.to_owned_message();
-        let snapshot = self.0.config.load();
-        let resolved_url =
-            snapshot
-                .amp
-                .resolve_url(req.url.as_deref(), &snapshot.host, snapshot.port);
-        let settings_path = byokey_config::AmpConfig::default_settings_path()
-            .ok_or_else(|| ConnectError::internal("cannot determine HOME directory"))?;
-
-        let amp_cfg = snapshot.amp.clone();
-        let settings_path_for_spawn = settings_path.clone();
-        let resolved_url_for_spawn = resolved_url.clone();
-        #[allow(clippy::result_large_err)]
-        let extras = tokio::task::spawn_blocking(move || {
-            amp_cfg
-                .inject(&resolved_url_for_spawn, &settings_path_for_spawn)
-                .map_err(|e| ConnectError::internal(format!("inject failed: {e}")))
-        })
-        .await
-        .map_err(|e| ConnectError::internal(format!("spawn_blocking failed: {e}")))??;
-
-        Response::ok(amp_pb::InjectUrlResponse {
-            resolved_url,
-            settings_path: settings_path.display().to_string(),
-            extras_merged: clamp_to_u32(extras),
-            ..Default::default()
-        })
     }
 }
 

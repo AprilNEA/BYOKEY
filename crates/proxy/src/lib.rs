@@ -2,7 +2,7 @@
 //!
 //! ## Module layout
 //!
-//! - [`handler`]  — HTTP route handlers (API, Amp, management).
+//! - [`handler`]  — HTTP route handlers (API, management).
 //! - [`router`]   — Axum router construction and route registration.
 //! - [`error`]    — [`ApiError`] type for OpenAI-compatible error responses.
 //! - [`openapi`]  — `OpenAPI` specification generation.
@@ -19,7 +19,6 @@ pub(crate) mod util;
 
 pub use byokey_provider::VersionStore;
 pub use error::ApiError;
-pub use handler::amp::threads::AmpThreadIndex;
 pub use openapi::ApiDoc;
 pub use router::make_router;
 pub use usage::{UsageRecorder, UsageStats};
@@ -45,8 +44,6 @@ pub struct AppState {
     pub ratelimits: Arc<RateLimitStore>,
     /// Per-auth device fingerprint cache for Claude API headers.
     pub device_profiles: Arc<DeviceProfileCache>,
-    /// Pre-built, file-watched index of local Amp CLI thread summaries.
-    pub amp_threads: Arc<AmpThreadIndex>,
     /// Remote version/fingerprint info fetched from assets.byokey.io at startup.
     pub versions: VersionStore,
 }
@@ -62,21 +59,6 @@ impl AppState {
         usage_store: Option<Arc<dyn UsageStore>>,
         versions: VersionStore,
     ) -> Arc<Self> {
-        Self::with_thread_index(config, auth, usage_store, versions, {
-            let idx = Arc::new(AmpThreadIndex::build());
-            idx.watch();
-            idx
-        })
-    }
-
-    /// Create state with a pre-built thread index (avoids filesystem scan in tests).
-    pub fn with_thread_index(
-        config: Arc<ArcSwap<byokey_config::Config>>,
-        auth: Arc<AuthManager>,
-        usage_store: Option<Arc<dyn UsageStore>>,
-        versions: VersionStore,
-        amp_threads: Arc<AmpThreadIndex>,
-    ) -> Arc<Self> {
         let snapshot = config.load();
         let http = build_http_client(snapshot.proxy_url.as_deref());
         Arc::new(Self {
@@ -86,7 +68,6 @@ impl AppState {
             usage: Arc::new(UsageRecorder::new(usage_store)),
             ratelimits: Arc::new(RateLimitStore::new()),
             device_profiles: Arc::new(DeviceProfileCache::new()),
-            amp_threads,
             versions,
         })
     }

@@ -1,18 +1,16 @@
 //! Axum router construction and route registration.
 //!
-//! All traffic — standard REST AI proxy, Amp CLI compatibility, and
-//! `ConnectRPC` management — is served from a single router on one port.
-//! The `ConnectRPC` management services are mounted as the router's
-//! `fallback_service`, so POST requests to
-//! `/byokey.status.StatusService/{Method}`,
-//! `/byokey.accounts.AccountsService/{Method}`, or
-//! `/byokey.amp.AmpService/{Method}` land there while
-//! named routes (amp, REST AI) take priority.
+//! All traffic — the REST AI proxy and `ConnectRPC` management — is served
+//! from a single router on one port. The `ConnectRPC` management services
+//! are mounted as the router's `fallback_service`, so POST requests to
+//! `/byokey.status.StatusService/{Method}` or
+//! `/byokey.accounts.AccountsService/{Method}` land there while the named
+//! REST routes take priority.
 
 use axum::extract::DefaultBodyLimit;
 use axum::{
     Router, http, middleware,
-    routing::{any, get, post},
+    routing::{get, post},
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,7 +21,7 @@ use tower_http::request_id::{
 use tower_http::trace::TraceLayer;
 use tracing::{Span, info_span};
 
-use crate::handler::{amp, chat, management, messages, models};
+use crate::handler::{chat, management, messages, models, responses};
 use crate::{AppState, openapi};
 
 fn common_layers(router: Router) -> Router {
@@ -86,55 +84,14 @@ fn common_layers(router: Router) -> Router {
 /// - `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/v1/models`
 ///   — `OpenAI` / Anthropic compatible REST AI.
 /// - `/openapi.json` — REST `OpenAPI` spec (AI endpoints only).
-/// - `/auth/cli-login`, `/v1/login` — amp CLI login redirects to
-///   `ampcode.com`.
-/// - `/api/provider/*` — amp CLI's provider-namespaced AI endpoints.
-/// - `/api/{*path}`, `/v0/management/{*path}` — catch-all proxies to
-///   `ampcode.com` used by the amp CLI.
 /// - `/byokey.status.StatusService/{Method}`,
-///   `/byokey.accounts.AccountsService/{Method}`,
-///   `/byokey.amp.AmpService/{Method}` — local byokey management over
-///   `ConnectRPC` (fallback service).
-///
-/// The amp routes are wrapped in [`forward_headers_middleware`] to strip
-/// client auth and inject the amp upstream token. The middleware is
-/// scoped to that sub-router only via `.layer()` before `.merge()`, so
-/// REST and `ConnectRPC` routes are unaffected.
+///   `/byokey.accounts.AccountsService/{Method}` — local byokey management
+///   over `ConnectRPC` (fallback service).
 pub fn make_router(state: Arc<AppState>) -> Router {
-    // Amp-specific routes with forward_headers_middleware scoped to them.
-    let amp_routes = Router::new()
-        .route("/auth/cli-login", get(amp::cli_login_redirect))
-        .route("/v1/login", get(amp::login_redirect))
-        .route("/v0/management/{*path}", any(amp::provider::ampcode_proxy))
-        .route(
-            "/api/provider/anthropic/v1/messages",
-            post(messages::anthropic_messages),
-        )
-        .route(
-            "/api/provider/openai/v1/chat/completions",
-            post(chat::chat_completions),
-        )
-        .route(
-            "/api/provider/openai/v1/responses",
-            post(amp::provider::codex_responses_passthrough),
-        )
-        .route(
-            "/api/provider/google/v1beta/models/{action}",
-            post(amp::provider::gemini_native_passthrough),
-        )
-        .route("/api/{*path}", any(amp::provider::ampcode_proxy))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            crate::middleware::forward::forward_headers_middleware,
-        ));
-
     // REST AI proxy routes.
     let rest_routes = Router::new()
         .route("/v1/chat/completions", post(chat::chat_completions))
-        .route(
-            "/v1/responses",
-            post(amp::provider::codex_responses_passthrough),
-        )
+        .route("/v1/responses", post(responses::codex_responses))
         .route("/v1/messages", post(messages::anthropic_messages))
         .route("/v1/models", get(models::list_models))
         .route("/openapi.json", get(openapi::openapi_json));
@@ -143,7 +100,6 @@ pub fn make_router(state: Arc<AppState>) -> Router {
     let connect_service = management::build_router(state.clone()).into_axum_service();
 
     let router = rest_routes
-        .merge(amp_routes)
         .with_state(state)
         .fallback_service(connect_service);
 
@@ -166,13 +122,7 @@ mod tests {
         let config = Arc::new(arc_swap::ArcSwap::from_pointee(
             byokey_config::Config::default(),
         ));
-        AppState::with_thread_index(
-            config,
-            auth,
-            None,
-            byokey_provider::VersionStore::empty(),
-            Arc::new(crate::AmpThreadIndex::empty()),
-        )
+        AppState::new(config, auth, None, byokey_provider::VersionStore::empty())
     }
 
     async fn body_json(resp: axum::response::Response) -> Value {
@@ -199,46 +149,6 @@ mod tests {
         assert!(json["data"].is_array());
         // All providers are enabled by default even without explicit config.
         assert!(!json["data"].as_array().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_amp_login_redirect() {
-        let app = make_router(make_state());
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/login")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(resp.status(), axum::http::StatusCode::FOUND);
-        assert_eq!(
-            resp.headers().get("location").and_then(|v| v.to_str().ok()),
-            Some("https://ampcode.com/login")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_amp_cli_login_redirect() {
-        let app = make_router(make_state());
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/auth/cli-login?authToken=abc123&callbackPort=35789")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(resp.status(), axum::http::StatusCode::FOUND);
-        assert_eq!(
-            resp.headers().get("location").and_then(|v| v.to_str().ok()),
-            Some("https://ampcode.com/auth/cli-login?authToken=abc123&callbackPort=35789")
-        );
     }
 
     #[tokio::test]

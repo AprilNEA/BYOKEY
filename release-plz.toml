@@ -1,6 +1,6 @@
 [workspace]
 # Conventional commits are used for changelog generation.
-# semver_check is disabled workspace-wide: internal crates (byokey-*, ampcode)
+# semver_check is disabled workspace-wide: internal crates (byokey-*)
 # have no external library consumers — git_release_enable = false on all of
 # them — so cargo-semver-checks only produces noisy major bumps. Version bumps
 # are driven by conventional-commit prefixes (feat/fix/!) alone.
@@ -81,12 +81,6 @@ changelog_update = false
 
 [[package]]
 name = "byokey-tui"
-git_tag_enable = false
-git_release_enable = false
-changelog_update = false
-
-[[package]]
-name = "ampcode"
 git_tag_enable = false
 git_release_enable = false
 changelog_update = false

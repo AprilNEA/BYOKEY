@@ -1,10 +1,8 @@
-pub mod amp;
 pub mod model;
 pub mod payload;
 pub mod provider;
 pub mod runtime;
 
-pub use amp::AmpConfig;
 pub use model::ModelAlias;
 pub use payload::{PayloadFilterRule, PayloadRule, PayloadRules};
 pub use provider::{
@@ -36,9 +34,6 @@ pub struct Config {
     /// Provider configuration map.
     #[serde(default)]
     pub providers: HashMap<ProviderId, ProviderConfig>,
-    /// `AmpCode` proxy integration configuration.
-    #[serde(default)]
-    pub amp: AmpConfig,
     /// Global upstream proxy URL (e.g. "socks5://user:pass@host:port").
     /// All upstream requests will go through this proxy.
     #[serde(default)]
@@ -75,7 +70,6 @@ impl Default for Config {
             port: default_port(),
             host: default_host(),
             providers: HashMap::new(),
-            amp: AmpConfig::default(),
             proxy_url: None,
             model_alias: HashMap::new(),
             excluded_models: HashMap::new(),

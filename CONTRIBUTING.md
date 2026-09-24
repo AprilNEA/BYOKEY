@@ -69,9 +69,7 @@ CLI entry point: `src/main.rs` (package = `byokey`, bin = `byokey`).
 
 ### API Endpoints
 
-`byokey serve` binds two HTTP listeners:
-
-**Main listener (default `:8018`)**
+`byokey serve` binds a single HTTP listener (default `:8018`):
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -79,23 +77,8 @@ CLI entry point: `src/main.rs` (package = `byokey`, bin = `byokey`).
 | `POST` | `/v1/messages` | Anthropic-compatible messages |
 | `POST` | `/v1/responses` | Codex Responses API passthrough |
 | `GET` | `/v1/models` | List enabled models |
-| `ANY` | `/v0/management/*` | Accounts / usage / ratelimits management API |
-| `GET` | `/openapi.json` | OpenAPI 3.1 spec for the management API |
-
-**Amp listener (default `:18018`, set via `amp.port`)** — shaped to match what
-the Amp CLI sends on the wire; `new URL(path, ampUrl)` in Amp's JS drops any
-base path, so there is no `/amp` prefix.
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/auth/cli-login` | Amp CLI login redirect |
-| `GET` | `/v1/login` | Amp web login redirect |
-| `ANY` | `/v0/management/{*path}` | Amp management API proxy |
-| `POST` | `/api/provider/anthropic/v1/messages` | Anthropic-compatible chat via byokey |
-| `POST` | `/api/provider/openai/v1/chat/completions` | OpenAI-compatible chat via byokey |
-| `POST` | `/api/provider/openai/v1/responses` | Codex Responses API via byokey |
-| `POST` | `/api/provider/google/v1beta/models/{action}` | Gemini native passthrough |
-| `ANY` | `/api/{*path}` | Catch-all: forward remaining `/api/*` to ampcode.com |
+| `POST` | `/byokey.*.*Service/{Method}` | ConnectRPC management API (status, accounts, usage) |
+| `GET` | `/openapi.json` | OpenAPI 3.1 spec for the AI endpoints |
 
 The `model` field in the request body determines which provider is used.
 

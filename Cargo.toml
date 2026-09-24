@@ -9,7 +9,6 @@ members = [
     "crates/provider",
     "crates/proto",
     "crates/proxy",
-    "crates/ampcode",
     "crates/tui",
 ]
 
@@ -38,7 +37,6 @@ byokey-proto = { version = "1.5.0", path = "crates/proto" }
 byokey-proxy = { version = "1.5.0", path = "crates/proxy" }
 byokey-daemon = { version = "1.5.0", path = "crates/daemon" }
 byokey-tui = { version = "1.5.0", path = "crates/tui" }
-ampcode = { version = "0.1.2", path = "crates/ampcode" }
 loadwise-core = "0.1.0"
 aigw = { version = "0.6.1", default-features = false, features = ["anthropic", "anthropic-claude-code", "openai", "openai-compat", "gemini"] }
 aigw-core = "0.6.1"
@@ -90,10 +88,6 @@ open = "5"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 sea-orm = { version = "2.0.0-rc.38", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
 sea-orm-migration = { version = "2.0.0-rc.38", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
-# Token counting
-tiktoken-rs = "0.6"
-# JSON path
-jsonptr = "0.4"
 # Async trait
 async-trait = "0.1"
 # Builder
@@ -103,8 +97,6 @@ serde_urlencoded = "0.7"
 # CLI
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
-# Regex (used by amp patch)
-regex = "1"
 # RPC
 tarpc = { version = "0.37", features = ["tokio1", "serde-transport", "unix", "serde-transport-json"] }
 tokio-util = { version = "0.7", features = ["codec"] }
@@ -198,5 +190,4 @@ tarpc.workspace = true
 tokio-util.workspace = true
 futures-util.workspace = true
 serde_json.workspace = true
-regex.workspace = true
 utoipa.workspace = true
