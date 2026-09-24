@@ -144,7 +144,7 @@ cargo install --path .
 # 1. 认证（会打开浏览器或显示设备码）
 byokey login claude
 byokey login codex
-byokey login copilot
+byokey login copilot           # 以 OpenCode 身份；`--client vscode` 以 VS Code 身份登录
 
 # 2. 启动代理
 byokey serve

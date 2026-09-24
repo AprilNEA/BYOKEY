@@ -89,6 +89,10 @@ enum Commands {
         /// Account identifier (e.g. `work`, `personal`). Defaults to `default`.
         #[arg(long, value_name = "NAME")]
         account: Option<String>,
+        /// Client to log in as, for providers with more than one.
+        /// Copilot: `opencode` (default) or `vscode`.
+        #[arg(long, value_name = "CLIENT")]
+        client: Option<String>,
         #[command(flatten)]
         store: StoreArgs,
     },
@@ -194,11 +198,12 @@ async fn run(command: Commands) -> Result<()> {
         Commands::Login {
             provider,
             account,
+            client,
             store,
         } => {
             auth::AuthCmd::new(store.db)
                 .await?
-                .login(provider, account)
+                .login(provider, account, client)
                 .await
         }
         Commands::AddApiKey {

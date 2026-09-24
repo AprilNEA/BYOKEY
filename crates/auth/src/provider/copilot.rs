@@ -1,10 +1,11 @@
 //! GitHub Copilot device code authorization flow configuration.
 //!
 //! Implements the OAuth 2.0 Device Authorization Grant used by GitHub Copilot.
-//! No local callback port is needed for this flow.
+//! No local callback port is needed for this flow. Each [`CopilotClient`]
+//! logs in through its own OAuth app, and the saved token records which one.
 
 use async_trait::async_trait;
-use byokey_types::{ByokError, ProviderId, Result};
+use byokey_types::{ByokError, CopilotClient, ProviderId, Result};
 
 use crate::token::DeviceCodeResponse;
 
@@ -32,8 +33,10 @@ use crate::credentials::OAuthCredentials;
 use crate::flow::device_code::{self, DeviceCodeFlow, PollResult};
 use crate::token::DeviceCodeResponse as DcResp;
 
-/// Copilot device-code provider.
-pub struct Copilot;
+/// Copilot device-code provider, logging in as `client`.
+pub struct Copilot {
+    pub client: CopilotClient,
+}
 
 #[async_trait]
 impl DeviceCodeFlow for Copilot {
@@ -41,7 +44,12 @@ impl DeviceCodeFlow for Copilot {
         ProviderId::Copilot
     }
     fn provider_name(&self) -> &'static str {
-        "copilot"
+        // `copilot` predates the OpenCode client and stays VS Code's, so
+        // releases that only know VS Code keep working.
+        match self.client {
+            CopilotClient::OpenCode => "copilot-opencode",
+            CopilotClient::VsCode => "copilot",
+        }
     }
 
     async fn request_device_code(
@@ -96,7 +104,12 @@ impl DeviceCodeFlow for Copilot {
             .json()
             .await
             .map_err(|e| ByokError::Auth(format!("failed to parse token response: {e}")))?;
-        device_code::parse_poll_response(&json)
+        Ok(match device_code::parse_poll_response(&json)? {
+            PollResult::Success(token) => {
+                PollResult::Success(token.with_client(self.client.as_str()))
+            }
+            pending => pending,
+        })
     }
 }
 

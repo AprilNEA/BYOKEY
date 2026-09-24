@@ -531,6 +531,7 @@ impl acct::AccountsService for AccountsServiceImpl {
             refresh_token: None,
             expires_at: None,
             token_type: Some("api-key".to_string()),
+            client: None,
         };
         self.0
             .auth
@@ -586,6 +587,7 @@ impl acct::AccountsService for AccountsServiceImpl {
             .parse()
             .map_err(|e: byokey_types::ByokError| byok_to_connect_error(&e))?;
         let account = req.account_id;
+        let client = req.client;
 
         let (progress_tx, progress_rx) =
             tokio::sync::mpsc::channel::<byokey_auth::flow::LoginProgress>(8);
@@ -596,9 +598,12 @@ impl acct::AccountsService for AccountsServiceImpl {
         let event_tx_drive = event_tx.clone();
         tokio::spawn(async move {
             let mut progress_rx = progress_rx;
-            let account_ref = account.as_deref();
+            let options = byokey_auth::flow::LoginOptions {
+                account: account.as_deref(),
+                client: client.as_deref(),
+            };
             let login_fut =
-                byokey_auth::flow::login_with_events(&pid, &auth, account_ref, Some(progress_tx));
+                byokey_auth::flow::login_with_events(&pid, &auth, options, Some(progress_tx));
             tokio::pin!(login_fut);
 
             loop {

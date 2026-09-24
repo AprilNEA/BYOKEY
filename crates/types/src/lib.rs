@@ -5,6 +5,7 @@
 //! representations, and the async traits that each layer implements.
 
 pub mod chat;
+pub mod copilot;
 pub mod error;
 pub mod provider;
 pub mod ratelimit;
@@ -12,6 +13,7 @@ pub mod token;
 pub mod traits;
 
 pub use chat::ChatRequest;
+pub use copilot::CopilotClient;
 pub use error::{ByokError, Result};
 pub use provider::ProviderId;
 pub use provider::ThinkingCapability;

@@ -18,8 +18,17 @@ impl AuthCmd {
         Ok(Self { auth })
     }
 
-    pub async fn login(&self, provider: ProviderId, account: Option<String>) -> Result<()> {
-        byokey_auth::flow::login(&provider, &self.auth, account.as_deref())
+    pub async fn login(
+        &self,
+        provider: ProviderId,
+        account: Option<String>,
+        client: Option<String>,
+    ) -> Result<()> {
+        let options = byokey_auth::flow::LoginOptions {
+            account: account.as_deref(),
+            client: client.as_deref(),
+        };
+        byokey_auth::flow::login(&provider, &self.auth, options)
             .await
             .map_err(|e| anyhow::anyhow!("login failed: {e}"))?;
         Ok(())
@@ -51,6 +60,7 @@ impl AuthCmd {
             refresh_token: None,
             expires_at: None,
             token_type: Some("api-key".to_string()),
+            client: None,
         };
         self.auth
             .save_token_for(&provider, &account_id, label.as_deref(), token)

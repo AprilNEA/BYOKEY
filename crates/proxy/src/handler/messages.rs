@@ -418,14 +418,7 @@ fn build_copilot_messages_request(
         .header("anthropic-beta", beta)
         .header("content-type", "application/json")
         .header("accept", accept);
-    for (name, value) in identity
-        .api_headers()
-        .into_iter()
-        .chain(creds.device.headers())
-    {
-        builder = builder.header(name, value);
-    }
-    for (name, value) in conversation.headers(&creds.device) {
+    for (name, value) in identity.request_headers(creds, conversation) {
         builder = builder.header(name, value);
     }
     builder.json(body)
@@ -434,8 +427,8 @@ fn build_copilot_messages_request(
 /// Route Anthropic-format request to Copilot's native `/v1/messages` endpoint.
 ///
 /// Copilot provides a native Anthropic-compatible Messages API at
-/// `api.githubcopilot.com/v1/messages`. This handler authenticates via
-/// the Copilot token exchange flow and forwards the request verbatim.
+/// `api.githubcopilot.com/v1/messages`. This handler authenticates as the
+/// account's Copilot client and forwards the request verbatim.
 ///
 /// With multiple Copilot accounts, retries with quota-aware rotation
 /// on transient failures.
@@ -499,7 +492,7 @@ async fn copilot_messages(
     let mut last_err = None;
     for attempt in 0..max_attempts {
         tracing::Span::current().record("attempt", attempt);
-        let creds = match executor.copilot_token().await {
+        let creds = match executor.credentials().await {
             Ok(c) => c,
             Err(e) => {
                 if max_attempts > 1 {

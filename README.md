@@ -152,7 +152,7 @@ cargo install --path .
 # 1. Authenticate (opens browser or shows a device code)
 byokey login claude
 byokey login codex
-byokey login copilot
+byokey login copilot           # as OpenCode; `--client vscode` to log in as VS Code
 
 # 2. Start the proxy
 byokey serve

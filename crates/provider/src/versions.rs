@@ -35,6 +35,12 @@ pub struct ProviderVersions {
     /// Copilot: GitHub API version.
     #[serde(default)]
     pub github_api_version: Option<String>,
+    /// Copilot: `OpenCode` release the `OpenCode` client claims to be.
+    #[serde(default)]
+    pub opencode_version: Option<String>,
+    /// Copilot: GitHub API version `OpenCode` pins.
+    #[serde(default)]
+    pub opencode_api_version: Option<String>,
 }
 
 /// Shared, read-only store of provider version info loaded at startup.

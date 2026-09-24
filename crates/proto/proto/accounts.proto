@@ -99,6 +99,9 @@ message ImportClaudeCodeResponse {
 message LoginRequest {
   string provider = 1;
   optional string account_id = 2;
+  // Client to log in as, for providers with more than one
+  // (copilot: "opencode", "vscode"). Unset picks the provider's default.
+  optional string client = 3;
 }
 
 message LoginEvent {
