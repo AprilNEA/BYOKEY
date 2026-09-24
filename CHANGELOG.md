@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0](https://github.com/AprilNEA/BYOKEY/compare/v1.5.0...v2.0.0) - 2026-09-24
+
+### Breaking
+
+- remove Amp support: the `/api/*` Amp routes, `byokey amp inject`, the `amp` config section and the `AmpService` management RPC are gone, and a config that still lists `providers.amp` fails to load
+
+### Added
+
+- *(cli)* add Claude Code quick injection ([#101](https://github.com/AprilNEA/BYOKEY/pull/101))
+
 ## [1.5.0](https://github.com/AprilNEA/BYOKEY/compare/v1.4.1...v1.5.0) - 2026-09-24
 
 ### Added
