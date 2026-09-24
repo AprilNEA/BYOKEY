@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0](https://github.com/AprilNEA/BYOKEY/compare/v1.5.0...v1.6.0) - 2026-09-24
+
+### Added
+
+- *(cli)* add Claude Code quick injection ([#101](https://github.com/AprilNEA/BYOKEY/pull/101))
+
+### Other
+
+- remove Amp support
+
 ## [1.5.0](https://github.com/AprilNEA/BYOKEY/compare/v1.4.1...v1.5.0) - 2026-09-24
 
 ### Added
