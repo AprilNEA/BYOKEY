@@ -1,7 +1,7 @@
 mod actions;
 mod control_server;
 
-use actions::{auth, claude_code, daemon, serve};
+use actions::{auth, claude, daemon, serve};
 
 use anyhow::Result;
 use byokey_store::SqliteTokenStore;
@@ -174,9 +174,10 @@ enum Commands {
         store: StoreArgs,
     },
     /// Claude Code CLI configuration.
-    ClaudeCode {
+    #[command(alias = "claude-code")]
+    Claude {
         #[command(subcommand)]
-        action: claude_code::ClaudeCodeAction,
+        action: claude::ClaudeAction,
     },
     /// Export the OpenAPI specification as JSON.
     Openapi,
@@ -271,7 +272,7 @@ async fn run(command: Commands) -> Result<()> {
                 .switch(provider, account)
                 .await
         }
-        Commands::ClaudeCode { action } => claude_code::cmd_claude_code(action),
+        Commands::Claude { action } => claude::cmd_claude(action),
         Commands::Openapi => {
             use utoipa::OpenApi as _;
             let spec = byokey_proxy::ApiDoc::openapi()

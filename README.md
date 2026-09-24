@@ -161,9 +161,9 @@ export OPENAI_BASE_URL=http://localhost:8018/v1
 export OPENAI_API_KEY=any          # byokey ignores the key value
 ```
 
-**For Claude Code:** `byokey claude-code inject` points Claude Code at BYOKEY
-by setting `ANTHROPIC_BASE_URL` and a placeholder `ANTHROPIC_AUTH_TOKEN` in
-`~/.claude/settings.json`. Restart Claude Code to apply it.
+**For Claude Code:** `byokey claude start [claude args…]` launches Claude Code
+against BYOKEY; plain `claude` keeps using your own login. To make BYOKEY the
+default instead, run `byokey claude inject`.
 
 ## CLI Reference
 
@@ -183,7 +183,7 @@ Commands:
   tui           Launch the interactive terminal UI
   accounts      List all accounts for a provider
   switch        Switch the active account for a provider
-  claude-code   Claude Code configuration utilities
+  claude        Run Claude Code against BYOKEY (alias: claude-code)
   openapi       Export the OpenAPI specification as JSON
   completions   Generate shell completions
   help          Print help
@@ -243,10 +243,16 @@ ConnectRPC management API at `http://127.0.0.1:8018` by default; override with
 as an OS-managed service. Uses `launchd` on macOS, `systemd` on Linux, and
 Windows SCM on Windows.
 
-**`byokey claude-code inject`** — Writes `env.ANTHROPIC_BASE_URL` and a
-placeholder `env.ANTHROPIC_AUTH_TOKEN` (plus any `claude_code.settings` from
-your byokey config) into `~/.claude/settings.json`, keeping its other settings.
-Override the target with `--settings <FILE>` and the URL with `--url <URL>`.
+**`byokey claude start [ARGS]…`** — Runs `claude` with `ANTHROPIC_BASE_URL`
+pointing at BYOKEY, passing `ARGS` through. A claude.ai login stays in effect,
+keeping features such as connectors; without any login, a placeholder
+`ANTHROPIC_AUTH_TOKEN` is set so Claude Code can start.
+
+**`byokey claude inject`** — Writes the same settings, plus any
+`claude_code.settings` from your byokey config, into `~/.claude/settings.json`,
+keeping its other settings. Override the target with `--settings <FILE>`.
+
+Both accept `--url <URL>` to use a BYOKEY other than the configured one.
 
 </details>
 

@@ -1,58 +1,116 @@
-//! `byokey claude-code inject`: point Claude Code at BYOKEY.
+//! `byokey claude`: run Claude Code against BYOKEY.
+//!
+//! `start` launches Claude Code with BYOKEY's address in its environment;
+//! `inject` writes that address into Claude Code's settings file instead.
 
 use anyhow::{Context as _, Result, bail};
 use byokey_config::Config;
 use clap::{Args, Subcommand};
 use serde_json::{Map, Value};
+use std::ffi::OsString;
 use std::io::Write as _;
-use std::net::IpAddr;
+use std::net::{IpAddr, TcpStream, ToSocketAddrs as _};
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::Duration;
 
 const BASE_URL: &str = "ANTHROPIC_BASE_URL";
 const AUTH_TOKEN: &str = "ANTHROPIC_AUTH_TOKEN";
-/// BYOKEY ignores client credentials, but Claude Code needs one to be set.
-/// `ANTHROPIC_AUTH_TOKEN` does so without the approval prompt that
-/// `ANTHROPIC_API_KEY` triggers.
+/// BYOKEY ignores client credentials, but Claude Code refuses to start
+/// without one. `ANTHROPIC_AUTH_TOKEN` supplies it without the approval
+/// prompt that `ANTHROPIC_API_KEY` triggers.
 const PLACEHOLDER_TOKEN: &str = "byokey";
 
 #[derive(Subcommand, Debug)]
-pub enum ClaudeCodeAction {
-    /// Point Claude Code at BYOKEY, keeping its other settings.
+pub enum ClaudeAction {
+    /// Launch Claude Code against BYOKEY; remaining arguments go to `claude`.
+    Start(StartArgs),
+    /// Point Claude Code at BYOKEY in its settings file, keeping its other settings.
     Inject(InjectArgs),
 }
 
 #[derive(Args, Debug)]
-pub struct InjectArgs {
+pub struct Target {
     /// BYOKEY configuration file [default: ~/.config/byokey/settings.json].
-    #[arg(short, long, value_name = "FILE")]
-    config: Option<PathBuf>,
-    /// Claude Code settings file
-    /// [default: $CLAUDE_CONFIG_DIR/settings.json or ~/.claude/settings.json].
     #[arg(long, value_name = "FILE")]
-    settings: Option<PathBuf>,
+    config: Option<PathBuf>,
     /// BYOKEY base URL, without `/v1` [default: the configured listen address].
     #[arg(long)]
     url: Option<String>,
 }
 
-pub fn cmd_claude_code(action: ClaudeCodeAction) -> Result<()> {
+#[derive(Args, Debug)]
+pub struct StartArgs {
+    #[command(flatten)]
+    target: Target,
+    /// Arguments passed to `claude`.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    args: Vec<OsString>,
+}
+
+#[derive(Args, Debug)]
+pub struct InjectArgs {
+    #[command(flatten)]
+    target: Target,
+    /// Claude Code settings file
+    /// [default: $CLAUDE_CONFIG_DIR/settings.json or ~/.claude/settings.json].
+    #[arg(long, value_name = "FILE")]
+    settings: Option<PathBuf>,
+}
+
+pub fn cmd_claude(action: ClaudeAction) -> Result<()> {
     match action {
-        ClaudeCodeAction::Inject(args) => inject(args),
+        ClaudeAction::Start(args) => start(args),
+        ClaudeAction::Inject(args) => inject(args),
     }
 }
 
-fn inject(args: InjectArgs) -> Result<()> {
-    let config = load_config(args.config)?;
-    let extras = &config.claude_code.settings;
-    let url = match args.url {
-        Some(url) => url,
-        None => match configured_url(extras)? {
-            Some(url) => url.to_owned(),
-            None => local_url(&config.host, config.port),
-        },
-    };
-    validate_url(&url)?;
+impl Target {
+    /// Load the BYOKEY config and resolve the URL Claude Code should use:
+    /// `--url`, then `claude_code.settings.env.ANTHROPIC_BASE_URL`, then the
+    /// configured listen address.
+    fn resolve(self) -> Result<(Config, String)> {
+        let config = load_config(self.config)?;
+        let url = match self.url {
+            Some(url) => url,
+            None => match configured_url(&config.claude_code.settings)? {
+                Some(url) => url.to_owned(),
+                None => local_url(&config.host, config.port),
+            },
+        };
+        validate_url(&url)?;
+        Ok((config, url))
+    }
+}
 
+fn start(args: StartArgs) -> Result<()> {
+    let (_, url) = args.target.resolve()?;
+    ensure_reachable(&url)?;
+
+    let mut claude = Command::new("claude");
+    claude.args(&args.args).env(BASE_URL, &url);
+    // Claude Code's own login keeps claude.ai features such as connectors;
+    // a placeholder token would take precedence over it.
+    if !claude_logged_in()? {
+        claude.env(AUTH_TOKEN, PLACEHOLDER_TOKEN);
+    }
+    run(claude)
+}
+
+#[cfg(unix)]
+fn run(mut command: Command) -> Result<()> {
+    use std::os::unix::process::CommandExt as _;
+    Err(command.exec()).context("launch `claude`")
+}
+
+#[cfg(not(unix))]
+fn run(mut command: Command) -> Result<()> {
+    let status = command.status().context("launch `claude`")?;
+    std::process::exit(status.code().unwrap_or(1));
+}
+
+fn inject(args: InjectArgs) -> Result<()> {
+    let (config, url) = args.target.resolve()?;
     let path = match args.settings {
         Some(path) => path,
         None => default_settings_path().context("cannot locate the Claude Code settings")?,
@@ -70,13 +128,50 @@ fn inject(args: InjectArgs) -> Result<()> {
         Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
     };
 
-    let merged = merge(settings, extras, &url)?;
+    let placeholder = !claude_logged_in()?;
+    let merged = merge(settings, &config.claude_code.settings, &url, placeholder)?;
     let mut bytes = serde_json::to_vec_pretty(&merged)?;
     bytes.push(b'\n');
     write_atomic(&path, &bytes).with_context(|| format!("write {}", path.display()))?;
 
     println!("Claude Code now uses BYOKEY at {url}: {}", path.display());
     println!("Restart Claude Code to apply the settings.");
+    Ok(())
+}
+
+/// Whether Claude Code has credentials of its own: a claude.ai login, or a
+/// key or token already in its environment or settings.
+fn claude_logged_in() -> Result<bool> {
+    // Exits non-zero when logged out, still printing the status.
+    let output = Command::new("claude")
+        .args(["auth", "status", "--json"])
+        .output()
+        .context("run `claude auth status`; is Claude Code installed?")?;
+    serde_json::from_slice::<Value>(&output.stdout)
+        .ok()
+        .and_then(|status| status.get("loggedIn")?.as_bool())
+        .context("unexpected `claude auth status --json` output")
+}
+
+/// Fail early with a clear message instead of letting Claude Code retry
+/// against a server that is not there.
+fn ensure_reachable(url: &str) -> Result<()> {
+    let uri: wreq::Uri = url.parse()?;
+    let host = uri.host().context("base URL has no host")?;
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    let port = uri
+        .port_u16()
+        .unwrap_or(if uri.scheme_str() == Some("https") {
+            443
+        } else {
+            80
+        });
+    let reachable = (host, port).to_socket_addrs().is_ok_and(|mut addrs| {
+        addrs.any(|addr| TcpStream::connect_timeout(&addr, Duration::from_secs(2)).is_ok())
+    });
+    if !reachable {
+        bail!("BYOKEY is not reachable at {url}; start it with `byokey start`");
+    }
     Ok(())
 }
 
@@ -94,12 +189,14 @@ fn load_config(explicit: Option<PathBuf>) -> Result<Config> {
     Config::from_file(&path).with_context(|| format!("load BYOKEY config {}", path.display()))
 }
 
-/// Merge BYOKEY's connection settings and the configured `extras` into
-/// Claude Code's `settings`, keeping everything else.
+/// Merge BYOKEY's address, a `placeholder` token when Claude Code has no
+/// credentials of its own, and the configured `extras` into Claude Code's
+/// `settings`, keeping everything else.
 fn merge(
     mut settings: Map<String, Value>,
     extras: &Map<String, Value>,
     url: &str,
+    placeholder: bool,
 ) -> Result<Map<String, Value>> {
     let extra_env = extra_env(extras)?;
     for (key, value) in extras {
@@ -114,7 +211,9 @@ fn merge(
     else {
         bail!("Claude Code settings `env` must be an object");
     };
-    env.insert(AUTH_TOKEN.to_owned(), PLACEHOLDER_TOKEN.into());
+    if placeholder {
+        env.insert(AUTH_TOKEN.to_owned(), PLACEHOLDER_TOKEN.into());
+    }
     if let Some(extra_env) = extra_env {
         env.extend(extra_env.clone());
     }
@@ -206,7 +305,7 @@ mod tests {
             "permissions": {"allow": ["Read"]},
             "env": {"KEEP": "1", "ANTHROPIC_BASE_URL": "https://old.example"}
         }));
-        let merged = merge(settings, &Map::new(), "http://127.0.0.1:8018").unwrap();
+        let merged = merge(settings, &Map::new(), "http://127.0.0.1:8018", true).unwrap();
         assert_eq!(
             Value::Object(merged),
             json!({
@@ -222,13 +321,22 @@ mod tests {
     }
 
     #[test]
+    fn logged_in_claude_code_keeps_its_own_credentials() {
+        let merged = merge(Map::new(), &Map::new(), "http://h:1", false).unwrap();
+        assert_eq!(
+            Value::Object(merged),
+            json!({"env": {"ANTHROPIC_BASE_URL": "http://h:1"}})
+        );
+    }
+
+    #[test]
     fn configured_extras_override_per_key_and_env_variable() {
         let settings = object(json!({"model": "old", "env": {"KEEP": "1", "X": "old"}}));
         let extras = object(json!({
             "model": "new",
             "env": {"X": "new", "ANTHROPIC_AUTH_TOKEN": "gateway-token"}
         }));
-        let merged = Value::Object(merge(settings, &extras, "http://h:1").unwrap());
+        let merged = Value::Object(merge(settings, &extras, "http://h:1", true).unwrap());
         assert_eq!(merged["model"], "new");
         assert_eq!(merged["env"]["KEEP"], "1");
         assert_eq!(merged["env"]["X"], "new");
@@ -245,9 +353,9 @@ mod tests {
     #[test]
     fn malformed_env_is_rejected() {
         let settings = object(json!({"env": "not an object"}));
-        assert!(merge(settings, &Map::new(), "http://h:1").is_err());
+        assert!(merge(settings, &Map::new(), "http://h:1", true).is_err());
         let extras = object(json!({"env": {"X": 1}}));
-        assert!(merge(Map::new(), &extras, "http://h:1").is_err());
+        assert!(merge(Map::new(), &extras, "http://h:1", true).is_err());
     }
 
     #[test]
@@ -281,7 +389,7 @@ mod tests {
 
         let settings: Map<String, Value> =
             serde_json::from_slice(&std::fs::read(&link).unwrap()).unwrap();
-        let merged = merge(settings, &Map::new(), "http://h:1").unwrap();
+        let merged = merge(settings, &Map::new(), "http://h:1", true).unwrap();
         write_atomic(
             &link.canonicalize().unwrap(),
             &serde_json::to_vec(&merged).unwrap(),

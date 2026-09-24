@@ -153,9 +153,9 @@ export OPENAI_BASE_URL=http://localhost:8018/v1
 export OPENAI_API_KEY=any          # byokey 忽略 key 的值
 ```
 
-**对于 Claude Code：** `byokey claude-code inject` 会在 `~/.claude/settings.json`
-中设置 `ANTHROPIC_BASE_URL` 和占位用的 `ANTHROPIC_AUTH_TOKEN`，让 Claude Code
-指向 BYOKEY。重启 Claude Code 后生效。
+**对于 Claude Code：** `byokey claude start [claude 参数…]` 以 BYOKEY 启动
+Claude Code；直接运行 `claude` 则照常使用你自己的登录。想让 BYOKEY 成为默认，
+运行 `byokey claude inject`。
 
 ## CLI 参考
 
@@ -175,7 +175,7 @@ Commands:
   tui           启动交互式终端 UI
   accounts      列出某个 Provider 的所有账户
   switch        切换某个 Provider 的活动账户
-  claude-code   Claude Code 配置工具
+  claude        以 BYOKEY 运行 Claude Code（别名：claude-code）
   openapi       导出 OpenAPI 规范（JSON 格式）
   completions   生成 Shell 补全脚本
   help          打印帮助信息
@@ -235,10 +235,16 @@ Options:
 注册为系统托管服务。macOS 上使用 `launchd`、Linux 上使用 `systemd`、
 Windows 上使用 SCM。
 
-**`byokey claude-code inject`** — 将 `env.ANTHROPIC_BASE_URL` 和占位用的
-`env.ANTHROPIC_AUTH_TOKEN`（以及 byokey 配置中的 `claude_code.settings`）写入
-`~/.claude/settings.json`，保留其他设置。可用 `--settings <FILE>` 指定目标文件，
-用 `--url <URL>` 指定地址。
+**`byokey claude start [ARGS]…`** — 以指向 BYOKEY 的 `ANTHROPIC_BASE_URL`
+运行 `claude`，`ARGS` 原样传入。已登录 claude.ai 时保留该登录，connectors 等功能
+照常可用；没有任何登录时会设置占位用的 `ANTHROPIC_AUTH_TOKEN`，保证 Claude Code
+能够启动。
+
+**`byokey claude inject`** — 将同样的设置（以及 byokey 配置中的
+`claude_code.settings`）写入 `~/.claude/settings.json`，保留其他设置。可用
+`--settings <FILE>` 指定目标文件。
+
+两个命令都可以用 `--url <URL>` 指定其他 BYOKEY 地址。
 
 </details>
 
