@@ -161,6 +161,10 @@ export OPENAI_BASE_URL=http://localhost:8018/v1
 export OPENAI_API_KEY=any          # byokey ignores the key value
 ```
 
+**For Claude Code:** `byokey claude-code inject` points Claude Code at BYOKEY
+by setting `ANTHROPIC_BASE_URL` and a placeholder `ANTHROPIC_AUTH_TOKEN` in
+`~/.claude/settings.json`. Restart Claude Code to apply it.
+
 ## CLI Reference
 
 ```
@@ -179,6 +183,7 @@ Commands:
   tui           Launch the interactive terminal UI
   accounts      List all accounts for a provider
   switch        Switch the active account for a provider
+  claude-code   Claude Code configuration utilities
   openapi       Export the OpenAPI specification as JSON
   completions   Generate shell completions
   help          Print help
@@ -237,6 +242,11 @@ ConnectRPC management API at `http://127.0.0.1:8018` by default; override with
 **`byokey service <install|uninstall|start|stop|status>`** — Registers byokey
 as an OS-managed service. Uses `launchd` on macOS, `systemd` on Linux, and
 Windows SCM on Windows.
+
+**`byokey claude-code inject`** — Writes `env.ANTHROPIC_BASE_URL` and a
+placeholder `env.ANTHROPIC_AUTH_TOKEN` (plus any `claude_code.settings` from
+your byokey config) into `~/.claude/settings.json`, keeping its other settings.
+Override the target with `--settings <FILE>` and the URL with `--url <URL>`.
 
 </details>
 

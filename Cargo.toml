@@ -189,5 +189,6 @@ sentry.workspace = true
 tarpc.workspace = true
 tokio-util.workspace = true
 futures-util.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+tempfile = "3"
 utoipa.workspace = true
