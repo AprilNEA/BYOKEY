@@ -34,7 +34,6 @@ pub(crate) async fn cursor_messages(
     stream: bool,
 ) -> Result<Response, ApiError> {
     body["model"] = Value::String(model.to_owned());
-    strip_cache_control(&mut body);
     let request: MessagesRequest =
         serde_json::from_value(body).map_err(|e| ByokError::Translation(e.to_string()))?;
     let canonical = messages_request_to_canonical(request)
@@ -84,31 +83,19 @@ pub(crate) async fn cursor_messages(
     ))
 }
 
-/// Remove every `cache_control` marker. Cursor has no prompt caching, and
-/// Claude Code's `"ttl": "1h"` strings do not fit aigw's numeric TTL.
-fn strip_cache_control(value: &mut Value) {
-    match value {
-        Value::Object(map) => {
-            map.remove("cache_control");
-            map.values_mut().for_each(strip_cache_control);
-        }
-        Value::Array(items) => items.iter_mut().for_each(strip_cache_control),
-        _ => {}
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn cache_control_is_removed_at_any_depth() {
-        let mut body = serde_json::json!({
+    fn claude_code_requests_translate_to_canonical() {
+        // Claude Code marks system blocks with `"ttl": "1h"` cache markers.
+        let body = serde_json::json!({
+            "model": "m", "max_tokens": 1,
             "system": [{"type": "text", "text": "s", "cache_control": {"type": "ephemeral", "ttl": "1h"}}],
-            "messages": [{"role": "user", "content": [{"type": "text", "text": "hi", "cache_control": {}}]}],
+            "messages": [{"role": "user", "content": "hi"}],
         });
-        strip_cache_control(&mut body);
-        assert!(!body.to_string().contains("cache_control"));
-        assert_eq!(body["system"][0]["text"], "s");
+        let request: MessagesRequest = serde_json::from_value(body).unwrap();
+        assert!(messages_request_to_canonical(request).is_ok());
     }
 }
