@@ -2,7 +2,8 @@
 //!
 //! Uses Kimi's OpenAI-compatible chat completions endpoint via `aigw::openai_compat`.
 //! Auth: `Authorization: Bearer {token}` for both OAuth and API key.
-//! Model names are prefixed with `kimi-` locally and stripped before upstream dispatch.
+//! Kimi Code's own ids (`kimi-for-coding`, `kimi-for-coding-highspeed`) are
+//! sent as is; other `kimi-` names lose the prefix (`kimi-k3` is `k3`).
 //!
 //! Kimi uses a non-standard path (`/coding/v1/chat/completions`). This is handled
 //! by setting `base_url` to `https://api.kimi.com/coding/v1`; aigw appends
@@ -120,8 +121,11 @@ impl KimiExecutor {
     }
 }
 
-/// Strip the `kimi-` prefix from a model name for the upstream API.
-fn strip_kimi_prefix(model: &str) -> &str {
+/// The id Kimi Code knows `model` by.
+fn upstream_model(model: &str) -> &str {
+    if model.starts_with("kimi-for-coding") {
+        return model;
+    }
     model.strip_prefix("kimi-").unwrap_or(model)
 }
 
@@ -131,9 +135,8 @@ impl ProviderExecutor for KimiExecutor {
         let stream = request.stream;
         let mut body = request.into_body();
 
-        // Strip kimi- prefix for upstream API before translation.
         if let Some(model) = body.get("model").and_then(Value::as_str).map(String::from) {
-            body["model"] = Value::String(strip_kimi_prefix(&model).to_string());
+            body["model"] = Value::String(upstream_model(&model).to_string());
         }
 
         let token = self.bearer_token().await?;
@@ -203,9 +206,13 @@ mod tests {
     }
 
     #[test]
-    fn test_strip_kimi_prefix() {
-        assert_eq!(strip_kimi_prefix("kimi-k2-0711"), "k2-0711");
-        assert_eq!(strip_kimi_prefix("kimi-moonshot-v1"), "moonshot-v1");
-        assert_eq!(strip_kimi_prefix("k2-0711"), "k2-0711");
+    fn test_upstream_model() {
+        assert_eq!(upstream_model("kimi-k3"), "k3");
+        assert_eq!(upstream_model("k3"), "k3");
+        assert_eq!(upstream_model("kimi-for-coding"), "kimi-for-coding");
+        assert_eq!(
+            upstream_model("kimi-for-coding-highspeed"),
+            "kimi-for-coding-highspeed"
+        );
     }
 }

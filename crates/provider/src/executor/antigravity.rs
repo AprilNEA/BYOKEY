@@ -148,7 +148,7 @@ fn wrap_request(model: &str, gemini_body: &mut Value) -> Value {
 
 /// Extracts the actual model name from an `ag-` prefixed model identifier.
 ///
-/// e.g. `ag-gemini-2.5-pro` -> `gemini-2.5-pro`, `ag-claude-sonnet-4-5` -> `claude-sonnet-4-5`
+/// e.g. `ag-gemini-pro-agent` -> `gemini-pro-agent`, `ag-claude-sonnet-4-6` -> `claude-sonnet-4-6`
 fn strip_ag_prefix(model: &str) -> &str {
     model.strip_prefix("ag-").unwrap_or(model)
 }
@@ -254,7 +254,7 @@ impl ProviderExecutor for AntigravityExecutor {
 
         // Extract model from request, strip ag- prefix for the actual API call
         let model = body.get("model").and_then(Value::as_str).map_or_else(
-            || "gemini-2.5-pro".to_string(),
+            || "gemini-pro-agent".to_string(),
             |m| strip_ag_prefix(m).to_string(),
         );
 
@@ -336,21 +336,14 @@ mod tests {
     #[test]
     fn test_supported_models_start_with_ag() {
         let ex = make_executor();
-        // Most Antigravity models are prefixed with "ag-", but shared models
-        // like "claude-sonnet-4-5" also appear via REGISTRY.
-        let ag_only: Vec<_> = ex
-            .supported_models()
-            .into_iter()
-            .filter(|m| m.starts_with("ag-"))
-            .collect();
-        assert!(!ag_only.is_empty());
+        assert!(ex.supported_models().iter().all(|m| m.starts_with("ag-")));
     }
 
     #[test]
     fn test_strip_ag_prefix() {
-        assert_eq!(strip_ag_prefix("ag-gemini-2.5-pro"), "gemini-2.5-pro");
-        assert_eq!(strip_ag_prefix("ag-claude-sonnet-4-5"), "claude-sonnet-4-5");
-        assert_eq!(strip_ag_prefix("gemini-2.5-pro"), "gemini-2.5-pro");
+        assert_eq!(strip_ag_prefix("ag-gemini-pro-agent"), "gemini-pro-agent");
+        assert_eq!(strip_ag_prefix("ag-claude-sonnet-4-6"), "claude-sonnet-4-6");
+        assert_eq!(strip_ag_prefix("gemini-pro-agent"), "gemini-pro-agent");
     }
 
     #[test]
@@ -367,9 +360,9 @@ mod tests {
             "generationConfig": {},
             "safety_settings": [{"category": "HARM_CATEGORY_DANGEROUS_CONTENT"}]
         });
-        let wrapped = wrap_request("gemini-2.5-pro", &mut gemini);
+        let wrapped = wrap_request("gemini-pro-agent", &mut gemini);
 
-        assert_eq!(wrapped["model"], "gemini-2.5-pro");
+        assert_eq!(wrapped["model"], "gemini-pro-agent");
         assert_eq!(wrapped["userAgent"], "antigravity");
         assert_eq!(wrapped["requestType"], "agent");
         assert!(wrapped["requestId"].as_str().unwrap().starts_with("agent-"));
@@ -402,14 +395,17 @@ mod tests {
                     "index": 0
                 }],
                 "responseId": "ag-1",
-                "modelVersion": "gemini-2.5-pro"
+                "modelVersion": "gemini-pro-agent"
             }
         });
         let input: ByteStream = Box::pin(futures_util::stream::iter(vec![Ok(Bytes::from(
             format!("data: {line}\n"),
         ))]));
-        let out =
-            collect_stream_text(translate_antigravity_stream(input, "gemini-2.5-pro".into())).await;
+        let out = collect_stream_text(translate_antigravity_stream(
+            input,
+            "gemini-pro-agent".into(),
+        ))
+        .await;
 
         assert!(out.contains(r#""content":"Hello""#));
         assert!(out.contains("data: [DONE]"));
@@ -435,8 +431,11 @@ mod tests {
         let input: ByteStream = Box::pin(futures_util::stream::iter(vec![Ok(Bytes::from(
             format!("{line}\n"),
         ))]));
-        let out =
-            collect_stream_text(translate_antigravity_stream(input, "gemini-2.5-pro".into())).await;
+        let out = collect_stream_text(translate_antigravity_stream(
+            input,
+            "gemini-pro-agent".into(),
+        ))
+        .await;
 
         assert!(out.contains(r#""reasoning_content":"thinking""#));
         assert!(out.contains(r#""reasoning_signature":"sig""#));
@@ -471,8 +470,11 @@ mod tests {
         let input: ByteStream = Box::pin(futures_util::stream::iter(vec![Ok(Bytes::from(
             format!("data: {tool}\n"),
         ))]));
-        let out =
-            collect_stream_text(translate_antigravity_stream(input, "gemini-2.5-pro".into())).await;
+        let out = collect_stream_text(translate_antigravity_stream(
+            input,
+            "gemini-pro-agent".into(),
+        ))
+        .await;
 
         assert!(out.contains(r#""name":"get_weather""#));
         assert!(out.contains(r#""arguments":"{\"location\":\"NYC\"}""#));

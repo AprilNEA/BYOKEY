@@ -48,7 +48,7 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       <img src="https://assets.byokey.io/icons/providers/claude.svg" width="36" alt="Claude"><br>
       <b>Claude</b><br>
       <kbd>OAuth</kbd><br>
-      <sub>claude-opus-4-6<br>claude-sonnet-4-5<br>claude-haiku-4-5</sub>
+      <sub>claude-fable-5-1<br>claude-opus-5-5<br>claude-sonnet-5<br>claude-haiku-4-5</sub>
     </td>
     <td align="center" width="200" valign="top">
       <picture>
@@ -57,7 +57,7 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       </picture><br>
       <b>Codex</b><br>
       <kbd>OAuth</kbd><br>
-      <sub>gpt-5.4<br>gpt-5.3-codex<br>gpt-5.1-codex-max<br>o3 · o4-mini</sub>
+      <sub>gpt-6-astra<br>gpt-6-sol<br>gpt-6-luna</sub>
     </td>
     <td align="center" width="200" valign="top">
       <picture>
@@ -66,7 +66,7 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       </picture><br>
       <b>Copilot</b><br>
       <kbd>Device code</kbd><br>
-      <sub>gpt-5.4<br>claude-sonnet-4.6<br>gemini-3.1-pro<br>grok-code-fast-1</sub>
+      <sub>claude-opus-5.5<br>claude-sonnet-5<br>gpt-5.4<br>gemini-3.8-flash</sub>
     </td>
   </tr>
   <tr>
@@ -74,7 +74,7 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       <img src="https://assets.byokey.io/icons/providers/gemini.svg" width="36" alt="Gemini"><br>
       <b>Gemini</b><br>
       <kbd>OAuth</kbd><br>
-      <sub>gemini-2.0-flash<br>gemini-1.5-pro<br>gemini-1.5-flash</sub>
+      <sub>gemini-3.1-pro-preview<br>gemini-3.8-flash<br>gemini-3.5-flash-lite</sub>
     </td>
     <td align="center" width="200" valign="top">
       <picture>
@@ -89,7 +89,7 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       <img src="https://assets.byokey.io/icons/providers/gemini.svg" width="36" alt="Antigravity"><br>
       <b>Antigravity</b><br>
       <kbd>OAuth</kbd><br>
-      <sub>ag-gemini-2.5-pro<br>ag-gemini-2.5-flash<br>ag-claude-sonnet-4-5</sub>
+      <sub>ag-gemini-pro-agent<br>ag-gemini-3.8-flash-high<br>ag-claude-sonnet-4-6</sub>
     </td>
   </tr>
   <tr>
@@ -97,13 +97,13 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       <img src="https://assets.byokey.io/icons/providers/alibabacloud.svg" width="36" alt="Qwen"><br>
       <b>Qwen</b><br>
       <kbd>Device code</kbd><br>
-      <sub>qwen3-max<br>qwen3-coder-plus<br>qwen-plus</sub>
+      <sub>coder-model</sub>
     </td>
     <td align="center" width="200" valign="top">
       <img src="https://assets.byokey.io/icons/providers/kimi.svg" width="36" alt="Kimi"><br>
       <b>Kimi</b><br>
       <kbd>Device code</kbd><br>
-      <sub>kimi-k2-0711</sub>
+      <sub>kimi-for-coding<br>kimi-k3</sub>
     </td>
     <td align="center" width="200" valign="top">
       <b>iFlow</b><br>

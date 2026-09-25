@@ -16,7 +16,7 @@ pub struct ThinkingSupport {
 
 /// A single model entry in the registry, mapping a model ID to its providers.
 pub struct ModelEntry {
-    /// The model identifier string (e.g. `"gpt-5.1"` or `"claude-opus-4-6"`).
+    /// The model identifier string (e.g. `"gpt-6-sol"` or `"claude-opus-5-5"`).
     pub id: &'static str,
     /// Providers that can serve this model, in priority order.
     pub providers: &'static [ProviderId],
@@ -42,135 +42,31 @@ const BUDGET_THINKING: ThinkingSupport = ThinkingSupport {
 
 /// Unified model registry. Provider order within each entry determines
 /// resolution priority: the first provider wins in `resolve_provider()`.
+/// Later providers serve the model under the same id, so a bare id still
+/// routes when the first has no credentials (`resolve_provider_with()`).
 const REGISTRY: &[ModelEntry] = &[
-    // Codex-only (reasoning + legacy)
+    // Codex (ChatGPT). Copilot serves these on `/responses` only, not on the
+    // chat path.
     ModelEntry {
-        id: "o3",
+        id: "gpt-6-astra",
         providers: &[ProviderId::Codex],
         thinking: None,
     },
     ModelEntry {
-        id: "o4-mini",
+        id: "gpt-6-sol",
         providers: &[ProviderId::Codex],
         thinking: None,
     },
     ModelEntry {
-        id: "gpt-4-turbo",
+        id: "gpt-6-luna",
         providers: &[ProviderId::Codex],
         thinking: None,
     },
-    ModelEntry {
-        id: "gpt-4",
-        providers: &[ProviderId::Codex],
-        thinking: None,
-    },
-    // Codex-primary, also on Copilot
-    ModelEntry {
-        id: "gpt-5.4",
-        providers: &[ProviderId::Codex, ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gpt-5.4-mini",
-        providers: &[ProviderId::Codex, ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gpt-5.4-nano",
-        providers: &[ProviderId::Codex],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gpt-5.3-codex",
-        providers: &[ProviderId::Codex, ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gpt-5.3-codex-spark",
-        providers: &[ProviderId::Codex],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gpt-5.2-codex",
-        providers: &[ProviderId::Codex, ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gpt-5.2",
-        providers: &[ProviderId::Codex, ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gpt-5.1-codex-max",
-        providers: &[ProviderId::Codex, ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gpt-5.1-codex",
-        providers: &[ProviderId::Codex, ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gpt-5.1-codex-mini",
-        providers: &[ProviderId::Codex, ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gpt-5.1",
-        providers: &[ProviderId::Codex, ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gpt-5-codex",
-        providers: &[ProviderId::Codex],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gpt-5-codex-mini",
-        providers: &[ProviderId::Codex],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gpt-5",
-        providers: &[ProviderId::Codex, ProviderId::Copilot],
-        thinking: None,
-    },
-    // Copilot-only
-    ModelEntry {
-        id: "gpt-4o",
-        providers: &[ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gpt-4.1",
-        providers: &[ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gpt-5-mini",
-        providers: &[ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "raptor-mini",
-        providers: &[ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "goldeneye",
-        providers: &[ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "grok-code-fast-1",
-        providers: &[ProviderId::Copilot],
-        thinking: None,
-    },
-    // Claude (Anthropic): the current lineup. Legacy models the API still
-    // serves can be named directly or as `claude/<id>`.
+    // Claude (Anthropic). Legacy models the API still serves are reached
+    // unprefixed on `/v1/messages` and as `claude/<id>` elsewhere.
     ModelEntry {
         id: "claude-fable-5-1",
-        providers: &[ProviderId::Claude],
+        providers: &[ProviderId::Claude, ProviderId::Cursor],
         thinking: Some(&ADAPTIVE_THINKING),
     },
     ModelEntry {
@@ -180,16 +76,15 @@ const REGISTRY: &[ModelEntry] = &[
     },
     ModelEntry {
         id: "claude-sonnet-5",
-        providers: &[ProviderId::Claude, ProviderId::Cursor],
+        providers: &[ProviderId::Claude, ProviderId::Cursor, ProviderId::Copilot],
         thinking: Some(&ADAPTIVE_THINKING),
     },
     ModelEntry {
         id: "claude-haiku-4-5",
-        providers: &[ProviderId::Claude],
+        providers: &[ProviderId::Claude, ProviderId::Cursor],
         thinking: Some(&BUDGET_THINKING),
     },
-    // Copilot Claude (GitHub spells versions with dots). These route to
-    // Copilot on `/v1/chat/completions`; on `/v1/messages` use `copilot/<id>`.
+    // Copilot (GitHub), which spells Claude versions with dots.
     ModelEntry {
         id: "claude-fable-5.1",
         providers: &[ProviderId::Copilot],
@@ -205,46 +100,30 @@ const REGISTRY: &[ModelEntry] = &[
         providers: &[ProviderId::Copilot],
         thinking: None,
     },
+    ModelEntry {
+        id: "gpt-5.4",
+        providers: &[ProviderId::Copilot, ProviderId::Cursor],
+        thinking: None,
+    },
+    ModelEntry {
+        id: "gpt-5-mini",
+        providers: &[ProviderId::Copilot, ProviderId::Cursor],
+        thinking: None,
+    },
     // Gemini (Google AI)
     ModelEntry {
-        id: "gemini-2.0-flash",
+        id: "gemini-3.1-pro-preview",
         providers: &[ProviderId::Gemini],
         thinking: None,
     },
     ModelEntry {
-        id: "gemini-2.0-flash-lite",
+        id: "gemini-3.8-flash",
+        providers: &[ProviderId::Gemini, ProviderId::Copilot, ProviderId::Cursor],
+        thinking: None,
+    },
+    ModelEntry {
+        id: "gemini-3.5-flash-lite",
         providers: &[ProviderId::Gemini],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gemini-1.5-pro",
-        providers: &[ProviderId::Gemini],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gemini-1.5-flash",
-        providers: &[ProviderId::Gemini],
-        thinking: None,
-    },
-    // Copilot Gemini (GitHub)
-    ModelEntry {
-        id: "gemini-2.5-pro",
-        providers: &[ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gemini-3-flash",
-        providers: &[ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gemini-3-pro",
-        providers: &[ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gemini-3.1-pro",
-        providers: &[ProviderId::Copilot],
         thinking: None,
     },
     // Kiro
@@ -253,67 +132,62 @@ const REGISTRY: &[ModelEntry] = &[
         providers: &[ProviderId::Kiro],
         thinking: None,
     },
-    // Antigravity
+    // Antigravity: Cloud Code model ids behind an `ag-` prefix.
     ModelEntry {
-        id: "ag-gemini-2.5-flash",
+        id: "ag-gemini-pro-agent",
         providers: &[ProviderId::Antigravity],
         thinking: None,
     },
     ModelEntry {
-        id: "ag-gemini-2.5-pro",
+        id: "ag-gemini-3.1-pro-low",
         providers: &[ProviderId::Antigravity],
         thinking: None,
     },
     ModelEntry {
-        id: "ag-claude-sonnet-4-5",
+        id: "ag-gemini-3.8-flash-high",
         providers: &[ProviderId::Antigravity],
         thinking: None,
     },
-    // Qwen
     ModelEntry {
-        id: "qwen3-coder-plus",
-        providers: &[ProviderId::Qwen],
+        id: "ag-gemini-3.5-flash-lite",
+        providers: &[ProviderId::Antigravity],
         thinking: None,
     },
     ModelEntry {
-        id: "qwen3-235b-a22b",
-        providers: &[ProviderId::Qwen],
+        id: "ag-claude-opus-4-6-thinking",
+        providers: &[ProviderId::Antigravity],
         thinking: None,
     },
     ModelEntry {
-        id: "qwen3-32b",
-        providers: &[ProviderId::Qwen],
+        id: "ag-claude-sonnet-4-6",
+        providers: &[ProviderId::Antigravity],
         thinking: None,
     },
     ModelEntry {
-        id: "qwen3-14b",
+        id: "ag-gpt-oss-120b-medium",
+        providers: &[ProviderId::Antigravity],
+        thinking: None,
+    },
+    // Qwen: the one model Qwen OAuth serves.
+    ModelEntry {
+        id: "coder-model",
         providers: &[ProviderId::Qwen],
         thinking: None,
     },
+    // Kimi (Kimi Code)
     ModelEntry {
-        id: "qwen3-8b",
-        providers: &[ProviderId::Qwen],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "qwen3-max",
-        providers: &[ProviderId::Qwen],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "qwen-plus",
-        providers: &[ProviderId::Qwen],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "qwen-turbo",
-        providers: &[ProviderId::Qwen],
-        thinking: None,
-    },
-    // Kimi
-    ModelEntry {
-        id: "kimi-k2-0711",
+        id: "kimi-for-coding",
         providers: &[ProviderId::Kimi],
+        thinking: None,
+    },
+    ModelEntry {
+        id: "kimi-for-coding-highspeed",
+        providers: &[ProviderId::Kimi],
+        thinking: None,
+    },
+    ModelEntry {
+        id: "kimi-k3",
+        providers: &[ProviderId::Kimi, ProviderId::Cursor],
         thinking: None,
     },
     // iFlow
@@ -424,15 +298,6 @@ pub fn thinking_capability(model: &str) -> Option<ThinkingCapability> {
     })
 }
 
-/// Returns `true` if the model is available on the Copilot **Free** tier.
-#[must_use]
-pub fn is_copilot_free_model(model: &str) -> bool {
-    matches!(
-        model,
-        "gpt-4o" | "gpt-4.1" | "gpt-5-mini" | "claude-haiku-4.5" | "raptor-mini" | "goldeneye"
-    )
-}
-
 /// Returns the model list for a given provider.
 ///
 /// Models served by multiple providers will appear in each provider's list.
@@ -475,10 +340,13 @@ mod tests {
     #[test]
     fn test_resolve_gemini() {
         assert_eq!(
-            resolve_provider("gemini-2.0-flash"),
+            resolve_provider("gemini-3.8-flash"),
             Some(ProviderId::Gemini)
         );
-        assert_eq!(resolve_provider("gemini-1.5-pro"), Some(ProviderId::Gemini));
+        assert_eq!(
+            resolve_provider("gemini-3.1-pro-preview"),
+            Some(ProviderId::Gemini)
+        );
     }
 
     #[test]
@@ -488,71 +356,66 @@ mod tests {
 
     #[test]
     fn test_resolve_codex() {
-        assert_eq!(resolve_provider("o4-mini"), Some(ProviderId::Codex));
-        assert_eq!(resolve_provider("o3"), Some(ProviderId::Codex));
+        assert_eq!(resolve_provider("gpt-6-astra"), Some(ProviderId::Codex));
+        assert_eq!(resolve_provider("gpt-6-sol"), Some(ProviderId::Codex));
     }
 
     #[test]
     fn test_resolve_to_copilot() {
-        assert_eq!(resolve_provider("gpt-4o"), Some(ProviderId::Copilot));
-        assert_eq!(resolve_provider("gpt-4.1"), Some(ProviderId::Copilot));
+        assert_eq!(resolve_provider("gpt-5.4"), Some(ProviderId::Copilot));
         assert_eq!(resolve_provider("gpt-5-mini"), Some(ProviderId::Copilot));
-        assert_eq!(resolve_provider("raptor-mini"), Some(ProviderId::Copilot));
-        assert_eq!(resolve_provider("goldeneye"), Some(ProviderId::Copilot));
         assert_eq!(
-            resolve_provider("grok-code-fast-1"),
+            resolve_provider("claude-haiku-4.5"),
             Some(ProviderId::Copilot)
         );
     }
 
     #[test]
-    fn test_shared_models_resolve_to_codex_first() {
-        // Codex is listed first in REGISTRY for shared models.
-        assert_eq!(resolve_provider("gpt-5.1"), Some(ProviderId::Codex));
-        assert_eq!(resolve_provider("gpt-5.1-codex"), Some(ProviderId::Codex));
-        assert_eq!(resolve_provider("gpt-5.2"), Some(ProviderId::Codex));
-        assert_eq!(resolve_provider("gpt-5.3-codex"), Some(ProviderId::Codex));
-    }
-
-    #[test]
-    fn test_retired_models_no_longer_copilot() {
-        // These were retired on 2025-10-23 and should no longer resolve to Copilot.
-        assert_ne!(resolve_provider("gpt-4o-mini"), Some(ProviderId::Copilot));
-        assert_ne!(resolve_provider("o3-mini"), Some(ProviderId::Copilot));
-        assert_ne!(
-            resolve_provider("claude-3.5-sonnet"),
-            Some(ProviderId::Copilot)
+    fn test_shared_models_resolve_to_their_vendor_first() {
+        assert_eq!(
+            resolve_provider("claude-sonnet-5"),
+            Some(ProviderId::Claude)
         );
+        assert_eq!(
+            resolve_provider("gemini-3.8-flash"),
+            Some(ProviderId::Gemini)
+        );
+        assert_eq!(resolve_provider("kimi-k3"), Some(ProviderId::Kimi));
     }
 
     #[test]
-    fn test_is_copilot_free_model() {
-        assert!(is_copilot_free_model("gpt-4o"));
-        assert!(is_copilot_free_model("gpt-4.1"));
-        assert!(is_copilot_free_model("gpt-5-mini"));
-        assert!(is_copilot_free_model("claude-haiku-4.5"));
-        assert!(is_copilot_free_model("raptor-mini"));
-        assert!(is_copilot_free_model("goldeneye"));
-        assert!(!is_copilot_free_model("gpt-5.1"));
-        assert!(!is_copilot_free_model("claude-sonnet-4.5"));
-        assert!(!is_copilot_free_model("grok-code-fast-1"));
+    fn test_retired_models_no_longer_resolve() {
+        for id in [
+            "o3",
+            "o4-mini",
+            "gpt-4o",
+            "gpt-4.1",
+            "gpt-5.1-codex",
+            "gemini-2.0-flash",
+            "gemini-1.5-pro",
+            "ag-gemini-2.5-pro",
+            "kimi-k2-0711",
+            "qwen3-coder-plus",
+        ] {
+            assert_eq!(resolve_provider(id), None, "{id}");
+        }
     }
 
     #[test]
     fn test_resolve_antigravity() {
         assert_eq!(
-            resolve_provider("ag-gemini-2.5-pro"),
+            resolve_provider("ag-gemini-pro-agent"),
             Some(ProviderId::Antigravity)
         );
         assert_eq!(
-            resolve_provider("ag-claude-sonnet-4-5"),
+            resolve_provider("ag-claude-sonnet-4-6"),
             Some(ProviderId::Antigravity)
         );
     }
 
     #[test]
     fn test_resolve_kimi() {
-        assert_eq!(resolve_provider("kimi-k2-0711"), Some(ProviderId::Kimi));
+        assert_eq!(resolve_provider("kimi-for-coding"), Some(ProviderId::Kimi));
     }
 
     #[test]
@@ -623,44 +486,32 @@ mod tests {
 
     #[test]
     fn test_antigravity_models_resolve_to_antigravity() {
-        // Antigravity-only models (ag- prefix) resolve to Antigravity.
-        // Shared models like claude-sonnet-4-5 resolve to their first provider (Claude).
         for m in models_for_provider(&ProviderId::Antigravity) {
-            let resolved = resolve_provider(&m);
-            assert!(
-                resolved == Some(ProviderId::Antigravity) || {
-                    // Shared model: Antigravity must be a listed provider
-                    resolve_provider_with(&m, |p| *p == ProviderId::Antigravity)
-                        == Some(ProviderId::Antigravity)
-                },
-                "model {m} should be servable by Antigravity"
+            assert_eq!(
+                resolve_provider(&m),
+                Some(ProviderId::Antigravity),
+                "model {m} should resolve to Antigravity"
             );
         }
     }
 
     #[test]
-    fn test_legacy_gpt4_resolves_to_codex() {
-        assert_eq!(resolve_provider("gpt-4-turbo"), Some(ProviderId::Codex));
-        assert_eq!(resolve_provider("gpt-4"), Some(ProviderId::Codex));
-    }
-
-    #[test]
     fn test_resolve_provider_with_filter() {
-        // gpt-5.1 has [Codex, Copilot]; filtering out Codex should yield Copilot.
+        // gpt-5.4 has [Copilot, Cursor]; filtering out Copilot should yield Cursor.
         assert_eq!(
-            resolve_provider_with("gpt-5.1", |p| *p != ProviderId::Codex),
-            Some(ProviderId::Copilot)
+            resolve_provider_with("gpt-5.4", |p| *p != ProviderId::Copilot),
+            Some(ProviderId::Cursor)
         );
         // Filtering out both should yield None.
         assert_eq!(
-            resolve_provider_with("gpt-5.1", |p| {
-                *p != ProviderId::Codex && *p != ProviderId::Copilot
+            resolve_provider_with("gpt-5.4", |p| {
+                *p != ProviderId::Copilot && *p != ProviderId::Cursor
             }),
             None
         );
         // Single-provider model unaffected by permissive filter.
         assert_eq!(
-            resolve_provider_with("o3", |_| true),
+            resolve_provider_with("gpt-6-sol", |_| true),
             Some(ProviderId::Codex)
         );
     }

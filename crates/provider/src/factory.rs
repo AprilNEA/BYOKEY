@@ -483,7 +483,7 @@ mod tests {
     fn test_make_executor_for_model_passes_api_key() {
         let auth = make_auth();
         let ex = make_executor_for_model(
-            "gpt-4o",
+            "gpt-5-mini",
             |p| match p {
                 ProviderId::Copilot => Some(ProviderConfig {
                     api_key: Some("sk-test".into()),
@@ -506,7 +506,7 @@ mod tests {
         let auth = make_auth();
         // gemini model with backend: copilot → should create a Copilot executor
         let ex = make_executor_for_model(
-            "gemini-2.0-flash",
+            "gemini-3.8-flash",
             |p| match p {
                 ProviderId::Gemini => Some(ProviderConfig {
                     backend: Some(ProviderId::Copilot),
@@ -529,7 +529,7 @@ mod tests {
         let auth = make_auth();
         // gemini model with fallback: copilot → should create a FallbackExecutor
         let ex = make_executor_for_model(
-            "gemini-2.0-flash",
+            "gemini-3.8-flash",
             |p| match p {
                 ProviderId::Gemini => Some(ProviderConfig {
                     fallback: Some(ProviderId::Copilot),

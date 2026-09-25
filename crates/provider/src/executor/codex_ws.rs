@@ -152,8 +152,8 @@ mod tests {
     }
 
     #[test]
-    fn test_supported_models_contains_o4_mini() {
+    fn test_supported_models_contains_gpt_6() {
         let ex = make_executor();
-        assert!(ex.supported_models().iter().any(|m| m == "o4-mini"));
+        assert!(ex.supported_models().iter().any(|m| m == "gpt-6-sol"));
     }
 }

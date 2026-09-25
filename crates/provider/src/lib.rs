@@ -31,9 +31,8 @@ pub use executor::{
 pub use factory::{make_executor, make_executor_for_model, make_executor_with_cache};
 pub use http_util::ProviderHttp;
 pub use registry::{
-    ModelEntry, ThinkingSupport, all_models, is_copilot_free_model, models_for_provider,
-    parse_qualified_model, resolve_provider, resolve_provider_with, thinking_capability,
-    thinking_support,
+    ModelEntry, ThinkingSupport, all_models, models_for_provider, parse_qualified_model,
+    resolve_provider, resolve_provider_with, thinking_capability, thinking_support,
 };
 pub use routing::{CredentialRouter, RoutingStrategy};
 pub use selector::{AccountNode, AccountSelector, RoutingPolicy, StrategyKind};
