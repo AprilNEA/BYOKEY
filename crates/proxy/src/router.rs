@@ -151,8 +151,8 @@ mod tests {
         let json = body_json(resp).await;
         assert_eq!(json["object"], "list");
         assert!(json["data"].is_array());
-        // All providers are enabled by default even without explicit config.
-        assert!(!json["data"].as_array().unwrap().is_empty());
+        // Nothing is signed in or keyed, so nothing is usable.
+        assert!(json["data"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]

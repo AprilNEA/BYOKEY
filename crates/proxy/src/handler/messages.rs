@@ -871,9 +871,9 @@ mod tests {
 
     #[test]
     fn auto_on_hybrid_model_becomes_adaptive() {
-        // claude-opus-4-6 is Hybrid → should translate to "adaptive".
+        // claude-opus-5-5 is Hybrid → should translate to "adaptive".
         let mut body = json!({
-            "model": "claude-opus-4-6",
+            "model": "claude-opus-5-5",
             "thinking": {"type": "auto"},
             "output_config": {"effort": "high"}
         });

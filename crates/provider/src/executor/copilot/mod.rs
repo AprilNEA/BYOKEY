@@ -104,6 +104,31 @@ pub struct CopilotCredentials {
 static TOKEN_CACHE: LazyLock<Mutex<HashMap<String, CachedToken>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// A model in the account's Copilot catalog and the endpoints BYOKEY can
+/// reach it on.
+#[derive(Debug, Clone)]
+pub struct CopilotModel {
+    pub id: String,
+    pub name: String,
+    /// Served on Copilot's Anthropic-format `/v1/messages`.
+    pub messages: bool,
+    /// Served on `/chat/completions`, which BYOKEY's chat path uses.
+    pub chat: bool,
+}
+
+/// How long a Copilot model catalog is reused.
+#[allow(
+    clippy::duration_suboptimal_units,
+    reason = "`Duration::from_mins` is not a const fn on stable"
+)]
+const MODELS_TTL: Duration = Duration::from_secs(5 * 60);
+
+/// Credential → its catalog and when it was fetched. Process-wide because
+/// executors are built per request.
+type ModelsCache = HashMap<String, (Instant, Vec<CopilotModel>)>;
+
+static MODELS_CACHE: LazyLock<Mutex<ModelsCache>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
 /// Score a cached quota for account comparison.
 ///
 /// `unlimited` → 100, known quota → `percent_remaining`, unknown → 50 (neutral).
@@ -437,13 +462,17 @@ impl CopilotExecutor {
         self.credentials_for(&token).await
     }
 
-    /// Models the account can use through Copilot's Anthropic-format
-    /// `/v1/messages`, from its live `/models` listing, as `(id, name)`.
+    /// The account's live model catalog (`/models`), cached for
+    /// [`MODELS_TTL`] per credential.
     ///
     /// # Errors
     ///
     /// Returns an error if there is no usable account or the listing fails.
-    pub async fn messages_models(&self) -> Result<Vec<(String, String)>> {
+    ///
+    /// # Panics
+    ///
+    /// Panics if the catalog cache mutex is poisoned.
+    pub async fn models(&self) -> Result<Vec<CopilotModel>> {
         #[derive(serde::Deserialize)]
         struct Listing {
             data: Vec<Entry>,
@@ -454,8 +483,16 @@ impl CopilotExecutor {
             name: Option<String>,
             #[serde(default)]
             supported_endpoints: Vec<String>,
+            /// Copilot offers the model to users (not an internal model).
+            #[serde(default)]
+            model_picker_enabled: bool,
         }
         let creds = self.credentials().await?;
+        if let Some((at, models)) = MODELS_CACHE.lock().unwrap().get(&creds.token)
+            && at.elapsed() < MODELS_TTL
+        {
+            return Ok(models.clone());
+        }
         let mut builder = self
             .ph
             .client()
@@ -468,15 +505,26 @@ impl CopilotExecutor {
             builder = builder.header(name, value);
         }
         let listing: Listing = self.ph.send(builder).await?.json().await?;
-        Ok(listing
+        let models: Vec<CopilotModel> = listing
             .data
             .into_iter()
-            .filter(|m| m.supported_endpoints.iter().any(|e| e == "/v1/messages"))
-            .map(|m| {
-                let name = m.name.unwrap_or_else(|| m.id.clone());
-                (m.id, name)
+            .filter(|m| m.model_picker_enabled)
+            .map(|m| CopilotModel {
+                messages: m.supported_endpoints.iter().any(|e| e == "/v1/messages"),
+                chat: m
+                    .supported_endpoints
+                    .iter()
+                    .any(|e| e == "/chat/completions"),
+                name: m.name.unwrap_or_else(|| m.id.clone()),
+                id: m.id,
             })
-            .collect())
+            .filter(|m| m.messages || m.chat)
+            .collect();
+        MODELS_CACHE
+            .lock()
+            .unwrap()
+            .insert(creds.token, (Instant::now(), models.clone()));
+        Ok(models)
     }
 
     /// Builds an [`OpenAICompatProvider`] for a single request as `creds`' account.

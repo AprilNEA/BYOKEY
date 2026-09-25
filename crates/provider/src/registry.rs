@@ -24,6 +24,22 @@ pub struct ModelEntry {
     pub thinking: Option<&'static ThinkingSupport>,
 }
 
+/// Adaptive thinking steered by effort (Claude 4.6 generation and later).
+const ADAPTIVE_THINKING: ThinkingSupport = ThinkingSupport {
+    min: 1024,
+    max: 128_000,
+    levels: &["low", "medium", "high", "xhigh", "max"],
+    zero_allowed: false,
+};
+
+/// Manual `budget_tokens` thinking (Claude Haiku 4.5 and earlier).
+const BUDGET_THINKING: ThinkingSupport = ThinkingSupport {
+    min: 1024,
+    max: 64_000,
+    levels: &[],
+    zero_allowed: true,
+};
+
 /// Unified model registry. Provider order within each entry determines
 /// resolution priority: the first provider wins in `resolve_provider()`.
 const REGISTRY: &[ModelEntry] = &[
@@ -150,55 +166,37 @@ const REGISTRY: &[ModelEntry] = &[
         providers: &[ProviderId::Copilot],
         thinking: None,
     },
-    // Claude (Anthropic — dashes)
+    // Claude (Anthropic): the current lineup. Legacy models the API still
+    // serves can be named directly or as `claude/<id>`.
     ModelEntry {
-        id: "claude-opus-4-6",
+        id: "claude-fable-5-1",
         providers: &[ProviderId::Claude],
-        thinking: Some(&ThinkingSupport {
-            min: 1024,
-            max: 128_000,
-            levels: &["low", "medium", "high", "max"],
-            zero_allowed: false,
-        }),
+        thinking: Some(&ADAPTIVE_THINKING),
     },
     ModelEntry {
-        id: "claude-opus-4-5",
+        id: "claude-opus-5-5",
+        providers: &[ProviderId::Claude, ProviderId::Cursor],
+        thinking: Some(&ADAPTIVE_THINKING),
+    },
+    ModelEntry {
+        id: "claude-sonnet-5",
+        providers: &[ProviderId::Claude, ProviderId::Cursor],
+        thinking: Some(&ADAPTIVE_THINKING),
+    },
+    ModelEntry {
+        id: "claude-haiku-4-5",
         providers: &[ProviderId::Claude],
-        thinking: None,
+        thinking: Some(&BUDGET_THINKING),
     },
+    // Copilot Claude (GitHub spells versions with dots). These route to
+    // Copilot on `/v1/chat/completions`; on `/v1/messages` use `copilot/<id>`.
     ModelEntry {
-        id: "claude-sonnet-4-5",
-        providers: &[ProviderId::Claude, ProviderId::Antigravity],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "claude-haiku-4-5-20251001",
-        providers: &[ProviderId::Claude],
-        thinking: None,
-    },
-    // Copilot Claude (GitHub — dots)
-    ModelEntry {
-        id: "claude-opus-4.6",
+        id: "claude-fable-5.1",
         providers: &[ProviderId::Copilot],
         thinking: None,
     },
     ModelEntry {
-        id: "claude-opus-4.5",
-        providers: &[ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "claude-sonnet-4.6",
-        providers: &[ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "claude-sonnet-4.5",
-        providers: &[ProviderId::Copilot],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "claude-sonnet-4",
+        id: "claude-opus-5.5",
         providers: &[ProviderId::Copilot],
         thinking: None,
     },
@@ -338,30 +336,11 @@ const REGISTRY: &[ModelEntry] = &[
         id: "kimi-k2",
         providers: &[ProviderId::IFlow],
         thinking: None,
-    }, // Cursor: a sample of its live catalog. Any other Cursor model name is
-    // routed with a `cursor/` prefix.
-    ModelEntry {
-        id: "claude-opus-5-5",
-        providers: &[ProviderId::Cursor],
-        thinking: None,
     },
+    // Cursor: a sample of its live catalog (see `/v1/models` for the rest).
+    // Any Cursor model is reachable as `cursor/<model>`.
     ModelEntry {
         id: "claude-opus-5-5-low-fast",
-        providers: &[ProviderId::Cursor],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "claude-sonnet-5",
-        providers: &[ProviderId::Cursor],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gpt-5.6-sol",
-        providers: &[ProviderId::Cursor],
-        thinking: None,
-    },
-    ModelEntry {
-        id: "gpt-5.6-sol-low-fast",
         providers: &[ProviderId::Cursor],
         thinking: None,
     },
@@ -481,14 +460,16 @@ mod tests {
 
     #[test]
     fn test_resolve_claude() {
-        assert_eq!(
-            resolve_provider("claude-opus-4-6"),
-            Some(ProviderId::Claude)
-        );
-        assert_eq!(
-            resolve_provider("claude-haiku-4-5-20251001"),
-            Some(ProviderId::Claude)
-        );
+        for id in [
+            "claude-fable-5-1",
+            "claude-opus-5-5",
+            "claude-sonnet-5",
+            "claude-haiku-4-5",
+        ] {
+            assert_eq!(resolve_provider(id), Some(ProviderId::Claude), "{id}");
+        }
+        // Legacy models are left to explicit `claude/<id>` routing.
+        assert_eq!(resolve_provider("claude-opus-4-6"), None);
     }
 
     #[test]
@@ -726,12 +707,12 @@ mod tests {
     fn test_claude_dashes_vs_dots() {
         // Dashes → Claude (Anthropic)
         assert_eq!(
-            resolve_provider("claude-opus-4-6"),
+            resolve_provider("claude-opus-5-5"),
             Some(ProviderId::Claude)
         );
         // Dots → Copilot (GitHub)
         assert_eq!(
-            resolve_provider("claude-opus-4.6"),
+            resolve_provider("claude-opus-5.5"),
             Some(ProviderId::Copilot)
         );
     }

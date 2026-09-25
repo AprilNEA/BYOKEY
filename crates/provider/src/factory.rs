@@ -451,7 +451,7 @@ mod tests {
     fn test_make_executor_for_model_claude() {
         let auth = make_auth();
         let ex = make_executor_for_model(
-            "claude-opus-4-6",
+            "claude-opus-5-5",
             |_| None,
             &empty_oauth(),
             None,
@@ -556,7 +556,7 @@ mod tests {
 
         let auth = make_auth();
         let ex = make_executor_for_model(
-            "claude-opus-4-6",
+            "claude-opus-5-5",
             |p| match p {
                 ProviderId::Claude => Some(ProviderConfig {
                     api_keys: vec![
@@ -593,7 +593,7 @@ mod tests {
         let auth = make_auth();
         // Single api_key → no RetryExecutor, direct executor
         let ex = make_executor_for_model(
-            "claude-opus-4-6",
+            "claude-opus-5-5",
             |p| match p {
                 ProviderId::Claude => Some(ProviderConfig {
                     api_key: Some("sk-single".into()),

@@ -21,7 +21,7 @@ pub use claude::ClaudeExecutor;
 pub use codex::CodexExecutor;
 pub use codex_ws::CodexWsExecutor;
 pub use copilot::{
-    Conversation, CopilotCredentials, CopilotDevice, CopilotExecutor, CopilotIdentity,
+    Conversation, CopilotCredentials, CopilotDevice, CopilotExecutor, CopilotIdentity, CopilotModel,
 };
 pub use cursor::CursorExecutor;
 pub use gemini::GeminiExecutor;
