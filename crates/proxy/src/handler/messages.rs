@@ -42,7 +42,7 @@ const DEFAULT_AUTO_BUDGET: u32 = 10_000;
 ///
 /// Handles both string (`"system": ""`) and array forms
 /// (`"system": [{"type": "text", "text": ""}]`).
-fn sanitize_system(body: &mut Value) {
+pub(super) fn sanitize_system(body: &mut Value) {
     let dominated_by_empty = match body.get("system") {
         Some(Value::String(s)) => s.is_empty(),
         Some(Value::Array(arr)) => arr.iter().all(|block| {
@@ -222,7 +222,7 @@ fn strip_thinking_fields(body: &mut Value) {
 /// Merge betas from the request body's `betas` array and the client's
 /// `anthropic-beta` HTTP header into the base beta string, then strip the
 /// body field so the upstream API doesn't reject it as unknown.
-fn build_beta_header(body: &mut Value, client_headers: &HeaderMap) -> String {
+pub(super) fn build_beta_header(body: &mut Value, client_headers: &HeaderMap) -> String {
     let mut betas = ANTHROPIC_BETA.to_string();
 
     // Merge from client's `anthropic-beta` HTTP header (comma-separated).
@@ -277,32 +277,12 @@ pub async fn anthropic_messages(
     let beta = build_beta_header(&mut body, &headers);
 
     let config = state.config.load();
-    let claude_config = config
-        .providers
-        .get(&ProviderId::Claude)
-        .cloned()
-        .unwrap_or_default();
-
-    // An explicit `cursor/<model>` wins over any global backend; otherwise
-    // `claude.backend` picks Copilot or Cursor for every request.
-    let model = body
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let (hint, bare) = byokey_provider::parse_qualified_model(&model);
-    let backend = if hint == Some(ProviderId::Cursor) {
-        hint
-    } else {
-        claude_config.backend.clone()
-    };
-    match backend {
-        Some(ProviderId::Cursor) => {
-            let bare = bare.to_owned();
-            return super::cursor_messages::cursor_messages(&state, body, &bare, stream).await;
+    match Backend::of(&config, &body) {
+        Backend::Cursor(model) => {
+            return super::cursor_messages::cursor_messages(&state, body, &model, stream).await;
         }
-        Some(ProviderId::Copilot) => return copilot_messages(&state, body, stream, &beta).await,
-        _ => {}
+        Backend::Copilot => return copilot_messages(&state, body, stream, &beta).await,
+        Backend::Anthropic => {}
     }
 
     // Default: passthrough to Anthropic API.
@@ -334,37 +314,8 @@ pub async fn anthropic_messages(
         byokey_provider::cloak::remap_tool_names_request(&mut body);
     }
 
-    // Resolve auth credential + mode, capturing the account_id used for
-    // per-account usage attribution.
-    let (credential, auth_mode, account_id) = if let Some(key) = api_key {
-        (
-            key,
-            AuthMode::ApiKey,
-            byokey_types::DEFAULT_ACCOUNT.to_string(),
-        )
-    } else {
-        let (account_id, token) = state
-            .auth
-            .get_token_with_account(&ProviderId::Claude)
-            .await
-            .map_err(ApiError::from)?;
-        (token.access_token, AuthMode::Bearer, account_id)
-    };
-
-    // Build Transport — handles auth header, version, beta, and fingerprint.
-    let transport = Transport::new(TransportConfig {
-        api_key: SecretString::from(credential),
-        auth_mode,
-        base_url: provider_cfg
-            .and_then(|pc| pc.base_url.clone())
-            .unwrap_or_else(|| "https://api.anthropic.com".to_owned()),
-        beta: Some(beta.clone()),
-        extra_headers: build_fingerprint_headers(&profile, !is_oauth),
-        ..Default::default()
-    })
-    .map_err(|e| ApiError(ByokError::Config(e.to_string())))?;
-
-    let api_url = format!("{}?beta=true", transport.url("/v1/messages"));
+    let upstream = AnthropicUpstream::resolve(&state, &config, &profile, &beta).await?;
+    let api_url = format!("{}?beta=true", upstream.transport.url("/v1/messages"));
 
     let accept = if stream {
         "text/event-stream"
@@ -372,14 +323,8 @@ pub async fn anthropic_messages(
         "application/json"
     };
 
-    // Apply Transport headers to wreq builder.
-    let mut builder = state.http.post(&api_url);
-    for (name, value) in transport.headers() {
-        if let Ok(v) = value.to_str() {
-            builder = builder.header(name.as_str(), v);
-        }
-    }
-    let builder = builder
+    let builder = upstream
+        .request(&state.http, &api_url)
         .header("accept", accept)
         .header("connection", "keep-alive")
         .header("accept-encoding", "identity");
@@ -413,29 +358,143 @@ pub async fn anthropic_messages(
         &state.usage,
         &model_name,
         "claude",
-        &account_id,
+        &upstream.account_id,
         is_oauth,
     )
     .await
 }
 
-/// Build a Copilot Messages API request as `creds`' account.
-fn build_copilot_messages_request(
+/// Credentials and transport for the Anthropic API.
+pub(super) struct AnthropicUpstream {
+    pub(super) transport: Transport,
+    /// Account the request is attributed to in usage records.
+    pub(super) account_id: String,
+}
+
+impl AnthropicUpstream {
+    /// A configured API key, else the active Claude OAuth account.
+    pub(super) async fn resolve(
+        state: &AppState,
+        config: &byokey_config::Config,
+        profile: &byokey_provider::device_profile::DeviceProfile,
+        beta: &str,
+    ) -> Result<Self, ApiError> {
+        let provider_cfg = config.providers.get(&ProviderId::Claude);
+        let (credential, auth_mode, account_id) =
+            if let Some(key) = provider_cfg.and_then(|pc| pc.api_key.clone()) {
+                (
+                    key,
+                    AuthMode::ApiKey,
+                    byokey_types::DEFAULT_ACCOUNT.to_string(),
+                )
+            } else {
+                let (account_id, token) = state
+                    .auth
+                    .get_token_with_account(&ProviderId::Claude)
+                    .await?;
+                (token.access_token, AuthMode::Bearer, account_id)
+            };
+        let is_api_key = matches!(auth_mode, AuthMode::ApiKey);
+        let transport = Transport::new(TransportConfig {
+            api_key: SecretString::from(credential),
+            auth_mode,
+            base_url: provider_cfg
+                .and_then(|pc| pc.base_url.clone())
+                .unwrap_or_else(|| "https://api.anthropic.com".to_owned()),
+            beta: Some(beta.to_owned()),
+            extra_headers: build_fingerprint_headers(profile, is_api_key),
+            ..Default::default()
+        })
+        .map_err(|e| ApiError(ByokError::Config(e.to_string())))?;
+        Ok(Self {
+            transport,
+            account_id,
+        })
+    }
+
+    /// A POST to `url` carrying the transport's auth, version and beta headers.
+    pub(super) fn request(&self, http: &wreq::Client, url: &str) -> wreq::RequestBuilder {
+        let mut builder = http.post(url);
+        for (name, value) in self.transport.headers() {
+            if let Ok(v) = value.to_str() {
+                builder = builder.header(name.as_str(), v);
+            }
+        }
+        builder
+    }
+}
+
+/// Which upstream serves a Messages request.
+pub(super) enum Backend {
+    Anthropic,
+    Copilot,
+    /// Cursor, with the model name stripped of its `cursor/` qualifier.
+    Cursor(String),
+}
+
+impl Backend {
+    /// An explicit `cursor/<model>` wins over any global backend; otherwise
+    /// `claude.backend` picks Copilot or Cursor for every request.
+    pub(super) fn of(config: &byokey_config::Config, body: &Value) -> Self {
+        let model = body
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let (hint, bare) = byokey_provider::parse_qualified_model(model);
+        let backend = if hint == Some(ProviderId::Cursor) {
+            hint
+        } else {
+            config
+                .providers
+                .get(&ProviderId::Claude)
+                .and_then(|c| c.backend.clone())
+        };
+        match backend {
+            Some(ProviderId::Cursor) => Self::Cursor(bare.to_owned()),
+            Some(ProviderId::Copilot) => Self::Copilot,
+            _ => Self::Anthropic,
+        }
+    }
+}
+
+/// The Copilot executor configured for this server, and the client identity
+/// its requests present.
+pub(super) fn copilot_executor(state: &AppState) -> (CopilotExecutor, CopilotIdentity) {
+    let config = state
+        .config
+        .load()
+        .providers
+        .get(&ProviderId::Copilot)
+        .cloned()
+        .unwrap_or_default();
+    let identity = CopilotIdentity::from_versions(state.versions.get(&ProviderId::Copilot));
+    let executor = CopilotExecutor::builder()
+        .http(state.http.clone())
+        .auth(state.auth.clone())
+        .maybe_api_key(config.api_key)
+        .maybe_base_url(config.base_url)
+        .ratelimit(state.ratelimits.clone())
+        .identity(identity.clone())
+        .build();
+    (executor, identity)
+}
+
+/// A POST of `body` to Copilot's Anthropic-format `path` as `creds`' account.
+pub(super) fn copilot_request(
     http: &wreq::Client,
+    path: &str,
     creds: &CopilotCredentials,
     beta: &str,
-    accept: &str,
     identity: &CopilotIdentity,
     conversation: &Conversation,
     body: &Value,
 ) -> wreq::RequestBuilder {
     let mut builder = http
-        .post(format!("{}/v1/messages", creds.endpoint))
+        .post(format!("{}{path}", creds.endpoint))
         .header("authorization", format!("Bearer {}", creds.token))
         .header("anthropic-version", ANTHROPIC_VERSION)
         .header("anthropic-beta", beta)
-        .header("content-type", "application/json")
-        .header("accept", accept);
+        .header("content-type", "application/json");
     for (name, value) in identity.request_headers(creds, conversation) {
         builder = builder.header(name, value);
     }
@@ -446,7 +505,7 @@ fn build_copilot_messages_request(
 /// are not permitted": the per-message `output_config` of the
 /// `per-turn-control` beta and the top-level `safeguards`, both of which
 /// Claude Code sends by default.
-fn strip_copilot_unsupported(body: &mut Value) {
+pub(super) fn strip_copilot_unsupported(body: &mut Value) {
     let Some(body) = body.as_object_mut() else {
         return;
     };
@@ -479,23 +538,7 @@ async fn copilot_messages(
     beta: &str,
 ) -> Result<Response, ApiError> {
     strip_copilot_unsupported(&mut body);
-    let copilot_config = state
-        .config
-        .load()
-        .providers
-        .get(&ProviderId::Copilot)
-        .cloned()
-        .unwrap_or_default();
-
-    let identity = CopilotIdentity::from_versions(state.versions.get(&ProviderId::Copilot));
-    let executor = CopilotExecutor::builder()
-        .http(state.http.clone())
-        .auth(state.auth.clone())
-        .maybe_api_key(copilot_config.api_key)
-        .maybe_base_url(copilot_config.base_url)
-        .ratelimit(state.ratelimits.clone())
-        .identity(identity.clone())
-        .build();
+    let (executor, identity) = copilot_executor(state);
 
     let accounts = state
         .auth
@@ -546,15 +589,16 @@ async fn copilot_messages(
             "routing Anthropic messages through Copilot"
         );
 
-        let resp = build_copilot_messages_request(
+        let resp = copilot_request(
             &state.http,
+            "/v1/messages",
             &creds,
             beta,
-            accept,
             &identity,
             &conversation,
             &body,
         )
+        .header("accept", accept)
         .send()
         .await;
 

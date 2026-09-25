@@ -21,7 +21,7 @@ use tower_http::request_id::{
 use tower_http::trace::TraceLayer;
 use tracing::{Span, info_span};
 
-use crate::handler::{chat, management, messages, models, responses};
+use crate::handler::{chat, count_tokens, management, messages, models, responses};
 use crate::{AppState, openapi};
 
 fn common_layers(router: Router) -> Router {
@@ -93,6 +93,10 @@ pub fn make_router(state: Arc<AppState>) -> Router {
         .route("/v1/chat/completions", post(chat::chat_completions))
         .route("/v1/responses", post(responses::codex_responses))
         .route("/v1/messages", post(messages::anthropic_messages))
+        .route(
+            "/v1/messages/count_tokens",
+            post(count_tokens::count_tokens),
+        )
         .route("/v1/models", get(models::list_models))
         .route("/openapi.json", get(openapi::openapi_json));
 

@@ -5,6 +5,7 @@
 //! - [`management`] — BYOKEY `ConnectRPC` management API.
 
 pub(crate) mod chat;
+pub(crate) mod count_tokens;
 pub(crate) mod cursor_messages;
 pub mod management;
 pub(crate) mod messages;
