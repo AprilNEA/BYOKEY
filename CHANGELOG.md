@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.1](https://github.com/AprilNEA/BYOKEY/compare/v2.1.0...v2.1.1) - 2026-09-25
+
+### Fixed
+
+- *(proxy)* let cursor/<model> override claude.backend on /v1/messages
+
 ## [2.1.0](https://github.com/AprilNEA/BYOKEY/compare/v2.0.0...v2.1.0) - 2026-09-24
 
 ### Added
