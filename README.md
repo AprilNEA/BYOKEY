@@ -174,7 +174,8 @@ export OPENAI_API_KEY=any          # byokey ignores the key value
 
 **For Claude Code:** `byokey claude start [claude args…]` launches Claude Code
 against BYOKEY; plain `claude` keeps using your own login. To make BYOKEY the
-default instead, run `byokey claude inject`.
+default instead, run `byokey claude inject`. `byokey claude desktop` does the
+same for Claude Desktop (macOS). `byokey doctor` checks the whole setup.
 
 ## CLI Reference
 
@@ -191,10 +192,11 @@ Commands:
   login         Authenticate with a provider
   logout        Remove stored credentials for a provider
   status        Show authentication status for all providers
+  doctor        Check the server, provider logins and Claude Code wiring
   tui           Launch the interactive terminal UI
   accounts      List all accounts for a provider
   switch        Switch the active account for a provider
-  claude        Run Claude Code against BYOKEY (alias: claude-code)
+  claude        Run Claude Code or Claude Desktop against BYOKEY (alias: claude-code)
   openapi       Export the OpenAPI specification as JSON
   completions   Generate shell completions
   help          Print help
@@ -242,6 +244,11 @@ Options:
 
 **`byokey status`** — Prints authentication status for every known provider.
 
+**`byokey doctor`** — Checks that the server answers, `/v1/models` and
+`/v1/messages/count_tokens` work, each configured provider is signed in, and
+whether plain `claude` points at BYOKEY. Each failing line says what to run.
+Exits non-zero when a check fails.
+
 **`byokey tui`** — Opens the terminal management UI. It connects to the
 ConnectRPC management API at `http://127.0.0.1:8018` by default; override with
 `--url <URL>`.
@@ -257,13 +264,20 @@ Windows SCM on Windows.
 **`byokey claude start [ARGS]…`** — Runs `claude` with `ANTHROPIC_BASE_URL`
 pointing at BYOKEY, passing `ARGS` through. A claude.ai login stays in effect,
 keeping features such as connectors; without any login, a placeholder
-`ANTHROPIC_AUTH_TOKEN` is set so Claude Code can start.
+`ANTHROPIC_AUTH_TOKEN` is set so Claude Code can start, along with gateway
+model discovery, which lists your Copilot and Cursor Claude models
+(`copilot/…`, `cursor/…`) in `/model`.
 
 **`byokey claude inject`** — Writes the same settings, plus any
 `claude_code.settings` from your byokey config, into `~/.claude/settings.json`,
 keeping its other settings. Override the target with `--settings <FILE>`.
 
-Both accept `--url <URL>` to use a BYOKEY other than the configured one.
+**`byokey claude desktop [byokey|official]`** — Relaunches Claude Desktop in
+its third-party mode against BYOKEY, with models discovered from BYOKEY.
+`official` relaunches it on its normal sign-in. The official profile is never
+modified. macOS only.
+
+All three accept `--url <URL>` to use a BYOKEY other than the configured one.
 
 </details>
 

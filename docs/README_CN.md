@@ -166,7 +166,8 @@ export OPENAI_API_KEY=any          # byokey 忽略 key 的值
 
 **对于 Claude Code：** `byokey claude start [claude 参数…]` 以 BYOKEY 启动
 Claude Code；直接运行 `claude` 则照常使用你自己的登录。想让 BYOKEY 成为默认，
-运行 `byokey claude inject`。
+运行 `byokey claude inject`。`byokey claude desktop` 对 Claude Desktop（macOS）做同样的事。
+`byokey doctor` 可以检查整套配置。
 
 ## CLI 参考
 
@@ -183,10 +184,11 @@ Commands:
   login         向 Provider 认证
   logout        删除指定 Provider 的已存储凭据
   status        显示所有 Provider 的认证状态
+  doctor        检查服务器、Provider 登录和 Claude Code 的接入状态
   tui           启动交互式终端 UI
   accounts      列出某个 Provider 的所有账户
   switch        切换某个 Provider 的活动账户
-  claude        以 BYOKEY 运行 Claude Code（别名：claude-code）
+  claude        以 BYOKEY 运行 Claude Code 或 Claude Desktop（别名：claude-code）
   openapi       导出 OpenAPI 规范（JSON 格式）
   completions   生成 Shell 补全脚本
   help          打印帮助信息
@@ -238,6 +240,10 @@ Options:
 `http://127.0.0.1:8018` 上的 ConnectRPC 管理 API；可用 `--url <URL>`
 覆盖。
 
+**`byokey doctor`** — 检查服务器是否响应、`/v1/models` 和
+`/v1/messages/count_tokens` 是否可用、各个已配置的 Provider 是否已登录，以及直接运行
+`claude` 时是否指向 BYOKEY。每条未通过的检查都会给出要运行的命令；有检查失败时以非零状态退出。
+
 **`byokey accounts <PROVIDER>`** — 列出某个 Provider 的所有账户。
 
 **`byokey switch <PROVIDER> <ACCOUNT>`** — 切换某个 Provider 的活动账户。
@@ -249,13 +255,18 @@ Windows 上使用 SCM。
 **`byokey claude start [ARGS]…`** — 以指向 BYOKEY 的 `ANTHROPIC_BASE_URL`
 运行 `claude`，`ARGS` 原样传入。已登录 claude.ai 时保留该登录，connectors 等功能
 照常可用；没有任何登录时会设置占位用的 `ANTHROPIC_AUTH_TOKEN`，保证 Claude Code
-能够启动。
+能够启动，同时开启网关模型发现，让 `/model` 列出你 Copilot 和 Cursor 账号下的
+Claude 模型（`copilot/…`、`cursor/…`）。
 
 **`byokey claude inject`** — 将同样的设置（以及 byokey 配置中的
 `claude_code.settings`）写入 `~/.claude/settings.json`，保留其他设置。可用
 `--settings <FILE>` 指定目标文件。
 
-两个命令都可以用 `--url <URL>` 指定其他 BYOKEY 地址。
+**`byokey claude desktop [byokey|official]`** — 以第三方模式重启 Claude Desktop，
+改用 BYOKEY，模型从 BYOKEY 发现。`official` 则以原来的登录重启。官方 profile
+不会被改动。仅支持 macOS。
+
+三个命令都可以用 `--url <URL>` 指定其他 BYOKEY 地址。
 
 </details>
 
