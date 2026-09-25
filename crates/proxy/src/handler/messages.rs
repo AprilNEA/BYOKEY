@@ -40,11 +40,46 @@ const DEFAULT_AUTO_BUDGET: u32 = 10_000;
 /// Authenticates with the Claude provider (API key or OAuth), then forwards
 /// the request body verbatim to the Anthropic API and streams the response
 /// back without translation.
+/// Claude Code's billing header carries a `cch=<hash>;` segment that changes
+/// between requests. Every change invalidates the upstream prompt cache for
+/// the whole system prompt, so it is pinned to one value.
+const STABLE_CCH: &str = "cch=00000;";
+
+/// Pin the `cch=` segment of a Claude Code billing header, if `text` is one.
+fn stabilize_billing_header(text: &str) -> Option<String> {
+    if !text.starts_with("x-anthropic-billing-header:") {
+        return None;
+    }
+    let start = text.find("cch=")?;
+    let end = start + text[start..].find(';')? + 1;
+    if &text[start..end] == STABLE_CCH {
+        return None;
+    }
+    Some(format!("{}{STABLE_CCH}{}", &text[..start], &text[end..]))
+}
+
 /// Strip empty system content to prevent "text content blocks must be non-empty" API error.
 ///
 /// Handles both string (`"system": ""`) and array forms
-/// (`"system": [{"type": "text", "text": ""}]`).
+/// (`"system": [{"type": "text", "text": ""}]`). Also pins the `cch=`
+/// segment of Claude Code's billing header so it stops busting the prompt
+/// cache.
 pub(super) fn sanitize_system(body: &mut Value) {
+    match body.get_mut("system") {
+        Some(Value::String(s)) => {
+            if let Some(fixed) = stabilize_billing_header(s) {
+                *s = fixed;
+            }
+        }
+        Some(Value::Array(arr)) => {
+            for text in arr.iter_mut().filter_map(|b| b.get_mut("text")) {
+                if let Some(fixed) = text.as_str().and_then(stabilize_billing_header) {
+                    *text = Value::String(fixed);
+                }
+            }
+        }
+        _ => {}
+    }
     let dominated_by_empty = match body.get("system") {
         Some(Value::String(s)) => s.is_empty(),
         Some(Value::Array(arr)) => arr.iter().all(|block| {
@@ -547,9 +582,10 @@ pub(super) fn copilot_request(
 
 /// Drop request fields Copilot's `/v1/messages` rejects with "Extra inputs
 /// are not permitted": the per-message `output_config` of the
-/// `per-turn-control` beta and the top-level `safeguards`, both of which
-/// Claude Code sends by default.
+/// `per-turn-control` beta, the top-level `safeguards`, and the `scope` of
+/// `cache_control` markers, all of which Claude Code sends by default.
 pub(super) fn strip_copilot_unsupported(body: &mut Value) {
+    strip_cache_scope(body);
     let Some(body) = body.as_object_mut() else {
         return;
     };
@@ -559,6 +595,66 @@ pub(super) fn strip_copilot_unsupported(body: &mut Value) {
             message.remove("output_config");
         }
     }
+}
+
+/// Remove `scope` from every `cache_control` marker in `value`.
+fn strip_cache_scope(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            if let Some(cc) = map.get_mut("cache_control").and_then(Value::as_object_mut) {
+                cc.remove("scope");
+            }
+            map.values_mut().for_each(strip_cache_scope);
+        }
+        Value::Array(items) => items.iter_mut().for_each(strip_cache_scope),
+        _ => {}
+    }
+}
+
+/// Claude Code's compaction requests: they carry no tools yet must run on
+/// the model the user chose, since their output replaces the conversation.
+const COMPACTION_PROMPTS: &[&str] = &[
+    "You are a helpful AI assistant tasked with summarizing conversations",
+    "Your task is to create a detailed summary of the conversation so far",
+];
+
+/// Whether a request is one of the incidental calls Claude Code makes
+/// around a turn (a title, a suggestion, a summary): no tools, and not a
+/// compaction. On a per-request Copilot plan each one costs as much as a
+/// real turn, so `providers.copilot.small_model` may serve them instead.
+pub(super) fn is_incidental(body: &Value) -> bool {
+    let has_tools = body
+        .get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|t| !t.is_empty());
+    if has_tools {
+        return false;
+    }
+    let mut texts = Vec::new();
+    match body.get("system") {
+        Some(Value::String(s)) => texts.push(s.as_str()),
+        Some(Value::Array(blocks)) => {
+            texts.extend(blocks.iter().filter_map(|b| b["text"].as_str()));
+        }
+        _ => {}
+    }
+    if let Some(last) = body
+        .get("messages")
+        .and_then(Value::as_array)
+        .and_then(|m| m.last())
+    {
+        match last.get("content") {
+            Some(Value::String(s)) => texts.push(s.as_str()),
+            Some(Value::Array(blocks)) => {
+                texts.extend(blocks.iter().filter_map(|b| b["text"].as_str()));
+            }
+            _ => {}
+        }
+    }
+    !texts.iter().any(|t| {
+        let t = t.trim_start();
+        COMPACTION_PROMPTS.iter().any(|p| t.starts_with(p))
+    })
 }
 
 /// Route Anthropic-format request to Copilot's native `/v1/messages` endpoint.
@@ -584,6 +680,18 @@ async fn copilot_messages(
 ) -> Result<Response, ApiError> {
     strip_copilot_unsupported(&mut body);
     let (executor, identity) = copilot_executor(state);
+    let small_model = state
+        .config
+        .load()
+        .providers
+        .get(&ProviderId::Copilot)
+        .and_then(|c| c.small_model.clone());
+    if let Some(small) = small_model
+        && is_incidental(&body)
+    {
+        tracing::info!(small_model = %small, "serving a tool-less request with the small model");
+        body["model"] = Value::String(small);
+    }
 
     let accounts = state
         .auth
@@ -896,9 +1004,14 @@ mod tests {
             "safeguards": {"mode": "default"},
             "output_config": {"effort": "high"},
             "context_management": {"edits": []},
+            "system": [{"type": "text", "text": "s", "cache_control": {"type": "ephemeral", "scope": "global"}}],
+            "tools": [{"name": "t", "input_schema": {}, "eager_input_streaming": true}],
             "messages": [
                 {"role": "user", "content": "hi", "output_config": {"effort": "low"}},
-                {"role": "assistant", "content": "hello"}
+                {"role": "assistant", "content": "hello"},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "x", "cache_control": {"type": "ephemeral", "ttl": "1h", "scope": "global"}}
+                ]}
             ]
         });
         strip_copilot_unsupported(&mut body);
@@ -908,12 +1021,69 @@ mod tests {
                 "model": "claude-fable-5-1",
                 "output_config": {"effort": "high"},
                 "context_management": {"edits": []},
+                "system": [{"type": "text", "text": "s", "cache_control": {"type": "ephemeral"}}],
+                "tools": [{"name": "t", "input_schema": {}, "eager_input_streaming": true}],
                 "messages": [
                     {"role": "user", "content": "hi"},
-                    {"role": "assistant", "content": "hello"}
+                    {"role": "assistant", "content": "hello"},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": "x", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
+                    ]}
                 ]
             })
         );
+    }
+
+    #[test]
+    fn the_billing_header_cch_segment_is_pinned() {
+        let header =
+            "x-anthropic-billing-header: cc_version=2.1.282.7f3a; cc_entrypoint=cli; cch=a1b2c;";
+        let mut body = json!({
+            "system": [
+                {"type": "text", "text": header, "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": "You are Claude Code."}
+            ]
+        });
+        sanitize_system(&mut body);
+        assert_eq!(
+            body["system"][0]["text"],
+            "x-anthropic-billing-header: cc_version=2.1.282.7f3a; cc_entrypoint=cli; cch=00000;"
+        );
+        assert_eq!(body["system"][1]["text"], "You are Claude Code.");
+
+        let mut body = json!({"system": header});
+        sanitize_system(&mut body);
+        assert!(body["system"].as_str().unwrap().ends_with("cch=00000;"));
+
+        // Not a billing header, or no cch: untouched.
+        assert!(stabilize_billing_header("cch=zzz; something").is_none());
+        assert!(stabilize_billing_header("x-anthropic-billing-header: cc_version=1;").is_none());
+        assert!(stabilize_billing_header("x-anthropic-billing-header: cch=00000;").is_none());
+    }
+
+    #[test]
+    fn incidental_requests_have_no_tools_and_are_not_compactions() {
+        assert!(is_incidental(&json!({
+            "system": "Generate a short title.",
+            "messages": [{"role": "user", "content": "hi"}]
+        })));
+        assert!(is_incidental(&json!({
+            "tools": [],
+            "messages": [{"role": "user", "content": "hi"}]
+        })));
+        assert!(!is_incidental(&json!({
+            "tools": [{"name": "Bash"}],
+            "messages": [{"role": "user", "content": "hi"}]
+        })));
+        assert!(!is_incidental(&json!({
+            "system": [{"type": "text", "text": "You are a helpful AI assistant tasked with summarizing conversations."}],
+            "messages": [{"role": "user", "content": "go"}]
+        })));
+        assert!(!is_incidental(&json!({
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "Your task is to create a detailed summary of the conversation so far."}
+            ]}]
+        })));
     }
 
     // ── sanitize_thinking: tool_choice conflict ────────────────────────

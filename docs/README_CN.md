@@ -299,6 +299,11 @@ providers:
 
 所有字段均可选；未指定的 Provider 默认启用，并使用数据库中存储的 OAuth Token。
 
+**Copilot** 按 premium request 计费的套餐每次调用计一次，而 Claude Code 每轮对话
+前后会发出多个不带工具的调用（标题、建议、摘要）。设置
+`providers.copilot.small_model: gpt-5-mini` 可以让这些调用改走便宜的模型；
+compaction 请求仍使用你选择的模型。
+
 **Cursor** 提供 Cursor 套餐内的全部模型，包括 `claude-opus-5-5-high-fast`、
 `gpt-5.6-sol-low-fast` 这类变体。在 `/v1/chat/completions` 和 `/v1/messages`
 上都以 `cursor/<model>` 指定，例如

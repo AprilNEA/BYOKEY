@@ -154,6 +154,12 @@ pub struct ProviderConfig {
     /// Use WebSocket transport instead of HTTP (currently Codex only).
     #[serde(default)]
     pub websocket: bool,
+    /// Copilot: serve Anthropic Messages requests that carry no tools with
+    /// this model instead of the requested one. Claude Code sends several
+    /// such requests per turn (titles, suggestions, summaries), and on a
+    /// per-request Copilot plan each one costs a premium request.
+    #[serde(default)]
+    pub small_model: Option<String>,
 }
 
 impl Default for ProviderConfig {
@@ -171,6 +177,7 @@ impl Default for ProviderConfig {
             codex_headers: CodexHeaderDefaults::default(),
             cloak: CloakConfig::default(),
             websocket: false,
+            small_model: None,
         }
     }
 }
@@ -240,6 +247,19 @@ providers:
         let claude = c.providers.get(&ProviderId::Claude).unwrap();
         assert_eq!(claude.api_key.as_deref(), Some("sk-ant-test"));
         assert!(claude.enabled);
+    }
+
+    #[test]
+    fn test_from_yaml_copilot_small_model() {
+        let yaml = r"
+providers:
+  copilot:
+    small_model: gpt-5-mini
+";
+        let c = Config::from_yaml(yaml).unwrap();
+        let copilot = c.providers.get(&ProviderId::Copilot).unwrap();
+        assert_eq!(copilot.small_model.as_deref(), Some("gpt-5-mini"));
+        assert!(ProviderConfig::default().small_model.is_none());
     }
 
     #[test]

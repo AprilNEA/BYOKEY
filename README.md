@@ -311,6 +311,11 @@ providers:
 All fields are optional; unspecified providers are enabled by default and use
 the OAuth token stored in the database.
 
+**Copilot** plans that meter premium requests charge one per call, and Claude
+Code makes several tool-less calls around each turn (titles, suggestions,
+summaries). Set `providers.copilot.small_model: gpt-5-mini` to serve those with
+a cheaper model; compaction requests keep the model you chose.
+
 **Cursor** serves every model on your Cursor plan, including variants such as
 `claude-opus-5-5-high-fast` or `gpt-5.6-sol-low-fast`. Name them as
 `cursor/<model>`, on `/v1/chat/completions` and `/v1/messages` alike, so
