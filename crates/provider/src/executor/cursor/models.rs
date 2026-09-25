@@ -18,6 +18,8 @@ const TTL: Duration = Duration::from_mins(15);
 #[derive(Debug, Clone)]
 struct Model {
     id: String,
+    /// Human-readable name, e.g. `Claude Opus 5.5`.
+    display: String,
     /// Parameter id → allowed values, in display order.
     options: Vec<(String, Vec<String>)>,
     /// Parameters sent when the caller names only the model.
@@ -126,8 +128,14 @@ fn parse_model(buf: &[u8]) -> Option<Model> {
             names.push((name.to_owned(), defaults.clone()));
         }
     }
+    let display = f
+        .str(17)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&id)
+        .to_owned();
     Some(Model {
         id,
+        display,
         options,
         defaults,
         names,
@@ -190,27 +198,19 @@ async fn catalog(
     Ok(models)
 }
 
-/// Every model name the account can use: base ids first, then variants.
+/// Every base model the account can use, as `(id, display name)`.
 ///
 /// # Errors
 ///
 /// Returns an error if the catalog cannot be fetched.
-pub async fn names(
+pub async fn list(
     http: &wreq::Client,
     api_base: &str,
     token: &str,
     version: &str,
-) -> Result<Vec<String>> {
+) -> Result<Vec<(String, String)>> {
     let models = catalog(http, api_base, token, version).await?;
-    let mut out: Vec<String> = models.iter().map(|m| m.id.clone()).collect();
-    for m in &models {
-        for (name, _) in &m.names {
-            if !out.contains(name) {
-                out.push(name.clone());
-            }
-        }
-    }
-    Ok(out)
+    Ok(models.into_iter().map(|m| (m.id, m.display)).collect())
 }
 
 /// Resolve any accepted spelling of a model.
@@ -302,6 +302,7 @@ mod tests {
     fn opus() -> Model {
         Model {
             id: "claude-opus-5-5".into(),
+            display: "Claude Opus 5.5".into(),
             options: vec![
                 ("effort".into(), vec!["low".into(), "high".into()]),
                 ("fast".into(), vec!["false".into(), "true".into()]),
@@ -374,6 +375,7 @@ mod tests {
             m.names.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
             ["m-low", "alias"]
         );
+        assert_eq!(m.display, "m");
         assert!(parse_model(&Msg::new().str(1, "default").finish()).is_none());
     }
 }

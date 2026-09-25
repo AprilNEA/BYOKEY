@@ -277,9 +277,9 @@ pub async fn anthropic_messages(
     let beta = build_beta_header(&mut body, &headers);
 
     let config = state.config.load();
-    match Backend::of(&config, &body) {
-        Backend::Cursor(model) => {
-            return super::cursor_messages::cursor_messages(&state, body, &model, stream).await;
+    match Backend::route(&config, &mut body) {
+        Backend::Cursor => {
+            return super::cursor_messages::cursor_messages(&state, body, stream).await;
         }
         Backend::Copilot => return copilot_messages(&state, body, stream, &beta).await,
         Backend::Anthropic => {}
@@ -428,29 +428,31 @@ impl AnthropicUpstream {
 pub(super) enum Backend {
     Anthropic,
     Copilot,
-    /// Cursor, with the model name stripped of its `cursor/` qualifier.
-    Cursor(String),
+    Cursor,
 }
 
 impl Backend {
-    /// An explicit `cursor/<model>` wins over any global backend; otherwise
-    /// `claude.backend` picks Copilot or Cursor for every request.
-    pub(super) fn of(config: &byokey_config::Config, body: &Value) -> Self {
+    /// An explicit `copilot/` or `cursor/` model prefix wins over any global
+    /// backend; otherwise `claude.backend` picks Copilot or Cursor for every
+    /// request. The prefix is stripped from `body.model`.
+    pub(super) fn route(config: &byokey_config::Config, body: &mut Value) -> Self {
         let model = body
             .get("model")
             .and_then(Value::as_str)
             .unwrap_or_default();
         let (hint, bare) = byokey_provider::parse_qualified_model(model);
-        let backend = if hint == Some(ProviderId::Cursor) {
-            hint
-        } else {
+        let explicit = hint.filter(|p| matches!(p, ProviderId::Copilot | ProviderId::Cursor));
+        if explicit.is_some() {
+            body["model"] = Value::String(bare.to_owned());
+        }
+        let backend = explicit.or_else(|| {
             config
                 .providers
                 .get(&ProviderId::Claude)
                 .and_then(|c| c.backend.clone())
-        };
+        });
         match backend {
-            Some(ProviderId::Cursor) => Self::Cursor(bare.to_owned()),
+            Some(ProviderId::Cursor) => Self::Cursor,
             Some(ProviderId::Copilot) => Self::Copilot,
             _ => Self::Anthropic,
         }
@@ -775,6 +777,31 @@ async fn forward_response(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn explicit_prefix_beats_global_backend_and_is_stripped() {
+        let mut config = byokey_config::Config::default();
+        config.providers.insert(
+            ProviderId::Claude,
+            byokey_config::ProviderConfig {
+                backend: Some(ProviderId::Copilot),
+                ..Default::default()
+            },
+        );
+        let route = |model: &str| {
+            let mut body = json!({"model": model});
+            let backend = Backend::route(&config, &mut body);
+            (backend, body["model"].as_str().unwrap().to_owned())
+        };
+        assert!(matches!(route("cursor/opus"), (Backend::Cursor, m) if m == "opus"));
+        assert!(
+            matches!(route("copilot/claude-opus-5.5"), (Backend::Copilot, m) if m == "claude-opus-5.5")
+        );
+        assert!(
+            matches!(route("claude-opus-4-6"), (Backend::Copilot, m) if m == "claude-opus-4-6")
+        );
+        assert!(matches!(route("codex/gpt-5.4"), (Backend::Copilot, m) if m == "codex/gpt-5.4"));
+    }
 
     #[test]
     fn copilot_request_drops_fields_copilot_rejects_and_keeps_the_rest() {

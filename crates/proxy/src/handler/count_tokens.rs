@@ -30,8 +30,8 @@ pub async fn count_tokens(
     sanitize_system(&mut body);
     let beta = build_beta_header(&mut body, &headers);
     let config = state.config.load();
-    let resp = match Backend::of(&config, &body) {
-        Backend::Cursor(_) => {
+    let resp = match Backend::route(&config, &mut body) {
+        Backend::Cursor => {
             return Ok(Json(json!({"input_tokens": estimate(&body)})).into_response());
         }
         Backend::Copilot => {

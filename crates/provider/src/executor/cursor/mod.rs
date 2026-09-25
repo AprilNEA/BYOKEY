@@ -100,14 +100,15 @@ impl CursorExecutor {
         Ok(access)
     }
 
-    /// Model names the account can use, from Cursor's live catalog.
+    /// Base models the account can use, from Cursor's live catalog, as
+    /// `(id, display name)`.
     ///
     /// # Errors
     ///
     /// Returns an error if there is no credential or the catalog cannot be fetched.
-    pub async fn models(&self) -> Result<Vec<String>> {
+    pub async fn models(&self) -> Result<Vec<(String, String)>> {
         let token = self.access_token().await?;
-        models::names(&self.http, API_BASE, &token, CLIENT_VERSION).await
+        models::list(&self.http, API_BASE, &token, CLIENT_VERSION).await
     }
 
     /// Run one turn of `request` and stream its canonical events.

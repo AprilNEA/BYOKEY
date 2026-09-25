@@ -437,6 +437,48 @@ impl CopilotExecutor {
         self.credentials_for(&token).await
     }
 
+    /// Models the account can use through Copilot's Anthropic-format
+    /// `/v1/messages`, from its live `/models` listing, as `(id, name)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if there is no usable account or the listing fails.
+    pub async fn messages_models(&self) -> Result<Vec<(String, String)>> {
+        #[derive(serde::Deserialize)]
+        struct Listing {
+            data: Vec<Entry>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Entry {
+            id: String,
+            name: Option<String>,
+            #[serde(default)]
+            supported_endpoints: Vec<String>,
+        }
+        let creds = self.credentials().await?;
+        let mut builder = self
+            .ph
+            .client()
+            .get(format!("{}/models", creds.endpoint))
+            .header("authorization", format!("Bearer {}", creds.token));
+        for (name, value) in self
+            .identity
+            .request_headers(&creds, &Conversation::from_messages(&[]))
+        {
+            builder = builder.header(name, value);
+        }
+        let listing: Listing = self.ph.send(builder).await?.json().await?;
+        Ok(listing
+            .data
+            .into_iter()
+            .filter(|m| m.supported_endpoints.iter().any(|e| e == "/v1/messages"))
+            .map(|m| {
+                let name = m.name.unwrap_or_else(|| m.id.clone());
+                (m.id, name)
+            })
+            .collect())
+    }
+
     /// Builds an [`OpenAICompatProvider`] for a single request as `creds`' account.
     ///
     /// Client headers depend on the request, so they are appended after

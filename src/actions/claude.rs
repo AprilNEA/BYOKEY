@@ -15,6 +15,10 @@ use std::process::Command;
 use std::time::Duration;
 
 const BASE_URL: &str = "ANTHROPIC_BASE_URL";
+/// Lets Claude Code list BYOKEY's Claude models (`/v1/models`) in `/model`.
+/// Discovery needs a gateway credential, so it only runs when the
+/// placeholder token is set.
+const MODEL_DISCOVERY: &str = "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY";
 const AUTH_TOKEN: &str = "ANTHROPIC_AUTH_TOKEN";
 /// BYOKEY ignores client credentials, but Claude Code refuses to start
 /// without one. `ANTHROPIC_AUTH_TOKEN` supplies it without the approval
@@ -92,7 +96,9 @@ fn start(args: StartArgs) -> Result<()> {
     // Claude Code's own login keeps claude.ai features such as connectors;
     // a placeholder token would take precedence over it.
     if !claude_logged_in()? {
-        claude.env(AUTH_TOKEN, PLACEHOLDER_TOKEN);
+        claude
+            .env(AUTH_TOKEN, PLACEHOLDER_TOKEN)
+            .env(MODEL_DISCOVERY, "1");
     }
     run(claude)
 }
@@ -213,6 +219,7 @@ fn merge(
     };
     if placeholder {
         env.insert(AUTH_TOKEN.to_owned(), PLACEHOLDER_TOKEN.into());
+        env.insert(MODEL_DISCOVERY.to_owned(), "1".into());
     }
     if let Some(extra_env) = extra_env {
         env.extend(extra_env.clone());
@@ -314,7 +321,8 @@ mod tests {
                 "env": {
                     "KEEP": "1",
                     "ANTHROPIC_BASE_URL": "http://127.0.0.1:8018",
-                    "ANTHROPIC_AUTH_TOKEN": "byokey"
+                    "ANTHROPIC_AUTH_TOKEN": "byokey",
+                    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1"
                 }
             })
         );
