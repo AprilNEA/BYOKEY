@@ -82,6 +82,44 @@ fn profile_dir() -> Result<PathBuf> {
     Ok(home()?.join("Library/Application Support/Claude-3p"))
 }
 
+/// How Claude Desktop's third-party profile stands with respect to BYOKEY.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum DesktopState {
+    /// Claude Desktop is not installed.
+    NotInstalled,
+    /// The profile has no BYOKEY entry; `byokey claude desktop` was never run.
+    Unconfigured,
+    /// BYOKEY's entry exists but another entry is applied.
+    OtherApplied,
+    /// BYOKEY's entry is applied and points at `url`.
+    Applied { url: String, running: bool },
+}
+
+/// Inspect the third-party profile without changing it.
+pub(crate) fn state() -> Result<DesktopState> {
+    if !cfg!(target_os = "macos") || !Path::new(APP).exists() {
+        return Ok(DesktopState::NotInstalled);
+    }
+    let profile = profile_dir()?;
+    inspect(&profile, third_party_running(&profile))
+}
+
+fn inspect(profile: &Path, running: bool) -> Result<DesktopState> {
+    let library = profile.join("configLibrary");
+    let entry = read_object(&library.join(format!("{ENTRY_ID}.json")))?;
+    let Some(url) = entry.get("inferenceGatewayBaseUrl").and_then(Value::as_str) else {
+        return Ok(DesktopState::Unconfigured);
+    };
+    let meta = read_object(&library.join("_meta.json"))?;
+    if meta.get("appliedId").and_then(Value::as_str) != Some(ENTRY_ID) {
+        return Ok(DesktopState::OtherApplied);
+    }
+    Ok(DesktopState::Applied {
+        url: url.to_owned(),
+        running,
+    })
+}
+
 /// Where a third-party-mode instance writes its main log.
 fn log_path() -> Result<PathBuf> {
     Ok(home()?.join("Library/Logs/Claude-3p/main.log"))
@@ -246,6 +284,33 @@ mod tests {
         let desktop = read_object(&dir.path().join("claude_desktop_config.json")).unwrap();
         assert_eq!(desktop["deploymentMode"], "3p");
         assert_eq!(desktop["keep"], 1);
+    }
+
+    #[test]
+    fn inspection_reports_what_the_profile_applies() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            inspect(dir.path(), false).unwrap(),
+            DesktopState::Unconfigured
+        );
+
+        write_profile(dir.path(), "http://127.0.0.1:8018").unwrap();
+        assert_eq!(
+            inspect(dir.path(), true).unwrap(),
+            DesktopState::Applied {
+                url: "http://127.0.0.1:8018".into(),
+                running: true,
+            }
+        );
+
+        let meta_path = dir.path().join("configLibrary/_meta.json");
+        let mut meta = read_object(&meta_path).unwrap();
+        meta.insert("appliedId".into(), "other".into());
+        write_json(&meta_path, &Value::Object(meta)).unwrap();
+        assert_eq!(
+            inspect(dir.path(), false).unwrap(),
+            DesktopState::OtherApplied
+        );
     }
 
     #[test]

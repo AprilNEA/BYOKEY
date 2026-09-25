@@ -25,12 +25,15 @@ pub struct ServiceOptions {
     pub port: Option<u16>,
     pub host: Option<String>,
     pub db: Option<PathBuf>,
+    /// Where the service writes its log. `None` = [`paths::log_path`], the
+    /// same file `byokey start` uses, so a service that dies leaves a trace.
     pub log_file: Option<PathBuf>,
 }
 
 pub struct ServiceInstallResult {
     pub backend: &'static str,
     pub label: String,
+    pub log_path: PathBuf,
 }
 
 pub struct ServiceStatusInfo {
@@ -91,22 +94,24 @@ fn build_args(opts: &ServiceOptions) -> Vec<OsString> {
     args
 }
 
-#[allow(clippy::needless_pass_by_value)]
-pub fn install(opts: ServiceOptions) -> Result<ServiceInstallResult> {
+pub fn install(mut opts: ServiceOptions) -> Result<ServiceInstallResult> {
     let mgr = manager()?;
     let program = match opts.exe {
         Some(ref p) => p.clone(),
         None => std::env::current_exe().map_err(DaemonError::SpawnFailed)?,
     };
 
-    if let Some(f) = &opts.log_file
-        && let Some(parent) = f.parent()
-    {
+    let log_path = match opts.log_file.take() {
+        Some(p) => p,
+        None => paths::log_path()?,
+    };
+    if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| DaemonError::Io {
             path: parent.to_path_buf(),
             source: e,
         })?;
     }
+    opts.log_file = Some(log_path.clone());
 
     let args = build_args(&opts);
     let ctx = ServiceInstallCtx {
@@ -126,6 +131,7 @@ pub fn install(opts: ServiceOptions) -> Result<ServiceInstallResult> {
     Ok(ServiceInstallResult {
         backend: backend_name(),
         label: SERVICE_LABEL.to_owned(),
+        log_path,
     })
 }
 
@@ -163,4 +169,42 @@ pub fn status() -> Result<ServiceStatusInfo> {
         installed,
         running,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn service_args_carry_every_option_given() {
+        let opts = ServiceOptions {
+            exe: None,
+            config: Some(PathBuf::from("/c.json")),
+            port: Some(9),
+            host: Some("::1".into()),
+            db: Some(PathBuf::from("/t.db")),
+            log_file: Some(PathBuf::from("/l.log")),
+        };
+        let args: Vec<String> = build_args(&opts)
+            .into_iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            [
+                "serve",
+                "--config",
+                "/c.json",
+                "--port",
+                "9",
+                "--host",
+                "::1",
+                "--db",
+                "/t.db",
+                "--log-file",
+                "/l.log"
+            ]
+        );
+        assert_eq!(build_args(&ServiceOptions::default()).len(), 1);
+    }
 }

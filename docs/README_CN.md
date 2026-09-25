@@ -184,7 +184,7 @@ Commands:
   login         向 Provider 认证
   logout        删除指定 Provider 的已存储凭据
   status        显示所有 Provider 的认证状态
-  doctor        检查服务器、Provider 登录和 Claude Code 的接入状态
+  doctor        检查服务器、Provider 登录、Claude Code 和 Claude Desktop 的接入状态
   tui           启动交互式终端 UI
   accounts      列出某个 Provider 的所有账户
   switch        切换某个 Provider 的活动账户
@@ -241,8 +241,9 @@ Options:
 覆盖。
 
 **`byokey doctor`** — 检查服务器是否响应、`/v1/models` 和
-`/v1/messages/count_tokens` 是否可用、各个已配置的 Provider 是否已登录，以及直接运行
-`claude` 时是否指向 BYOKEY。每条未通过的检查都会给出要运行的命令；有检查失败时以非零状态退出。
+`/v1/messages/count_tokens` 是否可用、各个已配置的 Provider 是否已登录、直接运行
+`claude` 时是否指向 BYOKEY，以及 Claude Desktop 的第三方 profile 是否指向 BYOKEY（macOS）。
+每条未通过的检查都会给出要运行的命令；有检查失败时以非零状态退出。
 
 **`byokey accounts <PROVIDER>`** — 列出某个 Provider 的所有账户。
 
@@ -250,7 +251,8 @@ Options:
 
 **`byokey service <install|uninstall|start|stop|status>`** — 将 byokey
 注册为系统托管服务。macOS 上使用 `launchd`、Linux 上使用 `systemd`、
-Windows 上使用 SCM。
+Windows 上使用 SCM。`install` 接受与 `serve` 相同的选项；未指定 `--log-file`
+时服务日志写入 `~/.byokey/server.log`。
 
 **`byokey claude start [ARGS]…`** — 以指向 BYOKEY 的 `ANTHROPIC_BASE_URL`
 运行 `claude`，`ARGS` 原样传入。已登录 claude.ai 时保留该登录，connectors 等功能

@@ -1,5 +1,5 @@
-//! `byokey doctor`: check that the server, its providers, and Claude Code
-//! are wired up, and say what to run when something is not.
+//! `byokey doctor`: check that the server, its providers, Claude Code and
+//! Claude Desktop are wired up, and say what to run when something is not.
 
 use anyhow::Result;
 use byokey_auth::AuthManager;
@@ -60,6 +60,9 @@ pub async fn cmd_doctor(url: Option<String>, db: Option<PathBuf>) -> Result<()> 
         }
     }
     report("claude code", claude_code(&url));
+    if let Some(outcome) = claude_desktop(&url) {
+        report("claude desktop", outcome);
+    }
 
     if failed {
         std::process::exit(1);
@@ -225,6 +228,43 @@ fn claude_code(url: &str) -> Outcome {
             Outcome::Ok("use `byokey claude start`, or `byokey claude inject` for `claude`".into())
         }
     }
+}
+
+/// Whether Claude Desktop's third-party profile points at BYOKEY. `None`
+/// where Desktop is not installed, or when the profile cannot be read.
+fn claude_desktop(url: &str) -> Option<Outcome> {
+    use super::claude_desktop::DesktopState;
+    let state = match super::claude_desktop::state() {
+        Ok(DesktopState::NotInstalled) => return None,
+        Ok(state) => state,
+        Err(e) => {
+            return Some(Outcome::Warn(format!(
+                "cannot read the Desktop profile: {e}"
+            )));
+        }
+    };
+    Some(match state {
+        DesktopState::NotInstalled => return None,
+        DesktopState::Unconfigured => {
+            Outcome::Ok("not set up; `byokey claude desktop` opens one against BYOKEY".into())
+        }
+        DesktopState::OtherApplied => Outcome::Warn(
+            "the third-party profile applies another gateway; run `byokey claude desktop`".into(),
+        ),
+        DesktopState::Applied {
+            url: applied,
+            running,
+        } => {
+            let where_ = if running { "open" } else { "not open" };
+            if applied.trim_end_matches('/') == url {
+                Outcome::Ok(format!("third-party profile uses BYOKEY ({where_})"))
+            } else {
+                Outcome::Warn(format!(
+                    "third-party profile points at {applied}, not {url}; run `byokey claude desktop`"
+                ))
+            }
+        }
+    })
 }
 
 /// Mask credentials that may appear in upstream error text.

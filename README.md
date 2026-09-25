@@ -192,7 +192,7 @@ Commands:
   login         Authenticate with a provider
   logout        Remove stored credentials for a provider
   status        Show authentication status for all providers
-  doctor        Check the server, provider logins and Claude Code wiring
+  doctor        Check the server, provider logins, Claude Code and Claude Desktop wiring
   tui           Launch the interactive terminal UI
   accounts      List all accounts for a provider
   switch        Switch the active account for a provider
@@ -245,8 +245,9 @@ Options:
 **`byokey status`** — Prints authentication status for every known provider.
 
 **`byokey doctor`** — Checks that the server answers, `/v1/models` and
-`/v1/messages/count_tokens` work, each configured provider is signed in, and
-whether plain `claude` points at BYOKEY. Each failing line says what to run.
+`/v1/messages/count_tokens` work, each configured provider is signed in,
+whether plain `claude` points at BYOKEY, and whether Claude Desktop's
+third-party profile does (macOS). Each failing line says what to run.
 Exits non-zero when a check fails.
 
 **`byokey tui`** — Opens the terminal management UI. It connects to the
@@ -259,7 +260,8 @@ ConnectRPC management API at `http://127.0.0.1:8018` by default; override with
 
 **`byokey service <install|uninstall|start|stop|status>`** — Registers byokey
 as an OS-managed service. Uses `launchd` on macOS, `systemd` on Linux, and
-Windows SCM on Windows.
+Windows SCM on Windows. `install` takes the `serve` options; the service logs
+to `~/.byokey/server.log` unless `--log-file` says otherwise.
 
 **`byokey claude start [ARGS]…`** — Runs `claude` with `ANTHROPIC_BASE_URL`
 pointing at BYOKEY, passing `ARGS` through. A claude.ai login stays in effect,

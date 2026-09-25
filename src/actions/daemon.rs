@@ -88,6 +88,7 @@ fn cmd_service_install(args: DaemonArgs) -> Result<()> {
     let result = byokey_daemon::service::install(service_opts(args))?;
     println!("service installed ({})", result.backend);
     println!("label:   {}", result.label);
+    println!("logs:    {}", result.log_path.display());
     // Installing via `service-manager` sets autostart=true but does not start
     // the service immediately on all backends. Start it now for convenience.
     byokey_daemon::service::start()?;
