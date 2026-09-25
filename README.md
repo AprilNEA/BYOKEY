@@ -272,10 +272,11 @@ model discovery, which lists your Copilot and Cursor Claude models
 `claude_code.settings` from your byokey config, into `~/.claude/settings.json`,
 keeping its other settings. Override the target with `--settings <FILE>`.
 
-**`byokey claude desktop [byokey|official]`** — Relaunches Claude Desktop in
-its third-party mode against BYOKEY, with models discovered from BYOKEY.
-`official` relaunches it on its normal sign-in. The official profile is never
-modified. macOS only.
+**`byokey claude desktop`** — Opens a second Claude Desktop in its
+third-party mode against BYOKEY, with models discovered from BYOKEY, next to
+the official one, whose profile is never modified. While the BYOKEY instance
+runs it can switch Desktop's saved mode, so a cold launch from the Dock may
+open it instead of the official one; the command warns about this. macOS only.
 
 All three accept `--url <URL>` to use a BYOKEY other than the configured one.
 

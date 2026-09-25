@@ -4,12 +4,20 @@
 //! directory (`Claude-3p`): the entry its `configLibrary` applies names the
 //! inference provider, and `deploymentMode` in that directory's
 //! `claude_desktop_config.json` picks the mode at launch (`"3p"` or `"1p"`).
-//! BYOKEY adds a gateway entry at its address and switches the mode; the
-//! official profile and its sign-in are never touched. Other library
-//! entries are kept.
+//! The two modes use separate data directories, so one instance of each can
+//! run side by side.
+//!
+//! Desktop has no per-launch mode switch, only that persisted value. BYOKEY
+//! adds a gateway entry at its address, sets the mode to `3p`, opens a new
+//! instance, and sets it back to `1p` once that instance reports third-party
+//! mode in its log. The official profile and its sign-in are never touched.
+//!
+//! The reset does not hold: the third-party instance writes its whole config
+//! back, `3p` included, whenever it saves settings. While it runs, a cold
+//! launch of Desktop (the official one closed) can therefore open in
+//! third-party mode; the command warns about this.
 
 use anyhow::{Context as _, Result, bail};
-use clap::ValueEnum;
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -19,26 +27,17 @@ use super::claude::{Target, ensure_reachable, write_atomic};
 
 const APP: &str = "/Applications/Claude.app";
 const BUNDLE_ID: &str = "com.anthropic.claudefordesktop";
+/// Logged by a Desktop instance once it has started in third-party mode.
+const READY: &str = "3P mode active";
+const LAUNCH_TIMEOUT: Duration = Duration::from_mins(1);
 /// Fixed id of the library entry BYOKEY owns, so rewrites replace it. Claude
 /// Desktop accepts only UUID-shaped ids.
 const ENTRY_ID: &str = "6279746b-6579-4000-8000-000000000001";
-
-#[derive(Clone, Copy, Debug, Default, ValueEnum)]
-pub enum Mode {
-    /// Claude Desktop in third-party mode, against BYOKEY.
-    #[default]
-    Byokey,
-    /// Claude Desktop with its official sign-in.
-    Official,
-}
 
 #[derive(clap::Args, Debug)]
 pub struct DesktopArgs {
     #[command(flatten)]
     target: Target,
-    /// Which profile to launch.
-    #[arg(value_enum, default_value_t)]
-    mode: Mode,
 }
 
 pub fn desktop(args: DesktopArgs) -> Result<()> {
@@ -48,28 +47,44 @@ pub fn desktop(args: DesktopArgs) -> Result<()> {
     if !Path::new(APP).exists() {
         bail!("Claude Desktop is not installed at {APP}");
     }
+    let (_, url) = args.target.resolve()?;
+    ensure_reachable(&url)?;
     let profile = profile_dir()?;
-    match args.mode {
-        Mode::Byokey => {
-            let (_, url) = args.target.resolve()?;
-            ensure_reachable(&url)?;
-            write_profile(&profile, &url)?;
-            relaunch()?;
-            println!("Claude Desktop now uses BYOKEY at {url}");
-        }
-        Mode::Official => {
-            set_mode(&profile, "1p")?;
-            relaunch()?;
-            println!("Claude Desktop is back on its official sign-in");
-        }
+    if third_party_running(&profile) {
+        bail!("a BYOKEY Claude Desktop is already open; quit it to open one with new settings");
     }
+    // Undo a `3p` the previous BYOKEY instance wrote back, whatever happens next.
+    set_mode(&profile, "1p")?;
+    let log = log_path()?;
+    let offset = std::fs::metadata(&log).map_or(0, |m| m.len());
+
+    write_profile(&profile, &url)?;
+    let launched = launch(&log, offset);
+    // Whatever happened, try to keep a normal launch official.
+    set_mode(&profile, "1p")?;
+    launched?;
+    println!("Opened Claude Desktop against BYOKEY at {url}, alongside the official one");
+    eprintln!(
+        "warning: while the BYOKEY Claude Desktop runs, it may switch Desktop's saved \
+         mode back to BYOKEY. If the official Claude Desktop is closed, opening it from \
+         the Dock or Spotlight can then start the BYOKEY one instead. Run \
+         `byokey claude desktop` again after quitting the BYOKEY one to restore it."
+    );
     Ok(())
+}
+
+fn home() -> Result<PathBuf> {
+    std::env::home_dir().context("cannot locate the home directory")
 }
 
 /// Claude Desktop's third-party data directory.
 fn profile_dir() -> Result<PathBuf> {
-    let home = std::env::home_dir().context("cannot locate the home directory")?;
-    Ok(home.join("Library/Application Support/Claude-3p"))
+    Ok(home()?.join("Library/Application Support/Claude-3p"))
+}
+
+/// Where a third-party-mode instance writes its main log.
+fn log_path() -> Result<PathBuf> {
+    Ok(home()?.join("Library/Logs/Claude-3p/main.log"))
 }
 
 /// The gateway configuration Claude Desktop reads in third-party mode.
@@ -132,37 +147,66 @@ fn write_json(path: &Path, value: &Value) -> Result<()> {
     write_atomic(path, &bytes).with_context(|| format!("write {}", path.display()))
 }
 
-/// Quit a running Claude Desktop so it rereads its mode, then open it.
-fn relaunch() -> Result<()> {
-    if running() {
-        let script = format!("tell application id \"{BUNDLE_ID}\" to quit");
-        Command::new("osascript")
-            .args(["-e", &script])
-            .status()
-            .context("quit Claude Desktop")?;
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while running() {
-            if Instant::now() > deadline {
-                bail!("Claude Desktop did not quit; quit it and run this again");
-            }
-            std::thread::sleep(Duration::from_millis(250));
-        }
-    }
+/// Open a new Desktop instance and wait until it reports third-party mode in
+/// `log` past `offset`.
+fn launch(log: &Path, offset: u64) -> Result<()> {
     let status = Command::new("open")
-        .args(["-b", BUNDLE_ID])
+        .args(["-n", "-b", BUNDLE_ID])
         .status()
         .context("open Claude Desktop")?;
     if !status.success() {
         bail!("`open` failed to launch Claude Desktop ({status})");
     }
+    let deadline = Instant::now() + LAUNCH_TIMEOUT;
+    while !logged_since(log, offset, READY) {
+        if Instant::now() > deadline {
+            bail!(
+                "Claude Desktop did not start in third-party mode within {}s; see {}",
+                LAUNCH_TIMEOUT.as_secs(),
+                log.display()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
     Ok(())
 }
 
-fn running() -> bool {
-    Command::new("pgrep")
-        .args(["-x", "Claude"])
-        .output()
-        .is_ok_and(|o| o.status.success())
+/// Whether `needle` appears in what was appended to `log` after `offset`.
+fn logged_since(log: &Path, offset: u64, needle: &str) -> bool {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(log) else {
+        return false;
+    };
+    // A rotated (shorter) log starts over.
+    let start = if file.metadata().is_ok_and(|m| m.len() < offset) {
+        0
+    } else {
+        offset
+    };
+    let mut tail = Vec::new();
+    file.seek(SeekFrom::Start(start)).is_ok()
+        && file.read_to_end(&mut tail).is_ok()
+        && String::from_utf8_lossy(&tail).contains(needle)
+}
+
+/// Whether a Desktop instance already runs on `profile`.
+fn third_party_running(profile: &Path) -> bool {
+    let Ok(out) = Command::new("pgrep").args(["-x", "Claude"]).output() else {
+        return false;
+    };
+    let dir = format!("{}/", profile.display());
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .any(|pid| {
+            Command::new("lsof")
+                .args(["-Fn", "-p", pid])
+                .output()
+                .is_ok_and(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .any(|l| l.starts_with('n') && l[1..].starts_with(&dir))
+                })
+        })
 }
 
 #[cfg(test)]
@@ -202,5 +246,24 @@ mod tests {
         let desktop = read_object(&dir.path().join("claude_desktop_config.json")).unwrap();
         assert_eq!(desktop["deploymentMode"], "3p");
         assert_eq!(desktop["keep"], 1);
+    }
+
+    #[test]
+    fn readiness_is_read_only_from_new_log_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("main.log");
+        std::fs::write(&log, "old: 3P mode active\n").unwrap();
+        let offset = std::fs::metadata(&log).unwrap().len();
+        assert!(!logged_since(&log, offset, READY));
+        std::fs::write(
+            &log,
+            "old: 3P mode active\nnew: [custom-3p] 3P mode active\n",
+        )
+        .unwrap();
+        assert!(logged_since(&log, offset, READY));
+        // Rotated to a shorter file: read from the start.
+        std::fs::write(&log, "3P mode active\n").unwrap();
+        assert!(logged_since(&log, offset, READY));
+        assert!(!logged_since(&dir.path().join("missing.log"), 0, READY));
     }
 }

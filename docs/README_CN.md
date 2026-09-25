@@ -262,9 +262,10 @@ Claude 模型（`copilot/…`、`cursor/…`）。
 `claude_code.settings`）写入 `~/.claude/settings.json`，保留其他设置。可用
 `--settings <FILE>` 指定目标文件。
 
-**`byokey claude desktop [byokey|official]`** — 以第三方模式重启 Claude Desktop，
-改用 BYOKEY，模型从 BYOKEY 发现。`official` 则以原来的登录重启。官方 profile
-不会被改动。仅支持 macOS。
+**`byokey claude desktop`** — 在官方 Claude Desktop 旁边再开一个第三方模式的实例，
+改用 BYOKEY，模型从 BYOKEY 发现，官方 profile 不会被改动。BYOKEY 实例运行期间可能
+改写 Desktop 保存的模式，官方 Desktop 关着时从 Dock 冷启动可能会打开 BYOKEY 那个，
+命令运行时会给出警告。仅支持 macOS。
 
 三个命令都可以用 `--url <URL>` 指定其他 BYOKEY 地址。
 

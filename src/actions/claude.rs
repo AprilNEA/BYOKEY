@@ -2,7 +2,7 @@
 //!
 //! `start` launches Claude Code with BYOKEY's address in its environment;
 //! `inject` writes that address into Claude Code's settings file instead;
-//! `desktop` relaunches Claude Desktop against BYOKEY (see
+//! `desktop` opens a Claude Desktop against BYOKEY (see
 //! [`super::claude_desktop`]).
 
 use anyhow::{Context as _, Result, bail};
@@ -33,7 +33,7 @@ pub enum ClaudeAction {
     Start(StartArgs),
     /// Point Claude Code at BYOKEY in its settings file, keeping its other settings.
     Inject(InjectArgs),
-    /// Relaunch Claude Desktop against BYOKEY, or back on its official profile.
+    /// Open a Claude Desktop against BYOKEY, next to the official one.
     Desktop(super::claude_desktop::DesktopArgs),
 }
 
