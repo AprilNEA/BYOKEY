@@ -11,7 +11,7 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use crate::util::stream::{CodexParser, response_to_stream, tap_usage_stream};
-use crate::util::{extract_usage, sse_response, upstream_error};
+use crate::util::{extract_usage, sse_response, upstream_failure};
 use crate::{AppState, error::ApiError};
 
 const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
@@ -132,7 +132,7 @@ pub async fn codex_responses(
             error = %e,
             "codex responses: transport error (DNS/TLS/connection)"
         );
-        ApiError(ByokError::from(e))
+        ApiError::from(ByokError::from(e))
     })?;
 
     let provider = "codex";
@@ -141,7 +141,7 @@ pub async fn codex_responses(
 
     if !status.is_success() {
         let headers_dbg = format!("{:?}", resp.headers());
-        let text = resp.text().await.unwrap_or_default();
+        let err = upstream_failure(resp).await;
         tracing::error!(
             model = %model_name,
             auth_mode,
@@ -149,17 +149,12 @@ pub async fn codex_responses(
             upstream_status,
             ?elapsed,
             response_headers = %headers_dbg,
-            response_body = %text,
             "codex responses: upstream returned non-2xx"
         );
-        return Err(upstream_error(
-            status,
-            text,
-            &state.usage,
-            &model_name,
-            provider,
-            &account_id,
-        ));
+        state
+            .usage
+            .record_failure_for(&model_name, provider, &account_id);
+        return Err(ApiError::from(err));
     }
 
     let content_type = resp
@@ -206,7 +201,7 @@ pub async fn codex_responses(
         let json: Value = resp
             .json()
             .await
-            .map_err(|e| ApiError(ByokError::from(e)))?;
+            .map_err(|e| ApiError::from(ByokError::from(e)))?;
         let (input, output) = extract_usage(&json, "/usage/input_tokens", "/usage/output_tokens");
         state
             .usage

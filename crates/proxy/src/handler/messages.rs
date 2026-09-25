@@ -26,7 +26,7 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::util::stream::{AnthropicParser, response_to_stream, tap_usage_stream};
-use crate::util::{extract_usage, sse_response, strip_gateway_headers};
+use crate::util::{extract_usage, sse_response, strip_gateway_headers, upstream_failure};
 use crate::{AppState, UsageRecorder, error::ApiError};
 
 /// Default thinking budget (tokens) for `Auto` mode on legacy Claude models
@@ -219,11 +219,41 @@ fn strip_thinking_fields(body: &mut Value) {
     }
 }
 
-/// Merge betas from the request body's `betas` array and the client's
-/// `anthropic-beta` HTTP header into the base beta string, then strip the
-/// body field so the upstream API doesn't reject it as unknown.
-pub(super) fn build_beta_header(body: &mut Value, client_headers: &HeaderMap) -> String {
+/// Beta that unlocks the 1M-token context window on Anthropic's API.
+pub(super) const CONTEXT_1M_BETA: &str = "context-1m-2025-08-07";
+
+/// Claude Code and Claude Desktop pick a model's 1M-context variant by
+/// appending `[1m]` to its id, and Claude Desktop sends that spelling to a
+/// gateway as-is. Upstreams reject it, so it is taken off `body.model`.
+/// Returns whether it was there, so the caller can ask for the long context
+/// in the upstream's own terms. Runs before anything that looks the model up.
+pub(super) fn take_long_context_suffix(body: &mut Value) -> bool {
+    let Some(bare) = body
+        .get("model")
+        .and_then(Value::as_str)
+        .and_then(|m| m.strip_suffix("[1m]"))
+    else {
+        return false;
+    };
+    body["model"] = Value::String(bare.to_owned());
+    true
+}
+
+/// Merge betas from the request body's `betas` array, the client's
+/// `anthropic-beta` HTTP header and `extra` into the base beta string, then
+/// strip the body field so the upstream API doesn't reject it as unknown.
+pub(super) fn build_beta_header(
+    body: &mut Value,
+    client_headers: &HeaderMap,
+    extra: Option<&str>,
+) -> String {
     let mut betas = ANTHROPIC_BETA.to_string();
+    if let Some(extra) = extra
+        && !betas.contains(extra)
+    {
+        betas.push(',');
+        betas.push_str(extra);
+    }
 
     // Merge from client's `anthropic-beta` HTTP header (comma-separated).
     if let Some(hv) = client_headers
@@ -263,18 +293,28 @@ use byokey_provider::executor::claude::build_fingerprint_headers;
     model = %body.0.get("model").and_then(serde_json::Value::as_str).unwrap_or("-"),
     stream = body.0.get("stream").and_then(serde_json::Value::as_bool).unwrap_or(false),
 ))]
-#[allow(clippy::too_many_lines)] // Single-pass handler — keeping one function boundary is clearer than splitting.
 pub async fn anthropic_messages(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     body: axum::extract::Json<Value>,
 ) -> Result<Response, ApiError> {
-    let mut body = body.0;
+    serve_messages(state, headers, body.0)
+        .await
+        .map_err(ApiError::anthropic)
+}
+
+#[allow(clippy::too_many_lines)] // Single-pass handler — keeping one function boundary is clearer than splitting.
+async fn serve_messages(
+    state: Arc<AppState>,
+    headers: HeaderMap,
+    mut body: Value,
+) -> Result<Response, ApiError> {
+    let long_context = take_long_context_suffix(&mut body);
     sanitize_system(&mut body);
     sanitize_thinking(&mut body);
     strip_invalid_thinking_signatures(&mut body);
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
-    let beta = build_beta_header(&mut body, &headers);
+    let beta = build_beta_header(&mut body, &headers, long_context.then_some(CONTEXT_1M_BETA));
 
     let config = state.config.load();
     match Backend::route(&config, &mut body) {
@@ -350,7 +390,7 @@ pub async fn anthropic_messages(
         .json(&body)
         .send()
         .await
-        .map_err(|e| ApiError(ByokError::from(e)))?;
+        .map_err(|e| ApiError::from(ByokError::from(e)))?;
 
     forward_response(
         resp,
@@ -405,7 +445,7 @@ impl AnthropicUpstream {
             extra_headers: build_fingerprint_headers(profile, is_api_key),
             ..Default::default()
         })
-        .map_err(|e| ApiError(ByokError::Config(e.to_string())))?;
+        .map_err(|e| ApiError::from(ByokError::Config(e.to_string())))?;
         Ok(Self {
             transport,
             account_id,
@@ -621,32 +661,26 @@ async fn copilot_messages(
                 .await;
             }
             Ok(r) => {
-                let status = r.status().as_u16();
-                let text = r.text().await.unwrap_or_default();
-                let err = ByokError::Upstream {
-                    status,
-                    body: text,
-                    retry_after: None,
-                };
+                let err = upstream_failure(r).await;
                 if !err.is_retryable() || attempt + 1 >= max_attempts {
-                    return Err(ApiError(err));
+                    return Err(ApiError::from(err));
                 }
                 tracing::warn!(
                     attempt,
-                    status,
+                    error = %err,
                     "copilot messages failed, trying next account"
                 );
                 CopilotExecutor::invalidate_current_account();
-                last_err = Some(ApiError(err));
+                last_err = Some(ApiError::from(err));
             }
             Err(e) => {
                 let err = ByokError::from(e);
                 if !err.is_retryable() || attempt + 1 >= max_attempts {
-                    return Err(ApiError(err));
+                    return Err(ApiError::from(err));
                 }
                 tracing::warn!(attempt, error = %err, "copilot messages transport error, trying next");
                 CopilotExecutor::invalidate_current_account();
-                last_err = Some(ApiError(err));
+                last_err = Some(ApiError::from(err));
             }
         }
     }
@@ -659,7 +693,7 @@ async fn copilot_messages(
         .usage
         .record_failure_for(&model_name, "copilot", byokey_types::DEFAULT_ACCOUNT);
     Err(last_err
-        .unwrap_or_else(|| ApiError(ByokError::Auth("no copilot accounts available".into()))))
+        .unwrap_or_else(|| ApiError::from(ByokError::Auth("no copilot accounts available".into()))))
 }
 
 /// Forward an upstream response back to the client, recording token usage.
@@ -674,18 +708,13 @@ async fn forward_response(
 ) -> Result<Response, ApiError> {
     let status = resp.status();
     if !status.is_success() {
-        let text = resp.text().await.unwrap_or_default();
+        let err = upstream_failure(resp).await;
         tracing::error!(
             status = status.as_u16(),
-            body = %text,
             "anthropic upstream error (non-retryable)"
         );
         usage.record_failure_for(model, provider, account_id);
-        return Err(ApiError::from(ByokError::Upstream {
-            status: status.as_u16(),
-            body: text,
-            retry_after: None,
-        }));
+        return Err(ApiError::from(err));
     }
 
     let upstream_status = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK);
@@ -755,7 +784,7 @@ async fn forward_response(
         let mut json: Value = resp
             .json()
             .await
-            .map_err(|e| ApiError(ByokError::from(e)))?;
+            .map_err(|e| ApiError::from(ByokError::from(e)))?;
         if reverse_remap_tools {
             byokey_provider::cloak::reverse_remap_tool_names_response(&mut json);
         }
@@ -798,9 +827,49 @@ mod tests {
             matches!(route("copilot/claude-opus-5.5"), (Backend::Copilot, m) if m == "claude-opus-5.5")
         );
         assert!(
-            matches!(route("claude-opus-4-6"), (Backend::Copilot, m) if m == "claude-opus-4-6")
+            matches!(route("claude-opus-5-5"), (Backend::Copilot, m) if m == "claude-opus-5-5")
         );
         assert!(matches!(route("codex/gpt-5.4"), (Backend::Copilot, m) if m == "codex/gpt-5.4"));
+    }
+
+    #[test]
+    fn long_context_suffix_comes_off_the_model_and_becomes_a_beta() {
+        let mut body = json!({"model": "claude-sonnet-5[1m]", "betas": ["x-beta"]});
+        let long_context = take_long_context_suffix(&mut body);
+        assert!(long_context);
+        assert_eq!(body["model"], "claude-sonnet-5");
+        let beta = build_beta_header(
+            &mut body,
+            &HeaderMap::new(),
+            long_context.then_some(CONTEXT_1M_BETA),
+        );
+        let betas: Vec<&str> = beta.split(',').collect();
+        assert!(betas.contains(&CONTEXT_1M_BETA));
+        assert!(betas.contains(&"x-beta"));
+        assert!(body.get("betas").is_none());
+
+        let mut body = json!({"model": "claude-sonnet-5"});
+        assert!(!take_long_context_suffix(&mut body));
+        assert_eq!(body["model"], "claude-sonnet-5");
+        let beta = build_beta_header(&mut body, &HeaderMap::new(), None);
+        assert!(!beta.contains(CONTEXT_1M_BETA));
+
+        let mut body = json!({"max_tokens": 1});
+        assert!(!take_long_context_suffix(&mut body), "no model at all");
+    }
+
+    #[test]
+    fn a_long_context_model_still_gets_its_thinking_and_backend_resolved() {
+        let mut body = json!({"model": "claude-opus-5-5[1m]", "thinking": {"type": "auto"}});
+        take_long_context_suffix(&mut body);
+        sanitize_thinking(&mut body);
+        assert_eq!(body["thinking"]["type"], "adaptive");
+
+        let mut body = json!({"model": "copilot/claude-opus-5.5[1m]"});
+        assert!(take_long_context_suffix(&mut body));
+        let backend = Backend::route(&byokey_config::Config::default(), &mut body);
+        assert!(matches!(backend, Backend::Copilot));
+        assert_eq!(body["model"], "claude-opus-5.5");
     }
 
     #[test]
@@ -835,7 +904,7 @@ mod tests {
     #[test]
     fn tool_choice_any_strips_thinking() {
         let mut body = json!({
-            "model": "claude-opus-4-6",
+            "model": "claude-opus-5-5",
             "thinking": {"type": "enabled", "budget_tokens": 10000},
             "tool_choice": {"type": "any"},
             "output_config": {"effort": "high"}
@@ -848,7 +917,7 @@ mod tests {
     #[test]
     fn tool_choice_tool_strips_thinking() {
         let mut body = json!({
-            "model": "claude-opus-4-6",
+            "model": "claude-opus-5-5",
             "thinking": {"type": "adaptive"},
             "tool_choice": {"type": "tool", "name": "get_weather"}
         });
@@ -859,7 +928,7 @@ mod tests {
     #[test]
     fn tool_choice_auto_does_not_strip() {
         let mut body = json!({
-            "model": "claude-opus-4-6",
+            "model": "claude-opus-5-5",
             "thinking": {"type": "adaptive"},
             "tool_choice": {"type": "auto"}
         });
@@ -899,7 +968,7 @@ mod tests {
     #[test]
     fn enabled_type_passes_through() {
         let mut body = json!({
-            "model": "claude-opus-4-6",
+            "model": "claude-opus-5-5",
             "thinking": {"type": "enabled", "budget_tokens": 8000}
         });
         sanitize_thinking(&mut body);
@@ -910,7 +979,7 @@ mod tests {
     #[test]
     fn adaptive_type_passes_through() {
         let mut body = json!({
-            "model": "claude-opus-4-6",
+            "model": "claude-opus-5-5",
             "thinking": {"type": "adaptive"}
         });
         sanitize_thinking(&mut body);
@@ -919,7 +988,7 @@ mod tests {
 
     #[test]
     fn no_thinking_field_is_noop() {
-        let mut body = json!({"model": "claude-opus-4-6", "max_tokens": 1024});
+        let mut body = json!({"model": "claude-opus-5-5", "max_tokens": 1024});
         let expected = body.clone();
         sanitize_thinking(&mut body);
         assert_eq!(body, expected);
@@ -955,7 +1024,7 @@ mod tests {
     #[test]
     fn adaptive_thinking_coerces_temperature_to_one() {
         let mut body = json!({
-            "model": "claude-opus-4-6",
+            "model": "claude-opus-5-5",
             "temperature": 0,
             "thinking": {"type": "adaptive"}
         });
@@ -966,7 +1035,7 @@ mod tests {
     #[test]
     fn enabled_thinking_coerces_temperature_to_one() {
         let mut body = json!({
-            "model": "claude-opus-4-6",
+            "model": "claude-opus-5-5",
             "temperature": 0.2,
             "thinking": {"type": "enabled", "budget_tokens": 2048}
         });
@@ -977,7 +1046,7 @@ mod tests {
     #[test]
     fn temperature_one_with_thinking_is_unchanged() {
         let mut body = json!({
-            "model": "claude-opus-4-6",
+            "model": "claude-opus-5-5",
             "temperature": 1,
             "thinking": {"type": "adaptive"}
         });
@@ -988,7 +1057,7 @@ mod tests {
     #[test]
     fn no_thinking_leaves_temperature_alone() {
         let mut body = json!({
-            "model": "claude-opus-4-6",
+            "model": "claude-opus-5-5",
             "temperature": 0,
             "messages": [{"role": "user", "content": "hi"}]
         });
@@ -999,7 +1068,7 @@ mod tests {
     #[test]
     fn forced_tool_choice_strips_thinking_keeps_temperature() {
         let mut body = json!({
-            "model": "claude-opus-4-6",
+            "model": "claude-opus-5-5",
             "temperature": 0,
             "thinking": {"type": "adaptive"},
             "tool_choice": {"type": "any"}
@@ -1013,7 +1082,7 @@ mod tests {
     #[test]
     fn no_temperature_with_thinking_is_fine() {
         let mut body = json!({
-            "model": "claude-opus-4-6",
+            "model": "claude-opus-5-5",
             "thinking": {"type": "adaptive"}
         });
         sanitize_thinking(&mut body);

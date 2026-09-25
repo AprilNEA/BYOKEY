@@ -4,7 +4,7 @@
 //!
 //! - [`handler`]  — HTTP route handlers (API, management).
 //! - [`router`]   — Axum router construction and route registration.
-//! - [`error`]    — [`ApiError`] type for OpenAI-compatible error responses.
+//! - [`error`]    — [`ApiError`], rendered in the failing route's error envelope.
 //! - [`openapi`]  — `OpenAPI` specification generation.
 //! - [`usage`]    — In-memory request/token usage tracking.
 

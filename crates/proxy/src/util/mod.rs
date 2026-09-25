@@ -10,8 +10,6 @@ use axum::{
 use byokey_types::ByokError;
 use serde_json::Value;
 
-use crate::{UsageRecorder, error::ApiError};
-
 /// Prefixes whose presence in a response header name indicates a third-party
 /// API gateway fingerprint.  Names are case-insensitive.
 static GATEWAY_HEADER_PREFIXES: &[&str] = &[
@@ -73,29 +71,22 @@ pub(crate) fn sse_response(
         .expect("valid response")
 }
 
-pub(crate) fn upstream_error(
-    status: StatusCode,
-    body: String,
-    usage: &UsageRecorder,
-    model: &str,
-    provider: &str,
-    account_id: &str,
-) -> ApiError {
-    tracing::warn!(
-        %provider,
-        %model,
-        %account_id,
-        upstream_status = status.as_u16(),
-        body_len = body.len(),
-        body_preview = %body.chars().take(512).collect::<String>(),
-        "upstream_error: recording failure"
-    );
-    usage.record_failure_for(model, provider, account_id);
-    ApiError::from(ByokError::Upstream {
-        status: status.as_u16(),
+/// The error for a non-success upstream response: its status, `retry-after`
+/// and body, so the client sees what the upstream said.
+pub(crate) async fn upstream_failure(resp: wreq::Response) -> ByokError {
+    let status = resp.status().as_u16();
+    let retry_after = resp
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse().ok())
+        .map(std::time::Duration::from_secs);
+    let body = resp.text().await.unwrap_or_default();
+    ByokError::Upstream {
+        status,
         body,
-        retry_after: None,
-    })
+        retry_after,
+    }
 }
 
 #[cfg(test)]

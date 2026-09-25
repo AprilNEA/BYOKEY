@@ -16,19 +16,31 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 use super::messages::{
-    AnthropicUpstream, Backend, build_beta_header, copilot_executor, copilot_request,
-    sanitize_system, strip_copilot_unsupported,
+    AnthropicUpstream, Backend, CONTEXT_1M_BETA, build_beta_header, copilot_executor,
+    copilot_request, sanitize_system, strip_copilot_unsupported, take_long_context_suffix,
 };
+use crate::util::upstream_failure;
 use crate::{AppState, error::ApiError};
 
 /// Handles `POST /v1/messages/count_tokens`.
 pub async fn count_tokens(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(mut body): Json<Value>,
+    Json(body): Json<Value>,
 ) -> Result<Response, ApiError> {
+    serve_count_tokens(&state, &headers, body)
+        .await
+        .map_err(ApiError::anthropic)
+}
+
+async fn serve_count_tokens(
+    state: &Arc<AppState>,
+    headers: &HeaderMap,
+    mut body: Value,
+) -> Result<Response, ApiError> {
+    let long_context = take_long_context_suffix(&mut body);
     sanitize_system(&mut body);
-    let beta = build_beta_header(&mut body, &headers);
+    let beta = build_beta_header(&mut body, headers, long_context.then_some(CONTEXT_1M_BETA));
     let config = state.config.load();
     let resp = match Backend::route(&config, &mut body) {
         Backend::Cursor => {
@@ -36,7 +48,7 @@ pub async fn count_tokens(
         }
         Backend::Copilot => {
             strip_copilot_unsupported(&mut body);
-            let (executor, identity) = copilot_executor(&state);
+            let (executor, identity) = copilot_executor(state);
             let creds = executor.credentials().await?;
             let conversation = Conversation::from_messages(&[]);
             copilot_request(
@@ -53,7 +65,7 @@ pub async fn count_tokens(
         }
         Backend::Anthropic => {
             let profile = state.device_profiles.resolve("global");
-            let upstream = AnthropicUpstream::resolve(&state, &config, &profile, &beta).await?;
+            let upstream = AnthropicUpstream::resolve(state, &config, &profile, &beta).await?;
             let url = format!(
                 "{}?beta=true",
                 upstream.transport.url("/v1/messages/count_tokens")
@@ -61,22 +73,16 @@ pub async fn count_tokens(
             upstream.request(&state.http, &url).json(&body).send().await
         }
     }
-    .map_err(|e| ApiError(ByokError::from(e)))?;
+    .map_err(|e| ApiError::from(ByokError::from(e)))?;
 
-    let status = resp.status();
+    if !resp.status().is_success() {
+        return Err(ApiError::from(upstream_failure(resp).await));
+    }
     let text = resp
         .text()
         .await
-        .map_err(|e| ApiError(ByokError::from(e)))?;
-    if !status.is_success() {
-        return Err(ApiError(ByokError::Upstream {
-            status: status.as_u16(),
-            body: text,
-            retry_after: None,
-        }));
-    }
-    let code = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK);
-    Ok((code, [("content-type", "application/json")], text).into_response())
+        .map_err(|e| ApiError::from(ByokError::from(e)))?;
+    Ok((StatusCode::OK, [("content-type", "application/json")], text).into_response())
 }
 
 /// Approximate input tokens: every text-like string in the request, at the
