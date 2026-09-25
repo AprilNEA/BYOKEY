@@ -114,6 +114,8 @@ pub struct CopilotModel {
     pub messages: bool,
     /// Served on `/chat/completions`, which BYOKEY's chat path uses.
     pub chat: bool,
+    /// Context window in tokens, when the catalog states it.
+    pub context_window: Option<u64>,
 }
 
 /// How long a Copilot model catalog is reused.
@@ -486,6 +488,15 @@ impl CopilotExecutor {
             /// Copilot offers the model to users (not an internal model).
             #[serde(default)]
             model_picker_enabled: bool,
+            capabilities: Option<Capabilities>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Capabilities {
+            limits: Option<Limits>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Limits {
+            max_context_window_tokens: Option<u64>,
         }
         let creds = self.credentials().await?;
         if let Some((at, models)) = MODELS_CACHE.lock().unwrap().get(&creds.token)
@@ -515,6 +526,10 @@ impl CopilotExecutor {
                     .supported_endpoints
                     .iter()
                     .any(|e| e == "/chat/completions"),
+                context_window: m
+                    .capabilities
+                    .and_then(|c| c.limits)
+                    .and_then(|l| l.max_context_window_tokens),
                 name: m.name.unwrap_or_else(|| m.id.clone()),
                 id: m.id,
             })

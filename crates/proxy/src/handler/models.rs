@@ -10,6 +10,9 @@
 //!
 //! Copilot and Cursor are listed from their accounts' live catalogs; other
 //! providers from the static registry, once signed in or given an API key.
+//!
+//! Claude Desktop reads `supports_1m` from the Anthropic-shaped list and
+//! offers the `<id>[1m]` variant of such models in its picker.
 
 use axum::{
     Json,
@@ -44,6 +47,9 @@ pub struct ModelEntry {
     /// Label for model pickers, when the upstream names the model.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// The model takes a 1M-token context, selected as `<id>[1m]`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub supports_1m: bool,
 }
 
 impl ModelEntry {
@@ -54,6 +60,38 @@ impl ModelEntry {
             created: 0,
             owned_by: owned_by.to_string(),
             display_name,
+            supports_1m: false,
+        }
+    }
+}
+
+/// Tokens of context from which a model counts as long-context.
+const LONG_CONTEXT_TOKENS: u64 = 1_000_000;
+
+/// A model from a provider's live catalog.
+struct LiveModel {
+    id: String,
+    name: String,
+    supports_1m: bool,
+}
+
+impl From<&CopilotModel> for LiveModel {
+    fn from(m: &CopilotModel) -> Self {
+        Self {
+            id: m.id.clone(),
+            name: m.name.clone(),
+            supports_1m: m.context_window >= Some(LONG_CONTEXT_TOKENS),
+        }
+    }
+}
+
+impl From<(String, String)> for LiveModel {
+    /// Cursor's catalog names its models but not their context windows.
+    fn from((id, name): (String, String)) -> Self {
+        Self {
+            id,
+            name,
+            supports_1m: false,
         }
     }
 }
@@ -84,6 +122,7 @@ pub async fn list_models(State(state): State<Arc<AppState>>, headers: HeaderMap)
                     "display_name": m.display_name.as_ref().unwrap_or(&m.id),
                     "id": m.id,
                     "created_at": "1970-01-01T00:00:00Z",
+                    "supports_1m": m.supports_1m,
                 })
             })
             .collect();
@@ -112,7 +151,7 @@ async fn usable(state: &AppState, config: &Config, provider: &ProviderId) -> boo
 struct Live {
     usable: Vec<ProviderId>,
     copilot: Vec<CopilotModel>,
-    cursor: Vec<(String, String)>,
+    cursor: Vec<LiveModel>,
 }
 
 impl Live {
@@ -147,6 +186,9 @@ impl Live {
                 .await
                 .inspect_err(|e| tracing::warn!(error = %e, "Cursor model listing failed"))
                 .unwrap_or_default()
+                .into_iter()
+                .map(LiveModel::from)
+                .collect()
         } else {
             Vec::new()
         };
@@ -162,11 +204,11 @@ impl Live {
     }
 
     /// Copilot models served on the given endpoint.
-    fn copilot_on(&self, endpoint: fn(&CopilotModel) -> bool) -> Vec<(String, String)> {
+    fn copilot_on(&self, endpoint: fn(&CopilotModel) -> bool) -> Vec<LiveModel> {
         self.copilot
             .iter()
             .filter(|m| endpoint(m))
-            .map(|m| (m.id.clone(), m.name.clone()))
+            .map(LiveModel::from)
             .collect()
     }
 }
@@ -260,25 +302,28 @@ fn push_all(
     out: &mut Vec<ModelEntry>,
     config: &Config,
     provider: &ProviderId,
-    models: &[(String, String)],
+    models: &[LiveModel],
     qualified: bool,
 ) {
-    for (id, name) in models {
-        if config.is_model_excluded(provider, id) {
+    for m in models {
+        if config.is_model_excluded(provider, &m.id) {
             continue;
         }
         let listed = if qualified {
-            format!("{provider}/{id}")
+            format!("{provider}/{}", m.id)
         } else {
-            id.clone()
+            m.id.clone()
         };
         if !out.iter().any(|e| e.id == listed) {
             let name = if qualified {
-                format!("{name} ({})", provider.display_name())
+                format!("{} ({})", m.name, provider.display_name())
             } else {
-                name.clone()
+                m.name.clone()
             };
-            out.push(ModelEntry::new(listed, provider, Some(name)));
+            out.push(ModelEntry {
+                supports_1m: m.supports_1m,
+                ..ModelEntry::new(listed, provider, Some(name))
+            });
         }
     }
 }
@@ -293,6 +338,7 @@ mod tests {
             name: id.into(),
             messages,
             chat,
+            context_window: None,
         }
     }
 
@@ -300,11 +346,21 @@ mod tests {
         Live {
             usable: usable.to_vec(),
             copilot: vec![
-                copilot("claude-opus-5.5", true, true),
+                CopilotModel {
+                    context_window: Some(LONG_CONTEXT_TOKENS),
+                    ..copilot("claude-opus-5.5", true, true)
+                },
+                CopilotModel {
+                    context_window: Some(200_000),
+                    ..copilot("claude-haiku-4.5", true, true)
+                },
                 copilot("gpt-5.6-sol", false, false),
                 copilot("gpt-5.4", false, true),
             ],
-            cursor: vec![("claude-opus-5-5".into(), "Claude Opus 5.5".into())],
+            cursor: vec![LiveModel::from((
+                "claude-opus-5-5".to_owned(),
+                "Claude Opus 5.5".to_owned(),
+            ))],
         }
     }
 
@@ -338,10 +394,16 @@ mod tests {
 
         let redirected = messages_models(&backend(ProviderId::Copilot), &live);
         assert_eq!(
-            redirected[1].display_name.as_deref(),
+            redirected[2].display_name.as_deref(),
             Some("Claude Opus 5.5 (Cursor)"),
             "qualified entries name their provider"
         );
+        assert!(
+            redirected[0].supports_1m,
+            "a 1M-token catalog window is announced"
+        );
+        assert!(!redirected[1].supports_1m, "a 200k window is not");
+        assert!(!redirected[2].supports_1m, "Cursor's window is unknown");
         let redirected = ids(&redirected);
         assert_eq!(
             redirected[0], "claude-opus-5.5",
