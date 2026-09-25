@@ -181,7 +181,7 @@ fn ensure_reachable(url: &str) -> Result<()> {
     Ok(())
 }
 
-fn load_config(explicit: Option<PathBuf>) -> Result<Config> {
+pub(crate) fn load_config(explicit: Option<PathBuf>) -> Result<Config> {
     let path = match explicit {
         Some(path) => path,
         None => {
@@ -248,7 +248,7 @@ fn configured_url(extras: &Map<String, Value>) -> Result<Option<&str>> {
 
 /// The address a local client reaches BYOKEY's listener at: a wildcard bind
 /// address becomes loopback.
-fn local_url(host: &str, port: u16) -> String {
+pub(crate) fn local_url(host: &str, port: u16) -> String {
     let host = host.trim_start_matches('[').trim_end_matches(']');
     let host = match host.parse::<IpAddr>() {
         Ok(ip) if ip.is_unspecified() && ip.is_ipv4() => "127.0.0.1".to_owned(),
@@ -269,7 +269,7 @@ fn validate_url(url: &str) -> Result<()> {
     Ok(())
 }
 
-fn default_settings_path() -> Option<PathBuf> {
+pub(crate) fn default_settings_path() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|d| !d.is_empty()) {
         return Some(PathBuf::from(dir).join("settings.json"));
     }

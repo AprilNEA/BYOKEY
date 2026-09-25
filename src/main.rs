@@ -1,7 +1,7 @@
 mod actions;
 mod control_server;
 
-use actions::{auth, claude, daemon, serve};
+use actions::{auth, claude, daemon, doctor, serve};
 
 use anyhow::Result;
 use byokey_store::SqliteTokenStore;
@@ -146,6 +146,14 @@ enum Commands {
         #[command(flatten)]
         store: StoreArgs,
     },
+    /// Check the server, provider logins and Claude Code wiring.
+    Doctor {
+        /// BYOKEY base URL, without `/v1` [default: the configured listen address].
+        #[arg(long)]
+        url: Option<String>,
+        #[command(flatten)]
+        store: StoreArgs,
+    },
     /// Show authentication status for all providers.
     Status {
         #[command(flatten)]
@@ -257,6 +265,7 @@ async fn run(command: Commands) -> Result<()> {
                 .logout(provider, account)
                 .await
         }
+        Commands::Doctor { url, store } => doctor::cmd_doctor(url, store.db).await,
         Commands::Status { store } => auth::AuthCmd::new(store.db).await?.status().await,
         Commands::Tui { url } => byokey_tui::run(url).await,
         Commands::Accounts { provider, store } => {
