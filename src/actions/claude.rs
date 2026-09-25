@@ -1,7 +1,9 @@
 //! `byokey claude`: run Claude Code against BYOKEY.
 //!
 //! `start` launches Claude Code with BYOKEY's address in its environment;
-//! `inject` writes that address into Claude Code's settings file instead.
+//! `inject` writes that address into Claude Code's settings file instead;
+//! `desktop` relaunches Claude Desktop against BYOKEY (see
+//! [`super::claude_desktop`]).
 
 use anyhow::{Context as _, Result, bail};
 use byokey_config::Config;
@@ -31,10 +33,12 @@ pub enum ClaudeAction {
     Start(StartArgs),
     /// Point Claude Code at BYOKEY in its settings file, keeping its other settings.
     Inject(InjectArgs),
+    /// Relaunch Claude Desktop against BYOKEY, or back on its official profile.
+    Desktop(super::claude_desktop::DesktopArgs),
 }
 
 #[derive(Args, Debug)]
-pub struct Target {
+pub(crate) struct Target {
     /// BYOKEY configuration file [default: ~/.config/byokey/settings.json].
     #[arg(long, value_name = "FILE")]
     config: Option<PathBuf>,
@@ -66,6 +70,7 @@ pub fn cmd_claude(action: ClaudeAction) -> Result<()> {
     match action {
         ClaudeAction::Start(args) => start(args),
         ClaudeAction::Inject(args) => inject(args),
+        ClaudeAction::Desktop(args) => super::claude_desktop::desktop(args),
     }
 }
 
@@ -73,7 +78,7 @@ impl Target {
     /// Load the BYOKEY config and resolve the URL Claude Code should use:
     /// `--url`, then `claude_code.settings.env.ANTHROPIC_BASE_URL`, then the
     /// configured listen address.
-    fn resolve(self) -> Result<(Config, String)> {
+    pub(crate) fn resolve(self) -> Result<(Config, String)> {
         let config = load_config(self.config)?;
         let url = match self.url {
             Some(url) => url,
@@ -161,7 +166,7 @@ fn claude_logged_in() -> Result<bool> {
 
 /// Fail early with a clear message instead of letting Claude Code retry
 /// against a server that is not there.
-fn ensure_reachable(url: &str) -> Result<()> {
+pub(crate) fn ensure_reachable(url: &str) -> Result<()> {
     let uri: wreq::Uri = url.parse()?;
     let host = uri.host().context("base URL has no host")?;
     let host = host.trim_start_matches('[').trim_end_matches(']');
@@ -277,7 +282,7 @@ pub(crate) fn default_settings_path() -> Option<PathBuf> {
 }
 
 /// Replace `path` atomically, keeping its permissions.
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let dir = path
         .parent()
         .filter(|dir| !dir.as_os_str().is_empty())
