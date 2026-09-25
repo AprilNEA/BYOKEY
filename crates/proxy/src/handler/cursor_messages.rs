@@ -25,19 +25,15 @@ use crate::util::sse_response;
 use crate::util::stream::{AnthropicParser, tap_usage_stream};
 use crate::{AppState, error::ApiError};
 
-/// Serve an Anthropic Messages request from Cursor. `body.model` is the
-/// Cursor model name, without any `cursor/` qualifier.
+/// Serve an Anthropic Messages request from Cursor. `model` is the Cursor
+/// model name, without any `cursor/` qualifier.
 pub(crate) async fn cursor_messages(
     state: &Arc<AppState>,
-    body: Value,
+    mut body: Value,
+    model: &str,
     stream: bool,
 ) -> Result<Response, ApiError> {
-    let model = body
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let model = model.as_str();
+    body["model"] = Value::String(model.to_owned());
     let request: MessagesRequest =
         serde_json::from_value(body).map_err(|e| ByokError::Translation(e.to_string()))?;
     let canonical = messages_request_to_canonical(request)

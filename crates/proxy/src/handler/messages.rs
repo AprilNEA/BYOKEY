@@ -1,8 +1,10 @@
 //! Anthropic Messages API passthrough handler.
 //!
-//! Accepts requests in native Anthropic format and routes them like
-//! `/v1/chat/completions` (see [`route`]): to Anthropic by default, to
-//! Copilot's `/v1/messages`, or to Cursor (see [`super::cursor_messages`]).
+//! Accepts requests in native Anthropic format and forwards them to
+//! either `api.anthropic.com/v1/messages` (default),
+//! `api.githubcopilot.com/v1/messages` when `claude.backend: copilot`
+//! is configured, or Cursor (see [`super::cursor_messages`]) for
+//! `claude.backend: cursor` and `cursor/<model>` model names.
 //!
 //! The response (streaming SSE or complete JSON) is returned as-is.
 
@@ -275,27 +277,32 @@ pub async fn anthropic_messages(
     let beta = build_beta_header(&mut body, &headers);
 
     let config = state.config.load();
+    let claude_config = config
+        .providers
+        .get(&ProviderId::Claude)
+        .cloned()
+        .unwrap_or_default();
+
+    // An explicit `cursor/<model>` wins over any global backend; otherwise
+    // `claude.backend` picks Copilot or Cursor for every request.
     let model = body
         .get("model")
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
-    let (provider, bare) = route(&model, |p| {
-        config.providers.get(p).and_then(|c| c.backend.clone())
-    });
-    body["model"] = Value::String(bare.to_owned());
-    match provider {
-        ProviderId::Claude => {}
-        ProviderId::Copilot => return copilot_messages(&state, body, stream, &beta).await,
-        ProviderId::Cursor => {
-            return super::cursor_messages::cursor_messages(&state, body, stream).await;
+    let (hint, bare) = byokey_provider::parse_qualified_model(&model);
+    let backend = if hint == Some(ProviderId::Cursor) {
+        hint
+    } else {
+        claude_config.backend.clone()
+    };
+    match backend {
+        Some(ProviderId::Cursor) => {
+            let bare = bare.to_owned();
+            return super::cursor_messages::cursor_messages(&state, body, &bare, stream).await;
         }
-        other => {
-            return Err(ByokError::UnsupportedModel(format!(
-                "{model}: {other} does not serve the Messages API"
-            ))
-            .into());
-        }
+        Some(ProviderId::Copilot) => return copilot_messages(&state, body, stream, &beta).await,
+        _ => {}
     }
 
     // Default: passthrough to Anthropic API.
@@ -449,17 +456,6 @@ fn strip_copilot_unsupported(body: &mut Value) {
             message.remove("output_config");
         }
     }
-}
-
-/// The provider that serves a Messages request for `model`, and the model
-/// name to send it.
-///
-/// Same rule as `/v1/chat/completions`: a `provider/` prefix names the
-/// provider, otherwise Claude; that provider's `backend` then redirects it.
-fn route(model: &str, backend: impl Fn(&ProviderId) -> Option<ProviderId>) -> (ProviderId, &str) {
-    let (hint, bare) = byokey_provider::parse_qualified_model(model);
-    let provider = hint.unwrap_or(ProviderId::Claude);
-    (backend(&provider).unwrap_or(provider), bare)
 }
 
 /// Route Anthropic-format request to Copilot's native `/v1/messages` endpoint.
@@ -735,27 +731,6 @@ async fn forward_response(
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn route_follows_prefix_then_backend() {
-        let backend = |p: &ProviderId| (*p == ProviderId::Claude).then_some(ProviderId::Copilot);
-        assert_eq!(
-            route("claude-opus-4-6", backend),
-            (ProviderId::Copilot, "claude-opus-4-6")
-        );
-        assert_eq!(
-            route("cursor/opus-low-fast", backend),
-            (ProviderId::Cursor, "opus-low-fast")
-        );
-        assert_eq!(
-            route("claude-opus-4-6", |_| None),
-            (ProviderId::Claude, "claude-opus-4-6")
-        );
-        assert_eq!(
-            route("codex/gpt-5.4", |_| None),
-            (ProviderId::Codex, "gpt-5.4")
-        );
-    }
 
     #[test]
     fn copilot_request_drops_fields_copilot_rejects_and_keeps_the_rest() {
