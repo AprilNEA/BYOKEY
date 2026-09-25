@@ -432,6 +432,21 @@ impl CopilotExecutor {
         tracker.last_rebalance = None;
     }
 
+    /// Drop the cached Copilot API token behind `creds`, so the next
+    /// `credentials()` call exchanges a fresh one. Returns whether there was
+    /// one to drop: an API key or `OpenCode` token is not exchanged and cannot
+    /// be refreshed here.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the token cache mutex is poisoned.
+    pub fn forget_token(creds: &CopilotCredentials) -> bool {
+        let mut cache = TOKEN_CACHE.lock().unwrap();
+        let before = cache.len();
+        cache.retain(|_, cached| cached.token != creds.token);
+        cache.len() < before
+    }
+
     /// Resolves the credentials for the next Copilot API request.
     ///
     /// A configured `api_key` is a bearer token sent as the default client.
@@ -699,6 +714,31 @@ mod tests {
     fn test_supported_models_non_empty() {
         let ex = make_executor();
         assert!(!ex.supported_models().is_empty());
+    }
+
+    #[test]
+    fn forgetting_a_token_drops_only_exchanged_ones() {
+        let github_token = "ghu_forgetting_a_token_drops_only_exchanged_ones";
+        TOKEN_CACHE.lock().unwrap().insert(
+            github_token.to_owned(),
+            CachedToken {
+                token: "copilot-token-to-forget".to_owned(),
+                api_endpoint: DEFAULT_BASE_URL.to_owned(),
+                expires_at: Instant::now() + Duration::from_mins(10),
+            },
+        );
+        let creds = CopilotCredentials {
+            token: "copilot-token-to-forget".to_owned(),
+            endpoint: DEFAULT_BASE_URL.to_owned(),
+            client: CopilotClient::VsCode,
+            device: CopilotDevice::for_credential(github_token),
+        };
+        assert!(CopilotExecutor::forget_token(&creds));
+        assert!(!TOKEN_CACHE.lock().unwrap().contains_key(github_token));
+        assert!(
+            !CopilotExecutor::forget_token(&creds),
+            "nothing left to forget"
+        );
     }
 
     #[tokio::test]

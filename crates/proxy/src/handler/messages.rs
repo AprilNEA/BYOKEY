@@ -25,7 +25,9 @@ use serde_json::Value;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use crate::util::stream::{AnthropicParser, response_to_stream, tap_usage_stream};
+use crate::util::stream::{
+    AnthropicParser, response_to_stream, tap_usage_stream, terminate_anthropic_stream,
+};
 use crate::util::{extract_usage, sse_response, strip_gateway_headers, upstream_failure};
 use crate::{AppState, UsageRecorder, error::ApiError};
 
@@ -565,8 +567,9 @@ pub(super) fn strip_copilot_unsupported(body: &mut Value) {
 /// `api.githubcopilot.com/v1/messages`. This handler authenticates as the
 /// account's Copilot client and forwards the request verbatim.
 ///
-/// With multiple Copilot accounts, retries with quota-aware rotation
-/// on transient failures.
+/// A Copilot API token that is rejected before its stated expiry is
+/// exchanged again once. With multiple Copilot accounts, transient failures
+/// are retried with quota-aware rotation.
 #[allow(clippy::too_many_lines)]
 #[tracing::instrument(skip_all, fields(
     model = %body.get("model").and_then(serde_json::Value::as_str).unwrap_or("-"),
@@ -610,7 +613,9 @@ async fn copilot_messages(
         .to_string();
 
     let mut last_err = None;
-    for attempt in 0..max_attempts {
+    let mut attempt = 0;
+    let mut token_refreshed = false;
+    while attempt < max_attempts {
         tracing::Span::current().record("attempt", attempt);
         let creds = match executor.credentials().await {
             Ok(c) => c,
@@ -619,6 +624,7 @@ async fn copilot_messages(
                     tracing::warn!(attempt, error = %e, "copilot token failed, trying next account");
                     CopilotExecutor::invalidate_current_account();
                     last_err = Some(ApiError::from(e));
+                    attempt += 1;
                     continue;
                 }
                 return Err(ApiError::from(e));
@@ -662,6 +668,15 @@ async fn copilot_messages(
             }
             Ok(r) => {
                 let err = upstream_failure(r).await;
+                // The cached token may have been revoked ahead of its expiry.
+                if matches!(err, ByokError::Upstream { status: 401, .. })
+                    && !token_refreshed
+                    && CopilotExecutor::forget_token(&creds)
+                {
+                    token_refreshed = true;
+                    tracing::warn!(attempt, "copilot rejected its token, exchanging a new one");
+                    continue;
+                }
                 if !err.is_retryable() || attempt + 1 >= max_attempts {
                     return Err(ApiError::from(err));
                 }
@@ -683,6 +698,7 @@ async fn copilot_messages(
                 last_err = Some(ApiError::from(err));
             }
         }
+        attempt += 1;
     }
 
     tracing::error!(
@@ -770,7 +786,8 @@ async fn forward_response(
             account_id.to_string(),
             AnthropicParser::new(),
         );
-        let mapped = tapped.map_err(|e| std::io::Error::other(e.to_string()));
+        let mapped =
+            terminate_anthropic_stream(tapped).map_err(|e| std::io::Error::other(e.to_string()));
         let mut sse = sse_response(upstream_status, mapped);
         // Merge upstream headers (gateway-stripped) into the SSE response.
         // We do not overwrite the SSE-specific headers set by sse_response.

@@ -22,7 +22,7 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use crate::util::sse_response;
-use crate::util::stream::{AnthropicParser, tap_usage_stream};
+use crate::util::stream::{AnthropicParser, tap_usage_stream, terminate_anthropic_stream};
 use crate::{AppState, error::ApiError};
 
 /// Serve an Anthropic Messages request from Cursor. `body.model` is the
@@ -83,7 +83,7 @@ pub(crate) async fn cursor_messages(
     );
     Ok(sse_response(
         StatusCode::OK,
-        tapped.map(|r| r.map_err(std::io::Error::other)),
+        terminate_anthropic_stream(tapped).map(|r| r.map_err(std::io::Error::other)),
     ))
 }
 
