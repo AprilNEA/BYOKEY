@@ -276,7 +276,6 @@ pub async fn anthropic_messages(
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let beta = build_beta_header(&mut body, &headers);
 
-    // Global backend override: `claude.backend: copilot`.
     let config = state.config.load();
     let claude_config = config
         .providers
@@ -284,22 +283,26 @@ pub async fn anthropic_messages(
         .cloned()
         .unwrap_or_default();
 
-    if claude_config.backend.as_ref() == Some(&ProviderId::Copilot) {
-        return copilot_messages(&state, body, stream, &beta).await;
-    }
-
-    // Cursor: `claude.backend: cursor`, or a `cursor/<model>` model name.
+    // An explicit `cursor/<model>` wins over any global backend; otherwise
+    // `claude.backend` picks Copilot or Cursor for every request.
     let model = body
         .get("model")
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
     let (hint, bare) = byokey_provider::parse_qualified_model(&model);
-    if hint == Some(ProviderId::Cursor)
-        || claude_config.backend.as_ref() == Some(&ProviderId::Cursor)
-    {
-        let bare = bare.to_owned();
-        return super::cursor_messages::cursor_messages(&state, body, &bare, stream).await;
+    let backend = if hint == Some(ProviderId::Cursor) {
+        hint
+    } else {
+        claude_config.backend.clone()
+    };
+    match backend {
+        Some(ProviderId::Cursor) => {
+            let bare = bare.to_owned();
+            return super::cursor_messages::cursor_messages(&state, body, &bare, stream).await;
+        }
+        Some(ProviderId::Copilot) => return copilot_messages(&state, body, stream, &beta).await,
+        _ => {}
     }
 
     // Default: passthrough to Anthropic API.
