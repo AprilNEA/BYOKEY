@@ -1,8 +1,9 @@
 //! In-memory usage statistics for request/token tracking, with optional
 //! persistent backing via [`UsageStore`].
 
-use byokey_types::{UsageRecord, UsageStore};
+use byokey_types::{ProviderId, Usage, UsageRecord, UsageStore};
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -53,20 +54,21 @@ impl UsageStats {
         Self::default()
     }
 
-    /// Record a successful request with optional token counts.
-    pub fn record_success(&self, model: &str, input_tokens: u64, output_tokens: u64) {
+    /// Record a successful request and its token counts.
+    pub fn record_success(&self, model: &str, usage: Usage) {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
         self.success_requests.fetch_add(1, Ordering::Relaxed);
-        self.input_tokens.fetch_add(input_tokens, Ordering::Relaxed);
+        self.input_tokens
+            .fetch_add(usage.input_tokens, Ordering::Relaxed);
         self.output_tokens
-            .fetch_add(output_tokens, Ordering::Relaxed);
+            .fetch_add(usage.output_tokens, Ordering::Relaxed);
 
         if let Ok(mut map) = self.model_counts.lock() {
             let entry = map.entry(model.to_string()).or_default();
             entry.requests += 1;
             entry.success += 1;
-            entry.input_tokens += input_tokens;
-            entry.output_tokens += output_tokens;
+            entry.input_tokens += usage.input_tokens;
+            entry.output_tokens += usage.output_tokens;
         }
     }
 
@@ -153,31 +155,16 @@ impl UsageRecorder {
         }
     }
 
-    /// Record a successful request with token counts, attributed to `account_id`.
-    pub fn record_success_for(
-        &self,
-        model: &str,
-        provider: &str,
-        account_id: &str,
-        input_tokens: u64,
-        output_tokens: u64,
-    ) {
-        self.stats
-            .record_success(model, input_tokens, output_tokens);
-        self.persist(
-            model,
-            provider,
-            account_id,
-            input_tokens,
-            output_tokens,
-            true,
-        );
+    /// Record a successful request.
+    fn record_success(&self, request: &Attribution, usage: Usage) {
+        self.stats.record_success(&request.model, usage);
+        self.persist(request, usage, true);
     }
 
-    /// Record a failed request, attributed to `account_id`.
-    pub fn record_failure_for(&self, model: &str, provider: &str, account_id: &str) {
-        self.stats.record_failure(model);
-        self.persist(model, provider, account_id, 0, 0, false);
+    /// Record a failed request.
+    fn record_failure(&self, request: &Attribution) {
+        self.stats.record_failure(&request.model);
+        self.persist(request, Usage::default(), false);
     }
 
     /// Take a snapshot of in-memory stats.
@@ -210,26 +197,98 @@ impl UsageRecorder {
         }
     }
 
-    fn persist(
-        &self,
-        model: &str,
-        provider: &str,
-        account_id: &str,
-        input_tokens: u64,
-        output_tokens: u64,
-        success: bool,
-    ) {
+    fn persist(&self, request: &Attribution, usage: Usage, success: bool) {
         if let Some(sender) = &self.sender {
-            let record = UsageRecord {
-                model: model.to_string(),
-                provider: provider.to_string(),
-                account_id: account_id.to_string(),
-                input_tokens,
-                output_tokens,
+            let _ = sender.send(UsageRecord {
+                model: request.model.clone(),
+                provider: request.provider,
+                account_id: request.account_id.clone(),
+                usage,
                 success,
-            };
-            let _ = sender.send(record);
+            });
         }
+    }
+}
+
+/// Token counts as Anthropic's Messages API reports them.
+pub(crate) trait AnthropicUsage {
+    /// The `usage` of a complete (non-streaming) response.
+    fn from_response(response: &Value) -> Self;
+    /// Take the counts a stream event carries: input tokens on
+    /// `message_start`, the running output total on `message_delta`.
+    fn read_event(&mut self, event: &Value);
+}
+
+impl AnthropicUsage for Usage {
+    fn from_response(response: &Value) -> Self {
+        let count = |key: &str| {
+            response
+                .pointer(&format!("/usage/{key}"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        };
+        Self {
+            input_tokens: count("input_tokens"),
+            output_tokens: count("output_tokens"),
+        }
+    }
+
+    fn read_event(&mut self, event: &Value) {
+        match event.get("type").and_then(Value::as_str) {
+            Some("message_start") => {
+                if let Some(n) = event
+                    .pointer("/message/usage/input_tokens")
+                    .and_then(Value::as_u64)
+                {
+                    self.input_tokens = n;
+                }
+            }
+            Some("message_delta") => {
+                if let Some(n) = event
+                    .pointer("/usage/output_tokens")
+                    .and_then(Value::as_u64)
+                {
+                    self.output_tokens = n;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Who a request's usage is recorded against: its model, the provider that
+/// served it, and the account it went out on.
+#[derive(Clone)]
+pub(crate) struct Attribution {
+    recorder: Arc<UsageRecorder>,
+    pub(crate) model: String,
+    pub(crate) provider: ProviderId,
+    pub(crate) account_id: String,
+}
+
+impl Attribution {
+    pub(crate) fn new(
+        recorder: Arc<UsageRecorder>,
+        model: impl Into<String>,
+        provider: ProviderId,
+        account_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            recorder,
+            model: model.into(),
+            provider,
+            account_id: account_id.into(),
+        }
+    }
+
+    /// Record the request as served, with its token counts.
+    pub(crate) fn success(&self, usage: Usage) {
+        self.recorder.record_success(self, usage);
+    }
+
+    /// Record the request as failed.
+    pub(crate) fn failure(&self) {
+        self.recorder.record_failure(self);
     }
 }
 
@@ -237,12 +296,19 @@ impl UsageRecorder {
 mod tests {
     use super::*;
 
+    fn usage(input_tokens: u64, output_tokens: u64) -> Usage {
+        Usage {
+            input_tokens,
+            output_tokens,
+        }
+    }
+
     #[test]
     fn test_record_success() {
         let stats = UsageStats::new();
-        stats.record_success("claude-opus-4-5", 100, 200);
-        stats.record_success("claude-opus-4-5", 50, 100);
-        stats.record_success("gpt-4o", 80, 150);
+        stats.record_success("claude-opus-4-5", usage(100, 200));
+        stats.record_success("claude-opus-4-5", usage(50, 100));
+        stats.record_success("gpt-4o", usage(80, 150));
 
         let snap = stats.snapshot();
         assert_eq!(snap.total_requests, 3);
@@ -262,7 +328,7 @@ mod tests {
     fn test_record_failure() {
         let stats = UsageStats::new();
         stats.record_failure("gpt-4o");
-        stats.record_success("gpt-4o", 10, 20);
+        stats.record_success("gpt-4o", usage(10, 20));
 
         let snap = stats.snapshot();
         assert_eq!(snap.total_requests, 2);
@@ -281,5 +347,38 @@ mod tests {
         let snap = stats.snapshot();
         assert_eq!(snap.total_requests, 0);
         assert!(snap.models.is_empty());
+    }
+
+    #[test]
+    fn anthropic_usage_is_read_from_responses_and_stream_events() {
+        let response = serde_json::json!({"usage": {"input_tokens": 12, "output_tokens": 7}});
+        assert_eq!(Usage::from_response(&response), usage(12, 7));
+        assert_eq!(
+            Usage::from_response(&serde_json::json!({})),
+            Usage::default()
+        );
+
+        let mut streamed = Usage::default();
+        for event in [
+            serde_json::json!({"type": "message_start", "message": {"usage": {"input_tokens": 12}}}),
+            serde_json::json!({"type": "content_block_delta"}),
+            // `message_delta` carries the running total, not an increment.
+            serde_json::json!({"type": "message_delta", "usage": {"output_tokens": 3}}),
+            serde_json::json!({"type": "message_delta", "usage": {"output_tokens": 7}}),
+        ] {
+            streamed.read_event(&event);
+        }
+        assert_eq!(streamed, usage(12, 7));
+    }
+
+    #[test]
+    fn attribution_records_against_its_request() {
+        let recorder = Arc::new(UsageRecorder::new(None));
+        let request = Attribution::new(Arc::clone(&recorder), "m", ProviderId::Copilot, "a");
+        request.success(usage(5, 2));
+        request.failure();
+        let snap = recorder.snapshot();
+        assert_eq!((snap.success_requests, snap.failure_requests), (1, 1));
+        assert_eq!((snap.models["m"].input_tokens, snap.output_tokens), (5, 2));
     }
 }

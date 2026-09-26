@@ -7,7 +7,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::Response,
 };
-use serde_json::Value;
 
 /// Prefixes whose presence in a response header name indicates a third-party
 /// API gateway fingerprint.  Names are case-insensitive.
@@ -46,15 +45,6 @@ pub(crate) fn strip_gateway_headers(headers: &mut HeaderMap) {
     for name in to_remove {
         headers.remove(&name);
     }
-}
-
-pub(crate) fn extract_usage(json: &Value, input_ptr: &str, output_ptr: &str) -> (u64, u64) {
-    (
-        json.pointer(input_ptr).and_then(Value::as_u64).unwrap_or(0),
-        json.pointer(output_ptr)
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-    )
 }
 
 pub(crate) fn sse_response(

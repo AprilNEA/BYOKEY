@@ -1,87 +1,64 @@
 //! SSE stream adapters: token usage tapping, keepalives while the upstream
 //! is silent, and Anthropic stream termination.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use axum::http::StatusCode;
-use byokey_types::ByokError;
 use byokey_types::traits::ByteStream;
+use byokey_types::{ByokError, Usage};
 use bytes::Bytes;
 use futures_util::{Future, StreamExt as _, TryStreamExt as _, stream, stream::try_unfold};
 use serde_json::Value;
 
-use crate::UsageRecorder;
 use crate::error::{anthropic_envelope, describe_status};
+use crate::usage::{AnthropicUsage as _, Attribution};
 
-/// Implemented per-provider to extract (`input_tokens`, `output_tokens`) from SSE data lines.
-pub(crate) trait UsageParser: Send + 'static {
-    fn parse_line(&mut self, data: &Value);
-    fn finish(self) -> (u64, u64);
-}
-
-/// Wraps a [`ByteStream`], scanning each SSE `data:` line through `parser`
-/// and recording usage via [`UsageRecorder`] when the stream ends.
-/// All bytes are forwarded unchanged.
-pub(crate) fn tap_usage_stream<P: UsageParser>(
-    inner: ByteStream,
-    usage: Arc<UsageRecorder>,
-    model: String,
-    provider: String,
-    account_id: String,
-    parser: P,
-) -> ByteStream {
-    struct State<P> {
+/// Wraps an Anthropic Messages [`ByteStream`], reading token usage from its
+/// `message_start` and `message_delta` events and recording it against
+/// `attribution` when the stream ends. All bytes are forwarded unchanged.
+pub(crate) fn tap_usage_stream(inner: ByteStream, attribution: Attribution) -> ByteStream {
+    struct State {
         inner: ByteStream,
         buf: Vec<u8>,
-        usage: Arc<UsageRecorder>,
-        model: String,
-        provider: String,
-        account_id: String,
-        parser: P,
+        attribution: Attribution,
+        usage: Usage,
     }
 
     Box::pin(try_unfold(
         State {
             inner,
             buf: Vec::new(),
-            usage,
-            model,
-            provider,
-            account_id,
-            parser,
+            attribution,
+            usage: Usage::default(),
         },
         |mut s| async move {
             match s.inner.next().await {
                 Some(Ok(bytes)) => {
                     split_lines(&mut s.buf, &bytes, |line| {
                         if let Some(ev) = sse_event(line) {
-                            s.parser.parse_line(&ev);
+                            s.usage.read_event(&ev);
                         }
                     });
                     Ok(Some((bytes, s)))
                 }
                 Some(Err(e)) => {
                     tracing::error!(
-                        model = %s.model,
-                        provider = %s.provider,
-                        account_id = %s.account_id,
+                        model = %s.attribution.model,
+                        provider = %s.attribution.provider,
+                        account_id = %s.attribution.account_id,
                         error = %e,
-                        "tap_usage_stream: upstream SSE stream yielded error"
+                        "upstream SSE stream failed"
                     );
-                    s.usage
-                        .record_failure_for(&s.model, &s.provider, &s.account_id);
+                    s.attribution.failure();
                     Err(e)
                 }
                 None => {
                     if !s.buf.is_empty()
                         && let Some(ev) = sse_event(&std::mem::take(&mut s.buf))
                     {
-                        s.parser.parse_line(&ev);
+                        s.usage.read_event(&ev);
                     }
-                    let (input, output) = s.parser.finish();
-                    s.usage
-                        .record_success_for(&s.model, &s.provider, &s.account_id, input, output);
+                    s.attribution.success(s.usage);
                     Ok(None)
                 }
             }
@@ -288,49 +265,13 @@ pub(crate) fn error_chain(err: &(dyn std::error::Error + 'static)) -> String {
     }
 }
 
-/// Reads `input_tokens` and `output_tokens` from an Anthropic Messages stream.
-pub(crate) struct AnthropicParser {
-    input: u64,
-    output: u64,
-}
-
-impl AnthropicParser {
-    pub(crate) fn new() -> Self {
-        Self {
-            input: 0,
-            output: 0,
-        }
-    }
-}
-
-impl UsageParser for AnthropicParser {
-    fn parse_line(&mut self, ev: &Value) {
-        match ev.get("type").and_then(Value::as_str) {
-            Some("message_start") => {
-                if let Some(v) = ev
-                    .pointer("/message/usage/input_tokens")
-                    .and_then(Value::as_u64)
-                {
-                    self.input = v;
-                }
-            }
-            Some("message_delta") => {
-                if let Some(v) = ev.pointer("/usage/output_tokens").and_then(Value::as_u64) {
-                    self.output = v;
-                }
-            }
-            _ => {}
-        }
-    }
-    fn finish(self) -> (u64, u64) {
-        (self.input, self.output)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::UsageRecorder;
+    use byokey_types::ProviderId;
     use futures_util::stream;
+    use std::sync::Arc;
 
     async fn terminated(chunks: Vec<Result<&'static str, ByokError>>) -> String {
         let inner: ByteStream = Box::pin(stream::iter(
@@ -508,16 +449,13 @@ mod tests {
             )),
         ]));
 
-        let chunks: Vec<_> = tap_usage_stream(
-            inner,
+        let attribution = Attribution::new(
             Arc::clone(&usage),
-            "claude-test".to_owned(),
-            "claude".to_owned(),
-            "default".to_owned(),
-            AnthropicParser::new(),
-        )
-        .collect()
-        .await;
+            "claude-test",
+            ProviderId::Claude,
+            "default",
+        );
+        let chunks: Vec<_> = tap_usage_stream(inner, attribution).collect().await;
 
         assert_eq!(chunks.len(), 2);
         assert!(chunks.iter().all(Result::is_ok));

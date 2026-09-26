@@ -101,17 +101,23 @@ pub trait TokenStore: Send + Sync {
     }
 }
 
+/// Input and output tokens of one request.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Usage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
 /// A single request's usage record for persistence.
 #[derive(Debug, Clone)]
 pub struct UsageRecord {
     pub model: String,
-    pub provider: String,
+    pub provider: ProviderId,
     /// Account identifier. Use [`DEFAULT_ACCOUNT`] for API-key flows or when
     /// the caller can't determine the specific OAuth account that served the
     /// request.
     pub account_id: String,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
+    pub usage: Usage,
     pub success: bool,
 }
 

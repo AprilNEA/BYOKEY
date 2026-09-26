@@ -16,6 +16,6 @@ pub use provider::ProviderId;
 pub use provider::ThinkingCapability;
 pub use token::{AccountInfo, OAuthToken, TokenState};
 pub use traits::{
-    ByteStream, CLAUDE_CODE_ACCOUNT, DEFAULT_ACCOUNT, MAX_API_KEY_BYTES, TokenStore, UsageBucket,
-    UsageRecord, UsageStore,
+    ByteStream, CLAUDE_CODE_ACCOUNT, DEFAULT_ACCOUNT, MAX_API_KEY_BYTES, TokenStore, Usage,
+    UsageBucket, UsageRecord, UsageStore,
 };

@@ -16,10 +16,10 @@ impl UsageStore for SqliteTokenStore {
              VALUES (?, ?, ?, ?, ?, ?, ?)",
             vec![
                 rec.model.clone().into(),
-                rec.provider.clone().into(),
+                rec.provider.to_string().into(),
                 rec.account_id.clone().into(),
-                (rec.input_tokens as i64).into(),
-                (rec.output_tokens as i64).into(),
+                (rec.usage.input_tokens as i64).into(),
+                (rec.usage.output_tokens as i64).into(),
                 i32::from(rec.success).into(),
                 now_unix().into(),
             ],
@@ -80,6 +80,7 @@ impl UsageStore for SqliteTokenStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use byokey_types::{ProviderId, Usage};
 
     async fn mem() -> SqliteTokenStore {
         SqliteTokenStore::new("sqlite::memory:").await.unwrap()
@@ -90,20 +91,24 @@ mod tests {
         let s = mem().await;
         s.record(&UsageRecord {
             model: "gpt-4o".into(),
-            provider: "copilot".into(),
+            provider: ProviderId::Copilot,
             account_id: "default".into(),
-            input_tokens: 100,
-            output_tokens: 50,
+            usage: Usage {
+                input_tokens: 100,
+                output_tokens: 50,
+            },
             success: true,
         })
         .await
         .unwrap();
         s.record(&UsageRecord {
             model: "gpt-4o".into(),
-            provider: "copilot".into(),
+            provider: ProviderId::Copilot,
             account_id: "default".into(),
-            input_tokens: 200,
-            output_tokens: 100,
+            usage: Usage {
+                input_tokens: 200,
+                output_tokens: 100,
+            },
             success: true,
         })
         .await

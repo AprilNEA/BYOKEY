@@ -16,7 +16,7 @@ use axum::{
 use byokey_provider::claude::{ANTHROPIC_BETA, ANTHROPIC_VERSION, fingerprint_headers};
 use byokey_provider::cloak::{derive_cc_entrypoint, inject_billing_header};
 use byokey_provider::{Conversation, CopilotCredentials, CopilotIdentity, CopilotUpstream};
-use byokey_types::{ByokError, ProviderId, ThinkingCapability, traits::ByteStream};
+use byokey_types::{ByokError, ProviderId, ThinkingCapability, Usage, traits::ByteStream};
 use bytes::Bytes;
 use futures_util::{Future, StreamExt as _, TryStreamExt as _};
 use serde_json::Value;
@@ -24,12 +24,12 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::usage::{AnthropicUsage as _, Attribution};
 use crate::util::stream::{
-    AnthropicParser, deferred_stream, keep_alive, response_to_stream, tap_usage_stream,
-    terminate_anthropic_stream,
+    deferred_stream, keep_alive, response_to_stream, tap_usage_stream, terminate_anthropic_stream,
 };
-use crate::util::{extract_usage, sse_response, strip_gateway_headers};
-use crate::{AppState, UsageRecorder, error::ApiError};
+use crate::util::{sse_response, strip_gateway_headers};
+use crate::{AppState, error::ApiError};
 
 /// How long a streaming request waits for the upstream's headers before the
 /// client gets a response of its own, with keepalives, so that Claude Code
@@ -427,12 +427,12 @@ async fn serve_messages(
         .unwrap_or("unknown")
         .to_string();
 
-    let attribution = Attribution {
-        usage: state.usage.clone(),
-        model: model_name,
-        provider: "claude",
-        account_id: upstream.account_id,
-    };
+    let attribution = Attribution::new(
+        state.usage.clone(),
+        model_name,
+        ProviderId::Claude,
+        upstream.account_id,
+    );
     forward(builder.json(&body).send(), stream, attribution, is_oauth).await
 }
 
@@ -797,12 +797,12 @@ async fn copilot_messages(
 
         // Copilot does its own account rotation inside CopilotUpstream; the
         // specific account isn't exposed here, so usage goes to DEFAULT_ACCOUNT.
-        let attribution = Attribution {
-            usage: state.usage.clone(),
-            model: model_name.clone(),
-            provider: "copilot",
-            account_id: byokey_types::DEFAULT_ACCOUNT.to_owned(),
-        };
+        let attribution = Attribution::new(
+            state.usage.clone(),
+            model_name.clone(),
+            ProviderId::Copilot,
+            byokey_types::DEFAULT_ACCOUNT,
+        );
         // Only the last attempt may hand the client a response before the
         // upstream answered: an earlier one still needs the status to decide
         // whether to try the next account.
@@ -841,19 +841,15 @@ async fn copilot_messages(
         attempts = max_attempts,
         "all copilot accounts exhausted for messages request"
     );
-    state
-        .usage
-        .record_failure_for(&model_name, "copilot", byokey_types::DEFAULT_ACCOUNT);
+    Attribution::new(
+        state.usage.clone(),
+        model_name,
+        ProviderId::Copilot,
+        byokey_types::DEFAULT_ACCOUNT,
+    )
+    .failure();
     Err(last_err
         .unwrap_or_else(|| ApiError::from(ByokError::Auth("no copilot accounts available".into()))))
-}
-
-/// Whom a request's token usage is recorded against.
-struct Attribution {
-    usage: Arc<UsageRecorder>,
-    model: String,
-    provider: &'static str,
-    account_id: String,
 }
 
 /// Forward the response to `pending` back to the client.
@@ -906,11 +902,7 @@ async fn forward_response(
     if !status.is_success() {
         let err = ByokError::from_response(resp).await;
         tracing::error!(status = status.as_u16(), "upstream error");
-        attribution.usage.record_failure_for(
-            &attribution.model,
-            attribution.provider,
-            &attribution.account_id,
-        );
+        attribution.failure();
         return Err(ApiError::from(err));
     }
 
@@ -953,14 +945,7 @@ async fn forward_response(
     if reverse_remap_tools {
         byokey_provider::cloak::reverse_remap_tool_names_response(&mut json);
     }
-    let (input, output) = extract_usage(&json, "/usage/input_tokens", "/usage/output_tokens");
-    attribution.usage.record_success_for(
-        &attribution.model,
-        attribution.provider,
-        &attribution.account_id,
-        input,
-        output,
-    );
+    attribution.success(Usage::from_response(&json));
     let mut response = (upstream_status, axum::Json(json)).into_response();
     // Merge upstream headers (gateway-stripped) into the JSON response.
     for (name, value) in &upstream_headers {
@@ -1002,14 +987,7 @@ fn stream_response(
     } else {
         raw
     };
-    let tapped = tap_usage_stream(
-        remapped,
-        attribution.usage,
-        attribution.model,
-        attribution.provider.to_owned(),
-        attribution.account_id,
-        AnthropicParser::new(),
-    );
+    let tapped = tap_usage_stream(remapped, attribution);
     let alive = keep_alive(tapped, KEEPALIVE_INTERVAL, SILENCE_LIMIT);
     let mapped =
         terminate_anthropic_stream(alive).map_err(|e| std::io::Error::other(e.to_string()));
@@ -1411,12 +1389,12 @@ mod tests {
             .unwrap()
             .into();
 
-        let attribution = Attribution {
-            usage: Arc::new(UsageRecorder::new(None)),
-            model: "m".into(),
-            provider: "copilot",
-            account_id: "a".into(),
-        };
+        let attribution = Attribution::new(
+            Arc::new(crate::UsageRecorder::new(None)),
+            "m",
+            ProviderId::Copilot,
+            "a",
+        );
         let Ok(response) = forward_response(upstream, false, attribution, false).await else {
             panic!("a 200 upstream response must forward");
         };

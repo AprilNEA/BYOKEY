@@ -15,16 +15,15 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use byokey_provider::CursorUpstream;
-use byokey_types::{ByokError, traits::ByteStream};
+use byokey_types::{ByokError, ProviderId, traits::ByteStream};
 use bytes::Bytes;
 use futures_util::StreamExt as _;
 use serde_json::Value;
 use std::sync::Arc;
 
+use crate::usage::Attribution;
 use crate::util::sse_response;
-use crate::util::stream::{
-    AnthropicParser, keep_alive, tap_usage_stream, terminate_anthropic_stream,
-};
+use crate::util::stream::{keep_alive, tap_usage_stream, terminate_anthropic_stream};
 use std::time::Duration;
 
 /// See `messages::KEEPALIVE_INTERVAL`; a Cursor run parked on a tool call
@@ -80,14 +79,13 @@ pub(crate) async fn cursor_messages(
             )
         })
     }));
-    let tapped = tap_usage_stream(
-        sse,
+    let attribution = Attribution::new(
         state.usage.clone(),
-        model.to_owned(),
-        "cursor".into(),
-        byokey_types::DEFAULT_ACCOUNT.into(),
-        AnthropicParser::new(),
+        model,
+        ProviderId::Cursor,
+        byokey_types::DEFAULT_ACCOUNT,
     );
+    let tapped = tap_usage_stream(sse, attribution);
     let alive = keep_alive(tapped, KEEPALIVE_INTERVAL, Duration::MAX);
     Ok(sse_response(
         StatusCode::OK,
