@@ -20,6 +20,6 @@ pub use copilot::{
     Conversation, CopilotCredentials, CopilotDevice, CopilotIdentity, CopilotModel,
     CopilotUpstream, CopilotVersions,
 };
-pub use cursor::CursorUpstream;
+pub use cursor::{CursorModel, CursorUpstream};
 pub use device_profile::DeviceProfileCache;
 pub use registry::{ModelEntry, all_models, parse_qualified_model, thinking_capability};

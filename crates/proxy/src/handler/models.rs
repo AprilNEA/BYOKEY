@@ -23,83 +23,151 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use byokey_config::Config;
-use byokey_provider::{CopilotModel, CursorUpstream, all_models};
+use byokey_provider::{CopilotModel, CursorModel, CursorUpstream, all_models};
 use byokey_types::ProviderId;
-use serde::Serialize;
-use serde_json::json;
+use serde::{Serialize, Serializer};
 use std::sync::Arc;
+use time::{Date, OffsetDateTime};
 
 use crate::AppState;
-
-/// A listed model.
-#[derive(Serialize)]
-pub struct ModelEntry {
-    pub id: String,
-    pub object: String,
-    /// Release time, as Unix seconds (0 when unknown).
-    pub created: i64,
-    pub owned_by: String,
-    /// Label for model pickers, when the upstream names the model.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-    /// The model takes a 1M-token context, selected as `<id>[1m]`.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub supports_1m: bool,
-    #[serde(skip)]
-    released: Option<time::Date>,
-}
-
-impl ModelEntry {
-    fn new(id: String, owned_by: &ProviderId, display_name: Option<String>) -> Self {
-        let released = lineup::released_on(&id);
-        Self {
-            id,
-            object: "model".into(),
-            created: released.map_or(0, |d| d.midnight().assume_utc().unix_timestamp()),
-            owned_by: owned_by.to_string(),
-            display_name,
-            supports_1m: false,
-            released,
-        }
-    }
-
-    /// Anthropic's RFC 3339 `created_at`: the release at midnight UTC, or
-    /// the Unix epoch when unknown, as Anthropic's API does.
-    fn created_at(&self) -> String {
-        match self.released {
-            Some(d) => format!("{d}T00:00:00Z"),
-            None => "1970-01-01T00:00:00Z".to_owned(),
-        }
-    }
-}
 
 /// Tokens of context from which a model counts as long-context.
 const LONG_CONTEXT_TOKENS: u64 = 1_000_000;
 
-/// A model from a provider's live catalog.
-struct LiveModel {
+/// A listed model.
+struct ModelEntry {
     id: String,
-    name: String,
+    provider: ProviderId,
+    /// Label for model pickers, when the upstream names the model.
+    display_name: Option<String>,
+    released: Released,
+    /// The model takes a 1M-token context, selected as `<id>[1m]`.
     supports_1m: bool,
 }
 
-impl From<&CopilotModel> for LiveModel {
-    fn from(m: &CopilotModel) -> Self {
+impl ModelEntry {
+    fn new(id: String, provider: ProviderId) -> Self {
         Self {
-            id: m.id.clone(),
-            name: m.name.clone(),
-            supports_1m: m.context_window >= Some(LONG_CONTEXT_TOKENS),
+            released: Released::of(&id),
+            id,
+            provider,
+            display_name: None,
+            supports_1m: false,
         }
     }
 }
 
-impl From<(String, String)> for LiveModel {
-    /// Cursor's catalog names its models but not their context windows.
-    fn from((id, name): (String, String)) -> Self {
+/// When a model was released: midnight UTC of its release date, or the Unix
+/// epoch when unknown, as Anthropic's API reports unknown dates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Released(OffsetDateTime);
+
+impl Released {
+    fn of(id: &str) -> Self {
+        Self::from(lineup::released_on(id))
+    }
+
+    /// As Unix seconds, `OpenAI`'s `created`.
+    fn serialize_unix<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        time::serde::timestamp::serialize(&self.0, s)
+    }
+
+    /// As RFC 3339, Anthropic's `created_at`.
+    fn serialize_rfc3339<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        time::serde::rfc3339::serialize(&self.0, s)
+    }
+}
+
+impl From<Option<Date>> for Released {
+    fn from(date: Option<Date>) -> Self {
+        Self(date.map_or(OffsetDateTime::UNIX_EPOCH, |d| d.midnight().assume_utc()))
+    }
+}
+
+/// An entry of Anthropic's model list.
+#[derive(Serialize)]
+struct AnthropicModel {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    id: String,
+    display_name: String,
+    #[serde(serialize_with = "Released::serialize_rfc3339")]
+    created_at: Released,
+    supports_1m: bool,
+}
+
+impl From<ModelEntry> for AnthropicModel {
+    fn from(m: ModelEntry) -> Self {
         Self {
-            id,
-            name,
-            supports_1m: false,
+            kind: "model",
+            display_name: m.display_name.unwrap_or_else(|| m.id.clone()),
+            id: m.id,
+            created_at: m.released,
+            supports_1m: m.supports_1m,
+        }
+    }
+}
+
+/// Anthropic's model list: one page holding every model.
+#[derive(Serialize)]
+struct AnthropicList {
+    first_id: Option<String>,
+    last_id: Option<String>,
+    has_more: bool,
+    data: Vec<AnthropicModel>,
+}
+
+impl From<Vec<ModelEntry>> for AnthropicList {
+    fn from(models: Vec<ModelEntry>) -> Self {
+        let data: Vec<AnthropicModel> = models.into_iter().map(AnthropicModel::from).collect();
+        Self {
+            first_id: data.first().map(|m| m.id.clone()),
+            last_id: data.last().map(|m| m.id.clone()),
+            has_more: false,
+            data,
+        }
+    }
+}
+
+/// An entry of the `OpenAI` model list.
+#[derive(Serialize)]
+struct OpenAiModel {
+    id: String,
+    object: &'static str,
+    #[serde(serialize_with = "Released::serialize_unix")]
+    created: Released,
+    owned_by: ProviderId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_name: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    supports_1m: bool,
+}
+
+impl From<ModelEntry> for OpenAiModel {
+    fn from(m: ModelEntry) -> Self {
+        Self {
+            id: m.id,
+            object: "model",
+            created: m.released,
+            owned_by: m.provider,
+            display_name: m.display_name,
+            supports_1m: m.supports_1m,
+        }
+    }
+}
+
+/// The `OpenAI` model list.
+#[derive(Serialize)]
+struct OpenAiList {
+    object: &'static str,
+    data: Vec<OpenAiModel>,
+}
+
+impl From<Vec<ModelEntry>> for OpenAiList {
+    fn from(models: Vec<ModelEntry>) -> Self {
+        Self {
+            object: "list",
+            data: models.into_iter().map(OpenAiModel::from).collect(),
         }
     }
 }
@@ -108,26 +176,12 @@ impl From<(String, String)> for LiveModel {
 pub async fn list_models(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     let config = state.config.load();
     let live = Live::fetch(&state, &config).await;
-    let data = messages_models(&config, &live);
+    let models = messages_models(&config, &live);
     if headers.contains_key("anthropic-version") {
-        let first = data.first().map(|m| m.id.clone());
-        let last = data.last().map(|m| m.id.clone());
-        let data: Vec<_> = data
-            .into_iter()
-            .map(|m| {
-                json!({
-                    "type": "model",
-                    "display_name": m.display_name.as_ref().unwrap_or(&m.id),
-                    "created_at": m.created_at(),
-                    "id": m.id,
-                    "supports_1m": m.supports_1m,
-                })
-            })
-            .collect();
-        return Json(json!({"data": data, "has_more": false, "first_id": first, "last_id": last}))
-            .into_response();
+        Json(AnthropicList::from(models)).into_response()
+    } else {
+        Json(OpenAiList::from(models)).into_response()
     }
-    Json(json!({"object": "list", "data": data})).into_response()
 }
 
 /// Whether `provider` may be listed: enabled, and signed in or keyed.
@@ -139,11 +193,40 @@ async fn usable(state: &AppState, config: &Config, provider: &ProviderId) -> boo
     pc.is_some_and(|c| c.api_key.is_some()) || state.auth.is_authenticated(provider).await
 }
 
-/// Live catalogs of the providers that publish one, plus which providers
-/// may be listed at all.
+/// A model from a provider's live catalog.
+struct LiveModel {
+    id: String,
+    name: String,
+    supports_1m: bool,
+}
+
+impl From<CopilotModel> for LiveModel {
+    fn from(m: CopilotModel) -> Self {
+        Self {
+            supports_1m: m.context_window >= Some(LONG_CONTEXT_TOKENS),
+            id: m.id,
+            name: m.name,
+        }
+    }
+}
+
+impl From<CursorModel> for LiveModel {
+    /// Cursor's catalog names its models but not their context windows.
+    fn from(m: CursorModel) -> Self {
+        Self {
+            id: m.id,
+            name: m.name,
+            supports_1m: false,
+        }
+    }
+}
+
+/// The live catalogs of the providers that publish one, as far as
+/// `/v1/messages` reaches them, plus which providers may be listed at all.
 struct Live {
     usable: Vec<ProviderId>,
-    copilot: Vec<CopilotModel>,
+    /// Copilot models served on its Anthropic-format `/v1/messages`.
+    copilot: Vec<LiveModel>,
     cursor: Vec<LiveModel>,
 }
 
@@ -178,30 +261,26 @@ impl Live {
                 .await
                 .inspect_err(|e| tracing::warn!(error = %e, "Cursor model listing failed"))
                 .unwrap_or_default()
-                .into_iter()
-                .map(LiveModel::from)
-                .collect()
         } else {
             Vec::new()
         };
+        Self::new(usable, copilot, cursor)
+    }
+
+    fn new(usable: Vec<ProviderId>, copilot: Vec<CopilotModel>, cursor: Vec<CursorModel>) -> Self {
         Self {
             usable,
-            copilot,
-            cursor,
+            copilot: copilot
+                .into_iter()
+                .filter(|m| m.messages)
+                .map(LiveModel::from)
+                .collect(),
+            cursor: cursor.into_iter().map(LiveModel::from).collect(),
         }
     }
 
     fn has(&self, provider: &ProviderId) -> bool {
         self.usable.contains(provider)
-    }
-
-    /// Copilot models served on its Anthropic-format `/v1/messages`.
-    fn copilot_messages(&self) -> Vec<LiveModel> {
-        self.copilot
-            .iter()
-            .filter(|m| m.messages)
-            .map(LiveModel::from)
-            .collect()
     }
 }
 
@@ -213,26 +292,23 @@ fn messages_models(config: &Config, live: &Live) -> Vec<ModelEntry> {
         .providers
         .get(&ProviderId::Claude)
         .and_then(|c| c.backend.clone());
-    let copilot = live.copilot_messages();
     let mut out = Vec::new();
     match backend {
-        Some(ProviderId::Copilot) => push_all(&mut out, &ProviderId::Copilot, &copilot, false),
+        Some(ProviderId::Copilot) => push_all(&mut out, &ProviderId::Copilot, &live.copilot, false),
         Some(ProviderId::Cursor) => push_all(&mut out, &ProviderId::Cursor, &live.cursor, false),
         _ if live.has(&ProviderId::Claude) => {
-            for entry in all_models() {
-                out.push(ModelEntry::new(
-                    entry.id.to_owned(),
-                    &ProviderId::Claude,
-                    None,
-                ));
-            }
+            out.extend(
+                all_models()
+                    .iter()
+                    .map(|entry| ModelEntry::new(entry.id.to_owned(), ProviderId::Claude)),
+            );
             lineup::sort(&mut out, |e| &e.id);
         }
         _ => {}
     }
     // The backend's models are already listed unprefixed.
     if backend != Some(ProviderId::Copilot) {
-        push_all(&mut out, &ProviderId::Copilot, &copilot, true);
+        push_all(&mut out, &ProviderId::Copilot, &live.copilot, true);
     }
     if backend != Some(ProviderId::Cursor) {
         push_all(&mut out, &ProviderId::Cursor, &live.cursor, true);
@@ -251,20 +327,19 @@ fn push_all(
 ) {
     let start = out.len();
     for m in models {
-        let listed = if qualified {
-            format!("{provider}/{}", m.id)
+        let (id, name) = if qualified {
+            (
+                format!("{provider}/{}", m.id),
+                format!("{} ({})", m.name, provider.display_name()),
+            )
         } else {
-            m.id.clone()
+            (m.id.clone(), m.name.clone())
         };
-        if !out.iter().any(|e| e.id == listed) {
-            let name = if qualified {
-                format!("{} ({})", m.name, provider.display_name())
-            } else {
-                m.name.clone()
-            };
+        if !out.iter().any(|e| e.id == id) {
             out.push(ModelEntry {
+                display_name: Some(name),
                 supports_1m: m.supports_1m,
-                ..ModelEntry::new(listed, provider, Some(name))
+                ..ModelEntry::new(id, provider.clone())
             });
         }
     }
@@ -274,37 +349,34 @@ fn push_all(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::{Value, json};
 
-    fn copilot(id: &str, messages: bool, chat: bool) -> CopilotModel {
+    fn copilot(id: &str, messages: bool, context_window: Option<u64>) -> CopilotModel {
         CopilotModel {
             id: id.into(),
             name: id.into(),
             messages,
-            chat,
-            context_window: None,
+            context_window,
+        }
+    }
+
+    fn cursor(id: &str, name: &str) -> CursorModel {
+        CursorModel {
+            id: id.into(),
+            name: name.into(),
         }
     }
 
     fn live(usable: &[ProviderId]) -> Live {
-        Live {
-            usable: usable.to_vec(),
-            copilot: vec![
-                CopilotModel {
-                    context_window: Some(LONG_CONTEXT_TOKENS),
-                    ..copilot("claude-opus-5.5", true, true)
-                },
-                CopilotModel {
-                    context_window: Some(200_000),
-                    ..copilot("claude-haiku-4.5", true, true)
-                },
-                copilot("gpt-5.6-sol", false, false),
-                copilot("gpt-5.4", false, true),
+        Live::new(
+            usable.to_vec(),
+            vec![
+                copilot("claude-opus-5.5", true, Some(LONG_CONTEXT_TOKENS)),
+                copilot("claude-haiku-4.5", true, Some(200_000)),
+                copilot("gpt-5.4", false, None),
             ],
-            cursor: vec![LiveModel::from((
-                "claude-opus-5-5".to_owned(),
-                "Claude Opus 5.5".to_owned(),
-            ))],
-        }
+            vec![cursor("claude-opus-5-5", "Claude Opus 5.5")],
+        )
     }
 
     fn ids(models: &[ModelEntry]) -> Vec<&str> {
@@ -336,7 +408,7 @@ mod tests {
         assert!(direct.contains(&"cursor/claude-opus-5-5"));
         assert!(
             !direct.contains(&"copilot/gpt-5.4"),
-            "chat-only Copilot models are not on /v1/messages"
+            "Copilot models off /v1/messages are not listed"
         );
 
         let redirected = messages_models(&backend(ProviderId::Copilot), &live);
@@ -369,26 +441,24 @@ mod tests {
     #[test]
     fn nothing_is_listed_without_a_login() {
         // `Live::fetch` loads no catalog for a provider that is not usable.
-        let live = Live {
-            usable: Vec::new(),
-            copilot: Vec::new(),
-            cursor: Vec::new(),
-        };
+        let live = Live::new(Vec::new(), Vec::new(), Vec::new());
         assert!(messages_models(&Config::default(), &live).is_empty());
     }
 
     #[test]
-    fn each_provider_is_listed_in_lineup_order_with_release_dates() {
-        let cursor = |id: &str| LiveModel::from((id.to_owned(), id.to_owned()));
-        let live = Live {
-            usable: vec![ProviderId::Copilot, ProviderId::Cursor],
+    fn each_provider_is_listed_in_lineup_order() {
+        let live = Live::new(
+            vec![ProviderId::Copilot, ProviderId::Cursor],
             // Copilot's own catalog order.
-            copilot: ["claude-opus-4.7", "claude-haiku-4.5", "claude-opus-5.5"]
+            ["claude-opus-4.7", "claude-haiku-4.5", "claude-opus-5.5"]
                 .into_iter()
-                .map(|id| copilot(id, true, true))
+                .map(|id| copilot(id, true, None))
                 .collect(),
-            cursor: vec![cursor("claude-sonnet-4-6"), cursor("claude-fable-5-1")],
-        };
+            vec![
+                cursor("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+                cursor("claude-fable-5-1", "Claude Fable 5.1"),
+            ],
+        );
         let listed = messages_models(&backend(ProviderId::Copilot), &live);
         assert_eq!(
             ids(&listed),
@@ -401,14 +471,52 @@ mod tests {
             ],
             "sorted within each provider, providers kept apart"
         );
-        assert_eq!(listed[0].created_at(), "2026-09-22T00:00:00Z");
-        assert_eq!(listed[0].created, 1_790_035_200);
     }
 
     #[test]
-    fn unknown_release_dates_fall_back_to_the_epoch() {
-        let entry = ModelEntry::new("composer-2.5".into(), &ProviderId::Cursor, None);
-        assert_eq!(entry.created, 0);
-        assert_eq!(entry.created_at(), "1970-01-01T00:00:00Z");
+    fn both_list_shapes_carry_the_release_date() {
+        let models = || {
+            vec![
+                ModelEntry::new("claude-opus-5-5".into(), ProviderId::Claude),
+                ModelEntry {
+                    display_name: Some("Composer 2.5 (Cursor)".into()),
+                    ..ModelEntry::new("cursor/composer-2.5".into(), ProviderId::Cursor)
+                },
+            ]
+        };
+        let anthropic = serde_json::to_value(AnthropicList::from(models())).unwrap();
+        assert_eq!(
+            anthropic,
+            json!({
+                "first_id": "claude-opus-5-5",
+                "last_id": "cursor/composer-2.5",
+                "has_more": false,
+                "data": [
+                    {
+                        "type": "model",
+                        "id": "claude-opus-5-5",
+                        "display_name": "claude-opus-5-5",
+                        "created_at": "2026-09-22T00:00:00Z",
+                        "supports_1m": false,
+                    },
+                    {
+                        "type": "model",
+                        "id": "cursor/composer-2.5",
+                        "display_name": "Composer 2.5 (Cursor)",
+                        "created_at": "1970-01-01T00:00:00Z",
+                        "supports_1m": false,
+                    },
+                ],
+            })
+        );
+        let openai = serde_json::to_value(OpenAiList::from(models())).unwrap();
+        let created: Vec<&Value> = openai["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| &m["created"])
+            .collect();
+        assert_eq!(created, [&json!(1_790_035_200), &json!(0)]);
+        assert_eq!(openai["data"][0]["owned_by"], "claude");
     }
 }

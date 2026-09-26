@@ -198,7 +198,24 @@ async fn catalog(
     Ok(models)
 }
 
-/// Every base model the account can use, as `(id, display name)`.
+/// A base model the account can use.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CursorModel {
+    pub id: String,
+    /// Human-readable name, e.g. `Claude Opus 5.5`.
+    pub name: String,
+}
+
+impl From<Model> for CursorModel {
+    fn from(m: Model) -> Self {
+        Self {
+            id: m.id,
+            name: m.display,
+        }
+    }
+}
+
+/// Every base model the account can use.
 ///
 /// # Errors
 ///
@@ -208,9 +225,9 @@ pub async fn list(
     api_base: &str,
     token: &str,
     version: &str,
-) -> Result<Vec<(String, String)>> {
+) -> Result<Vec<CursorModel>> {
     let models = catalog(http, api_base, token, version).await?;
-    Ok(models.into_iter().map(|m| (m.id, m.display)).collect())
+    Ok(models.into_iter().map(CursorModel::from).collect())
 }
 
 /// Resolve any accepted spelling of a model.

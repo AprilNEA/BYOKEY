@@ -14,6 +14,8 @@ mod models;
 mod pb;
 mod session;
 
+pub use models::CursorModel;
+
 use aigw_core::ForwardCompatible;
 use aigw_core::model::{
     ChatRequest as CanonicalRequest, ChatResponse, FinishReason, Message, MessageContent, Role,
@@ -95,13 +97,12 @@ impl CursorUpstream {
         Ok(access)
     }
 
-    /// Base models the account can use, from Cursor's live catalog, as
-    /// `(id, display name)`.
+    /// Base models the account can use, from Cursor's live catalog.
     ///
     /// # Errors
     ///
     /// Returns an error if there is no credential or the catalog cannot be fetched.
-    pub async fn models(&self) -> Result<Vec<(String, String)>> {
+    pub async fn models(&self) -> Result<Vec<CursorModel>> {
         let token = self.access_token().await?;
         models::list(&self.http, API_BASE, &token, CLIENT_VERSION).await
     }

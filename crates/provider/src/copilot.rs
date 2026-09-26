@@ -92,18 +92,56 @@ pub struct CopilotCredentials {
 static TOKEN_CACHE: LazyLock<Mutex<HashMap<String, CachedToken>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// A model in the account's Copilot catalog and the endpoints BYOKEY can
-/// reach it on.
-#[derive(Debug, Clone)]
+/// A model the account's Copilot catalog offers to users.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopilotModel {
     pub id: String,
     pub name: String,
     /// Served on Copilot's Anthropic-format `/v1/messages`.
     pub messages: bool,
-    /// Served on `/chat/completions`.
-    pub chat: bool,
     /// Context window in tokens, when the catalog states it.
     pub context_window: Option<u64>,
+}
+
+/// A `/models` entry as Copilot sends it.
+#[derive(serde::Deserialize)]
+struct CatalogEntry {
+    id: String,
+    name: Option<String>,
+    /// Offered to users; internal models (embeddings, retired snapshots)
+    /// are not.
+    #[serde(default)]
+    model_picker_enabled: bool,
+    /// `null` for internal models.
+    supported_endpoints: Option<Vec<String>>,
+    capabilities: Option<Capabilities>,
+}
+
+#[derive(serde::Deserialize)]
+struct Capabilities {
+    limits: Option<Limits>,
+}
+
+#[derive(serde::Deserialize)]
+struct Limits {
+    max_context_window_tokens: Option<u64>,
+}
+
+impl CatalogEntry {
+    /// The model, if Copilot offers it to users.
+    fn offered(self) -> Option<CopilotModel> {
+        self.model_picker_enabled.then(|| CopilotModel {
+            name: self.name.unwrap_or_else(|| self.id.clone()),
+            id: self.id,
+            messages: self
+                .supported_endpoints
+                .is_some_and(|eps| eps.iter().any(|ep| ep == "/v1/messages")),
+            context_window: self
+                .capabilities
+                .and_then(|c| c.limits)
+                .and_then(|l| l.max_context_window_tokens),
+        })
+    }
 }
 
 /// How long a Copilot model catalog is reused.
@@ -491,26 +529,7 @@ impl CopilotUpstream {
     pub async fn models(&self) -> Result<Vec<CopilotModel>> {
         #[derive(serde::Deserialize)]
         struct Listing {
-            data: Vec<Entry>,
-        }
-        #[derive(serde::Deserialize)]
-        struct Entry {
-            id: String,
-            name: Option<String>,
-            #[serde(default)]
-            supported_endpoints: Vec<String>,
-            /// Copilot offers the model to users (not an internal model).
-            #[serde(default)]
-            model_picker_enabled: bool,
-            capabilities: Option<Capabilities>,
-        }
-        #[derive(serde::Deserialize)]
-        struct Capabilities {
-            limits: Option<Limits>,
-        }
-        #[derive(serde::Deserialize)]
-        struct Limits {
-            max_context_window_tokens: Option<u64>,
+            data: Vec<CatalogEntry>,
         }
         let creds = self.credentials().await?;
         if let Some((at, models)) = MODELS_CACHE.lock().unwrap().get(&creds.token)
@@ -532,21 +551,7 @@ impl CopilotUpstream {
         let models: Vec<CopilotModel> = listing
             .data
             .into_iter()
-            .filter(|m| m.model_picker_enabled)
-            .map(|m| CopilotModel {
-                messages: m.supported_endpoints.iter().any(|e| e == "/v1/messages"),
-                chat: m
-                    .supported_endpoints
-                    .iter()
-                    .any(|e| e == "/chat/completions"),
-                context_window: m
-                    .capabilities
-                    .and_then(|c| c.limits)
-                    .and_then(|l| l.max_context_window_tokens),
-                name: m.name.unwrap_or_else(|| m.id.clone()),
-                id: m.id,
-            })
-            .filter(|m| m.messages || m.chat)
+            .filter_map(CatalogEntry::offered)
             .collect();
         MODELS_CACHE
             .lock()
@@ -559,6 +564,49 @@ impl CopilotUpstream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalog_entries_become_offered_models() {
+        // Trimmed from a live `/models` response.
+        let entries = serde_json::json!([
+            {
+                "id": "claude-opus-5.5",
+                "name": "Claude Opus 5.5",
+                "model_picker_enabled": true,
+                "supported_endpoints": ["/v1/messages", "/chat/completions"],
+                "capabilities": {"limits": {"max_context_window_tokens": 1_000_000}}
+            },
+            {
+                "id": "gpt-5.4",
+                "model_picker_enabled": true,
+                "supported_endpoints": ["/responses", "/chat/completions"]
+            },
+            {"id": "gpt-4o", "model_picker_enabled": false, "supported_endpoints": null}
+        ]);
+        let entries: Vec<CatalogEntry> = serde_json::from_value(entries).unwrap();
+        let models: Vec<CopilotModel> = entries
+            .into_iter()
+            .filter_map(CatalogEntry::offered)
+            .collect();
+        assert_eq!(
+            models,
+            [
+                CopilotModel {
+                    id: "claude-opus-5.5".into(),
+                    name: "Claude Opus 5.5".into(),
+                    messages: true,
+                    context_window: Some(1_000_000),
+                },
+                CopilotModel {
+                    id: "gpt-5.4".into(),
+                    name: "gpt-5.4".into(),
+                    messages: false,
+                    context_window: None,
+                },
+            ],
+            "internal models are dropped; unnamed ones go by their id"
+        );
+    }
 
     fn make_upstream() -> CopilotUpstream {
         let auth = Arc::new(AuthManager::new(
