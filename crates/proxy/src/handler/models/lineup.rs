@@ -33,7 +33,7 @@ impl Family {
 
 /// A Claude model as named in an id: family, version, and whether it is a
 /// variant such as Copilot's `-fast`.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Model {
     family: Family,
     version: (u8, u8),
@@ -60,11 +60,17 @@ impl Model {
             variant: parts.next().is_some(),
         })
     }
+
+    fn released(self) -> Option<time::Date> {
+        RELEASES
+            .iter()
+            .find(|(f, v, _)| *f == self.family && *v == self.version)
+            .map(|(_, _, d)| *d)
+    }
 }
 
 /// Release dates from Anthropic's model pages
-/// (<https://platform.claude.com/docs/en/models/overview>). A model missing
-/// here is listed after the dated ones.
+/// (<https://platform.claude.com/docs/en/models/overview>).
 const RELEASES: &[(Family, (u8, u8), time::Date)] = &[
     (Family::Opus, (5, 5), date!(2026 - 09 - 22)),
     (Family::Fable, (5, 1), date!(2026 - 09 - 01)),
@@ -82,53 +88,74 @@ const RELEASES: &[(Family, (u8, u8), time::Date)] = &[
     (Family::Sonnet, (4, 0), date!(2025 - 05 - 22)),
 ];
 
-fn released(family: Family, version: (u8, u8)) -> Option<time::Date> {
-    RELEASES
-        .iter()
-        .find(|(f, v, _)| *f == family && *v == version)
-        .map(|(_, _, d)| *d)
-}
-
 /// The release date of the model `id` names, if known.
 #[must_use]
 pub(super) fn released_on(id: &str) -> Option<time::Date> {
-    let model = Model::parse(id)?;
-    released(model.family, model.version)
+    Model::parse(id)?.released()
 }
 
-/// Sort one provider's models into lineup order: the newest model of each
-/// family in tier order, then the rest newest release first, each variant
-/// right after its base model. Undated Claude models follow, then non-Claude
-/// ids, each in their original order.
-pub(super) fn sort<T>(models: &mut [T], id: impl Fn(&T) -> &str) {
-    let mut newest: Vec<(Family, (u8, u8))> = Vec::new();
-    for m in models.iter().filter_map(|m| Model::parse(id(m))) {
-        match newest.iter_mut().find(|(f, _)| *f == m.family) {
-            Some((_, v)) => *v = (*v).max(m.version),
-            None => newest.push((m.family, m.version)),
+/// Where a model goes in one provider's list, ordered by variant and then by
+/// field: the current lineup by tier, older models newest release first with
+/// variants after their base model, then undated Claude models, then other
+/// ids. Whether a model is its family's current one depends on what else the
+/// provider lists, so keys come from [`Newest::lineup`].
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Lineup {
+    /// The newest listed model of its family.
+    Current { family: Family, variant: bool },
+    /// An older model.
+    Older {
+        released: Reverse<time::Date>,
+        version: Reverse<(u8, u8)>,
+        variant: bool,
+    },
+    /// A Claude model without a known release date.
+    Undated,
+    /// Not a Claude model.
+    Other,
+}
+
+/// The newest version of each family one provider lists.
+struct Newest(Vec<(Family, (u8, u8))>);
+
+impl Newest {
+    fn of<'a>(ids: impl IntoIterator<Item = &'a str>) -> Self {
+        let mut newest: Vec<(Family, (u8, u8))> = Vec::new();
+        for m in ids.into_iter().filter_map(Model::parse) {
+            match newest.iter_mut().find(|(f, _)| *f == m.family) {
+                Some((_, v)) => *v = (*v).max(m.version),
+                None => newest.push((m.family, m.version)),
+            }
+        }
+        Self(newest)
+    }
+
+    fn lineup(&self, id: &str) -> Lineup {
+        let Some(m) = Model::parse(id) else {
+            return Lineup::Other;
+        };
+        if self.0.contains(&(m.family, m.version)) {
+            return Lineup::Current {
+                family: m.family,
+                variant: m.variant,
+            };
+        }
+        match m.released() {
+            Some(d) => Lineup::Older {
+                released: Reverse(d),
+                version: Reverse(m.version),
+                variant: m.variant,
+            },
+            None => Lineup::Undated,
         }
     }
-    models.sort_by_cached_key(|m| {
-        let Some(m) = Model::parse(id(m)) else {
-            return (3, None, None, Reverse((0, 0)), false);
-        };
-        let current = newest.contains(&(m.family, m.version));
-        let date = released(m.family, m.version);
-        let group = if current {
-            0
-        } else if date.is_some() {
-            1
-        } else {
-            2
-        };
-        (
-            group,
-            current.then_some(m.family),
-            date.map(Reverse),
-            Reverse(m.version),
-            m.variant,
-        )
-    });
+}
+
+/// Sort one provider's models into lineup order. The sort is stable, so
+/// models that compare equal keep their catalog order.
+pub(super) fn sort<T>(models: &mut [T], id: impl Fn(&T) -> &str) {
+    let newest = Newest::of(models.iter().map(&id));
+    models.sort_by_cached_key(|m| newest.lineup(id(m)));
 }
 
 #[cfg(test)]
@@ -137,7 +164,7 @@ mod tests {
 
     fn sorted(ids: &[&'static str]) -> Vec<&'static str> {
         let mut v = ids.to_vec();
-        sort(&mut v, |s| s);
+        sort(&mut v, |id| id);
         v
     }
 
