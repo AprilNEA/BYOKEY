@@ -1,7 +1,9 @@
 //! [`TokenStore`] implementation for [`SqliteTokenStore`].
 
 use async_trait::async_trait;
-use byokey_types::{AccountInfo, ByokError, OAuthToken, ProviderId, Result, TokenStore};
+use byokey_types::{
+    AccountInfo, AccountToken, ByokError, OAuthToken, ProviderId, Result, TokenStore,
+};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, TransactionTrait};
 
 use super::{SqliteTokenStore, db_exec_raw, now_unix};
@@ -230,7 +232,7 @@ impl TokenStore for SqliteTokenStore {
         Ok(())
     }
 
-    async fn load_all_tokens(&self, provider: ProviderId) -> Result<Vec<(String, OAuthToken)>> {
+    async fn load_all_tokens(&self, provider: ProviderId) -> Result<Vec<AccountToken>> {
         let key = provider.to_string();
         let rows = account::Entity::find()
             .filter(account::Column::Provider.eq(&key))
@@ -243,7 +245,10 @@ impl TokenStore for SqliteTokenStore {
         for m in rows {
             let token: OAuthToken = serde_json::from_str(&m.token_json)
                 .map_err(|e| ByokError::Storage(e.to_string()))?;
-            result.push((m.account_id, token));
+            result.push(AccountToken {
+                account_id: m.account_id,
+                token,
+            });
         }
         Ok(result)
     }
@@ -470,7 +475,7 @@ mod tests {
 
         let all = s.load_all_tokens(ProviderId::Claude).await.unwrap();
         assert_eq!(all.len(), 2);
-        assert_eq!(all[0].0, "a");
+        assert_eq!(all[0].account_id, "a");
     }
 
     #[tokio::test]

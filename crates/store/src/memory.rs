@@ -3,7 +3,7 @@
 //! Supports multi-account storage with `(ProviderId, account_id)` composite keys.
 
 use async_trait::async_trait;
-use byokey_types::{AccountInfo, OAuthToken, ProviderId, Result, TokenStore};
+use byokey_types::{AccountInfo, AccountToken, OAuthToken, ProviderId, Result, TokenStore};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -164,16 +164,22 @@ impl TokenStore for InMemoryTokenStore {
         Ok(())
     }
 
-    async fn load_all_tokens(&self, provider: ProviderId) -> Result<Vec<(String, OAuthToken)>> {
+    async fn load_all_tokens(&self, provider: ProviderId) -> Result<Vec<AccountToken>> {
         let data = self.data.lock().unwrap();
-        let mut tokens: Vec<(String, OAuthToken, bool)> = data
+        let mut entries: Vec<(&String, &AccountEntry)> = data
             .iter()
             .filter(|((p, _), _)| *p == provider)
-            .map(|((_, id), e)| (id.clone(), e.token.clone(), e.is_active))
+            .map(|((_, id), e)| (id, e))
             .collect();
         // Active first, then alphabetical.
-        tokens.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
-        Ok(tokens.into_iter().map(|(id, tok, _)| (id, tok)).collect())
+        entries.sort_by(|(a_id, a), (b_id, b)| b.is_active.cmp(&a.is_active).then(a_id.cmp(b_id)));
+        Ok(entries
+            .into_iter()
+            .map(|(id, e)| AccountToken {
+                account_id: id.clone(),
+                token: e.token.clone(),
+            })
+            .collect())
     }
 }
 

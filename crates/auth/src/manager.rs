@@ -6,7 +6,7 @@
 //! - Cooldown duration to prevent excessive refresh attempts (30 s).
 //! - Multi-account support: save, switch, and list accounts per provider.
 use byokey_types::{
-    AccountInfo, ByokError, OAuthToken, ProviderId, Result, TokenState, TokenStore,
+    AccountInfo, AccountToken, ByokError, OAuthToken, ProviderId, Result, TokenState, TokenStore,
 };
 use std::{
     collections::HashMap,
@@ -246,7 +246,7 @@ impl AuthManager {
     pub async fn get_token_with_account(
         self: &Arc<Self>,
         provider: ProviderId,
-    ) -> Result<(String, OAuthToken)> {
+    ) -> Result<AccountToken> {
         // Single store call establishes the account snapshot. If any account
         // is marked active, use it. Otherwise, if accounts exist but none is
         // active, use the first one (logged as a warning — set_active_account
@@ -281,11 +281,14 @@ impl AuthManager {
             // Load the token for the specific account we just identified —
             // no second list_accounts call, so the pair is consistent.
             let token = self.get_token_for(provider, &account_id).await?;
-            Ok((account_id, token))
+            Ok(AccountToken { account_id, token })
         } else {
             // No named accounts; fall through to the default-account path.
             let token = self.get_token(provider).await?;
-            Ok((byokey_types::DEFAULT_ACCOUNT.to_string(), token))
+            Ok(AccountToken {
+                account_id: byokey_types::DEFAULT_ACCOUNT.to_string(),
+                token,
+            })
         }
     }
 
@@ -294,7 +297,7 @@ impl AuthManager {
     /// # Errors
     ///
     /// Returns an error if the store fails.
-    pub async fn get_all_tokens(&self, provider: ProviderId) -> Result<Vec<(String, OAuthToken)>> {
+    pub async fn get_all_tokens(&self, provider: ProviderId) -> Result<Vec<AccountToken>> {
         self.store.load_all_tokens(provider).await
     }
 

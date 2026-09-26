@@ -143,8 +143,8 @@ impl acct::AccountsService for AccountsServiceImpl {
             let accounts = infos
                 .iter()
                 .map(|info| {
-                    let (ts, exp) = match tokens.iter().find(|(id, _)| id == &info.account_id) {
-                        Some((_, tok)) => (wire_token_state(tok.state()), tok.expires_at),
+                    let (ts, exp) = match tokens.iter().find(|t| t.account_id == info.account_id) {
+                        Some(t) => (wire_token_state(t.token.state()), t.token.expires_at),
                         None => (acct::TokenState::TOKEN_STATE_INVALID, None),
                     };
                     acct::AccountDetail {

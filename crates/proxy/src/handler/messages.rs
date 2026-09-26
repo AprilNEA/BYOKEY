@@ -472,7 +472,7 @@ impl AnthropicUpstream {
                     byokey_types::DEFAULT_ACCOUNT.to_string(),
                 )
             } else {
-                let (account_id, token) = state
+                let byokey_types::AccountToken { account_id, token } = state
                     .auth
                     .get_token_with_account(ProviderId::Claude)
                     .await?;

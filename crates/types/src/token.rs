@@ -107,6 +107,13 @@ pub enum TokenState {
     Invalid,
 }
 
+/// A stored account's token, with the account it belongs to.
+#[derive(Debug, Clone)]
+pub struct AccountToken {
+    pub account_id: String,
+    pub token: OAuthToken,
+}
+
 /// Metadata about a stored account (without the token itself).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountInfo {

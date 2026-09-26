@@ -4,7 +4,7 @@
 //! only on `byokey-types`, not on each other.
 
 pub use crate::error::Result;
-use crate::{AccountInfo, ByokError, OAuthToken, ProviderId};
+use crate::{AccountInfo, AccountToken, ByokError, OAuthToken, ProviderId};
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures_core::Stream;
@@ -96,7 +96,7 @@ pub trait TokenStore: Send + Sync {
     }
 
     /// Load all valid tokens for a provider (for round-robin rotation).
-    async fn load_all_tokens(&self, _provider: ProviderId) -> Result<Vec<(String, OAuthToken)>> {
+    async fn load_all_tokens(&self, _provider: ProviderId) -> Result<Vec<AccountToken>> {
         Ok(Vec::new())
     }
 }
