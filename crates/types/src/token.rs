@@ -98,7 +98,7 @@ impl OAuthToken {
 }
 
 /// Describes the usability state of an [`OAuthToken`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenState {
     Valid,
     /// Expired but a refresh token is available for renewal.

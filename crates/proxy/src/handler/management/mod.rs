@@ -119,6 +119,15 @@ impl stat::StatusService for StatusServiceImpl {
     }
 }
 
+/// A token's state as the accounts service reports it.
+fn wire_token_state(state: byokey_types::TokenState) -> acct::TokenState {
+    match state {
+        byokey_types::TokenState::Valid => acct::TokenState::TOKEN_STATE_VALID,
+        byokey_types::TokenState::Expired => acct::TokenState::TOKEN_STATE_EXPIRED,
+        byokey_types::TokenState::Invalid => acct::TokenState::TOKEN_STATE_INVALID,
+    }
+}
+
 struct AccountsServiceImpl(Arc<AppState>);
 
 impl acct::AccountsService for AccountsServiceImpl {
@@ -135,20 +144,7 @@ impl acct::AccountsService for AccountsServiceImpl {
                 .iter()
                 .map(|info| {
                     let (ts, exp) = match tokens.iter().find(|(id, _)| id == &info.account_id) {
-                        Some((_, tok)) => {
-                            let s = match tok.state() {
-                                byokey_types::TokenState::Valid => {
-                                    acct::TokenState::TOKEN_STATE_VALID
-                                }
-                                byokey_types::TokenState::Expired => {
-                                    acct::TokenState::TOKEN_STATE_EXPIRED
-                                }
-                                byokey_types::TokenState::Invalid => {
-                                    acct::TokenState::TOKEN_STATE_INVALID
-                                }
-                            };
-                            (s, tok.expires_at)
-                        }
+                        Some((_, tok)) => (wire_token_state(tok.state()), tok.expires_at),
                         None => (acct::TokenState::TOKEN_STATE_INVALID, None),
                     };
                     acct::AccountDetail {

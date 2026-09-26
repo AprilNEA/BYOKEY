@@ -48,7 +48,7 @@ impl ManagementSnapshot {
                 let accounts = provider
                     .accounts
                     .into_iter()
-                    .map(AccountSnapshot::from_proto)
+                    .map(AccountSnapshot::from)
                     .collect();
                 (provider.id, accounts)
             })
@@ -66,7 +66,7 @@ impl ManagementSnapshot {
                     id: provider.id,
                     display_name: provider.display_name,
                     enabled: provider.enabled,
-                    auth_state: AuthState::from_proto(provider.auth_status.as_known()),
+                    auth_state: provider.auth_status.as_known().into(),
                     accounts,
                 }
             })
@@ -75,7 +75,7 @@ impl ManagementSnapshot {
         Ok(Self {
             server,
             providers,
-            usage: UsageSnapshot::from_proto(usage),
+            usage: usage.into(),
         })
     }
 }
@@ -121,8 +121,8 @@ pub enum AuthState {
     Unknown,
 }
 
-impl AuthState {
-    fn from_proto(status: Option<stat::AuthStatus>) -> Self {
+impl From<Option<stat::AuthStatus>> for AuthState {
+    fn from(status: Option<stat::AuthStatus>) -> Self {
         match status {
             Some(stat::AuthStatus::AUTH_STATUS_VALID) => Self::Authenticated,
             Some(stat::AuthStatus::AUTH_STATUS_EXPIRED) => Self::Expired,
@@ -140,8 +140,8 @@ pub enum TokenState {
     Unknown,
 }
 
-impl TokenState {
-    fn from_proto(state: Option<acct::TokenState>) -> Self {
+impl From<Option<acct::TokenState>> for TokenState {
+    fn from(state: Option<acct::TokenState>) -> Self {
         match state {
             Some(acct::TokenState::TOKEN_STATE_VALID) => Self::Valid,
             Some(acct::TokenState::TOKEN_STATE_EXPIRED) => Self::Expired,
@@ -159,13 +159,13 @@ pub struct AccountSnapshot {
     pub token_state: TokenState,
 }
 
-impl AccountSnapshot {
-    fn from_proto(account: acct::AccountDetail) -> Self {
+impl From<acct::AccountDetail> for AccountSnapshot {
+    fn from(account: acct::AccountDetail) -> Self {
         Self {
             account_id: account.account_id,
             label: account.label,
             is_active: account.is_active,
-            token_state: TokenState::from_proto(account.token_state.as_known()),
+            token_state: account.token_state.as_known().into(),
         }
     }
 }
@@ -193,8 +193,8 @@ pub struct UsageSnapshot {
     pub rows: Vec<UsageRow>,
 }
 
-impl UsageSnapshot {
-    fn from_proto(usage: stat::GetUsageResponse) -> Self {
+impl From<stat::GetUsageResponse> for UsageSnapshot {
+    fn from(usage: stat::GetUsageResponse) -> Self {
         let mut rows: Vec<_> = usage
             .models
             .into_iter()
@@ -214,7 +214,9 @@ impl UsageSnapshot {
             rows,
         }
     }
+}
 
+impl UsageSnapshot {
     pub fn total_requests(&self) -> u64 {
         self.total_requests
     }
