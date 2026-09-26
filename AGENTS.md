@@ -16,7 +16,7 @@ Layered DAG in `crates/`: `types`(L0) → `config`,`store`(L1) → `auth`(L2) �
 
 ## Code Style
 - `unsafe_code = "forbid"`, `clippy::pedantic = "warn"`, edition 2024, async traits via `async-trait` macro (ConnectRPC handlers use plain `async fn`)
-- HTTP client is `wreq` (NOT reqwest); HTTP server is `axum 0.8`; config via `figment`; errors: `thiserror` cross-crate (`ByokError`), `anyhow` crate-internal
+- HTTP client is `reqwest` (rustls, platform root store), built once by `byokey_proxy::http::upstream_client` with TCP and HTTP/2 keepalives; HTTP server is `axum 0.8`; config via `figment`; errors: `thiserror` cross-crate (`ByokError`), `anyhow` crate-internal
 - OAuth app credentials are fetched at runtime (see `crates/auth/src/credentials.rs`)
 - Socket activation supported: `serve` adopts an inherited fd via `listenfd` (systemfd/systemd/launchd) if one is passed in; otherwise binds fresh
 - **Build-time dep on `protoc`** — needed by `byokey-proto`'s build.rs. Install via `brew install protobuf` / `apt-get install protobuf-compiler`.

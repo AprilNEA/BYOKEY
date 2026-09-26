@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Rust stable 1.98+ (recommended via [rustup](https://rustup.rs/))
+- Rust stable 1.91+ (recommended via [rustup](https://rustup.rs/))
 - SQLite 3 (system-level; pre-installed on macOS)
 
 ## Common Commands
@@ -24,7 +24,7 @@ cargo run -- serve                        # Start proxy (default :8018)
 - edition 2024
 - All async traits use the `async-trait` macro
 - Error types: use `ByokError` (`thiserror`) across crate boundaries, `anyhow` within a crate
-- HTTP client is `wreq` (not reqwest) — supports TLS fingerprint impersonation
+- HTTP client is `reqwest` (rustls, platform root store), built once by `byokey_proxy::http::upstream_client` with TCP and HTTP/2 keepalives
 - HTTP server is `axum 0.8`
 
 ## Architecture

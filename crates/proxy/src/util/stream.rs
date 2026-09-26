@@ -164,11 +164,11 @@ pub(crate) fn terminate_anthropic_stream(inner: ByteStream) -> ByteStream {
     ))
 }
 
-/// Converts a `wreq::Response` into a [`ByteStream`].
-pub(crate) fn response_to_stream(resp: wreq::Response) -> ByteStream {
+/// Converts a [`reqwest::Response`] into a [`ByteStream`].
+pub(crate) fn response_to_stream(resp: reqwest::Response) -> ByteStream {
     Box::pin(resp.bytes_stream().map(|r| {
         r.map_err(|e| {
-            tracing::error!(error = %e, "response_to_stream: wreq byte stream error");
+            tracing::error!(error = %e, "upstream byte stream error");
             ByokError::from(e)
         })
     }))

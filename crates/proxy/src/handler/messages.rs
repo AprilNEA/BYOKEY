@@ -497,7 +497,7 @@ impl AnthropicUpstream {
 
     /// A POST to `path` on the Anthropic API carrying the auth, version, beta
     /// and fingerprint headers.
-    pub(super) fn request(&self, http: &wreq::Client, path: &str) -> wreq::RequestBuilder {
+    pub(super) fn request(&self, http: &reqwest::Client, path: &str) -> reqwest::RequestBuilder {
         let mut builder = http
             .post(format!("{}{path}?beta=true", self.base_url))
             .header("content-type", "application/json");
@@ -567,14 +567,14 @@ pub(super) fn copilot_upstream(state: &AppState) -> CopilotUpstream {
 
 /// A POST of `body` to Copilot's Anthropic-format `path` as `creds`' account.
 pub(super) fn copilot_request(
-    http: &wreq::Client,
+    http: &reqwest::Client,
     path: &str,
     creds: &CopilotCredentials,
     beta: &str,
     identity: &CopilotIdentity,
     conversation: &Conversation,
     body: &Value,
-) -> wreq::RequestBuilder {
+) -> reqwest::RequestBuilder {
     let mut builder = http
         .post(format!("{}{path}", creds.endpoint))
         .header("authorization", format!("Bearer {}", creds.token))
@@ -829,7 +829,7 @@ async fn copilot_messages(
 
 /// Forward an upstream response back to the client, recording token usage.
 async fn forward_response(
-    resp: wreq::Response,
+    resp: reqwest::Response,
     stream: bool,
     usage: &Arc<UsageRecorder>,
     model: &str,
@@ -1290,7 +1290,7 @@ mod tests {
         // The body is parsed and re-serialized, so its length can change; the
         // upstream content-length then disagrees with it and hyper panics.
         let upstream_body = r#"{"id": "msg_1", "type": "message", "content": []}"#;
-        let upstream: wreq::Response = axum::http::Response::builder()
+        let upstream: reqwest::Response = axum::http::Response::builder()
             .header("content-type", "application/json")
             .header("content-length", upstream_body.len())
             .header("x-upstream-marker", "kept")

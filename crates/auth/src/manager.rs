@@ -25,14 +25,14 @@ struct ProviderState {
 
 pub struct AuthManager {
     store: Arc<dyn TokenStore>,
-    http: wreq::Client,
+    http: reqwest::Client,
     state: Mutex<HashMap<ProviderId, ProviderState>>,
     /// Per-provider async locks to deduplicate concurrent refresh attempts.
     refresh_locks: Mutex<HashMap<ProviderId, Arc<TokioMutex<()>>>>,
 }
 
 impl AuthManager {
-    pub fn new(store: Arc<dyn TokenStore>, http: wreq::Client) -> Self {
+    pub fn new(store: Arc<dyn TokenStore>, http: reqwest::Client) -> Self {
         Self {
             store,
             http,
@@ -491,7 +491,7 @@ mod tests {
     fn make_manager() -> Arc<AuthManager> {
         Arc::new(AuthManager::new(
             Arc::new(InMemoryTokenStore::new()),
-            wreq::Client::new(),
+            reqwest::Client::new(),
         ))
     }
 

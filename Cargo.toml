@@ -14,8 +14,8 @@ members = [
 
 [workspace.package]
 edition = "2024"
-# Floor set by `wreq` 0.16 (rust-version = "1.98").
-rust-version = "1.98"
+# Floor set by `Duration::from_mins` (stable since 1.91).
+rust-version = "1.91"
 version = "2.1.0"
 authors = ["AprilNEA <github@sku.moe>"]
 description = "Bring Your Own Keys — AI subscription-to-API proxy gateway"
@@ -47,7 +47,9 @@ listenfd = "1"
 # HTTP
 axum = { version = "0.8", features = ["macros"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "request-id"] }
-wreq = { version = "0.16", features = [
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls",
+    "http2",
     "json",
     "form",
     "query",
@@ -171,7 +173,8 @@ anyhow.workspace = true
 tokio.workspace = true
 listenfd = { workspace = true }
 arc-swap.workspace = true
-wreq.workspace = true
+reqwest.workspace = true
+http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-appender.workspace = true

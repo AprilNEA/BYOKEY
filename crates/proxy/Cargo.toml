@@ -13,14 +13,14 @@ homepage.workspace   = true
 workspace = true
 
 [dependencies]
-byokey-types = { workspace = true, features = ["wreq"] }
+byokey-types = { workspace = true, features = ["reqwest"] }
 byokey-config.workspace = true
 byokey-auth.workspace = true
 byokey-provider.workspace = true
 byokey-proto.workspace = true
 axum.workspace = true
 tower-http.workspace = true
-wreq.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

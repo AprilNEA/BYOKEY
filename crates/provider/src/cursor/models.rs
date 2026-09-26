@@ -143,7 +143,7 @@ fn parse_model(buf: &[u8]) -> Option<Model> {
 }
 
 async fn fetch(
-    http: &wreq::Client,
+    http: &reqwest::Client,
     api_base: &str,
     token: &str,
     version: &str,
@@ -182,7 +182,7 @@ async fn fetch(
 
 /// The catalog, fetched at most every [`TTL`].
 async fn catalog(
-    http: &wreq::Client,
+    http: &reqwest::Client,
     api_base: &str,
     token: &str,
     version: &str,
@@ -221,7 +221,7 @@ impl From<Model> for CursorModel {
 ///
 /// Returns an error if the catalog cannot be fetched.
 pub async fn list(
-    http: &wreq::Client,
+    http: &reqwest::Client,
     api_base: &str,
     token: &str,
     version: &str,
@@ -237,7 +237,7 @@ pub async fn list(
 /// Returns [`ByokError::UnsupportedModel`] if no model matches, or an error if
 /// the catalog cannot be fetched.
 pub async fn resolve(
-    http: &wreq::Client,
+    http: &reqwest::Client,
     api_base: &str,
     token: &str,
     version: &str,

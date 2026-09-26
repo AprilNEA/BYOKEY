@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Config keys `model_alias`, `excluded_models`, `streaming`, `payload` and `routing_policies`, and the provider keys `api_keys`, `routing`, `fallback`, `max_retry_credentials`, `claude_headers`, `codex_headers`, `cloak` and `websocket`, are removed and rejected.
 - The management API keeps `GetStatus`, `GetUsage` and `ListAccounts`, which is what `byokey tui` reads; the other RPCs are removed.
 
+### Changed
+
+- The HTTP client is `reqwest` instead of `wreq`. Nothing used `wreq`'s TLS impersonation, and `reqwest` was already in the dependency tree twice. TLS certificates are now verified against the operating system's trust store instead of a bundled Mozilla root set, so a CA installed on the machine (a corporate proxy, for example) is trusted, and a container without `ca-certificates` needs them installed. The minimum supported Rust version drops from 1.98 to 1.91.
+
 ## [2.1.0](https://github.com/AprilNEA/BYOKEY/compare/v2.0.0...v2.1.0) - 2026-09-24
 
 ### Added

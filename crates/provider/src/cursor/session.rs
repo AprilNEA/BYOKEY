@@ -139,7 +139,7 @@ pub struct Endpoint {
 /// Returns an error if the request cannot be sent or Cursor answers with a
 /// non-200 status.
 pub async fn start(
-    http: &wreq::Client,
+    http: &reqwest::Client,
     endpoint: &Endpoint,
     access_token: &str,
     spec: RunSpec,
@@ -165,7 +165,7 @@ pub async fn start(
         .header("x-ghost-mode", "false")
         .header("x-request-id", &run_id)
         .header("x-original-request-id", &run_id)
-        .body(wreq::Body::wrap_stream(
+        .body(reqwest::Body::wrap_stream(
             tokio_stream::wrappers::ReceiverStream::new(out_rx),
         ))
         .send()
@@ -474,7 +474,7 @@ struct Task {
 }
 
 impl Task {
-    async fn drive(mut self, resp: wreq::Response, mut commands: mpsc::Receiver<Command>) {
+    async fn drive(mut self, resp: reqwest::Response, mut commands: mpsc::Receiver<Command>) {
         let mut body = resp.bytes_stream();
         let mut buf = BytesMut::new();
         let failure = loop {

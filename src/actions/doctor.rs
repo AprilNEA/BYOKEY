@@ -33,7 +33,7 @@ impl Outcome {
 pub async fn cmd_doctor(url: Option<String>, db: Option<PathBuf>) -> Result<()> {
     let config = super::claude::load_config(None)?;
     let url = url.unwrap_or_else(|| super::claude::local_url(&config.host, config.port));
-    let http = wreq::Client::builder()
+    let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()?;
     let mut failed = false;
@@ -53,7 +53,7 @@ pub async fn cmd_doctor(url: Option<String>, db: Option<PathBuf>) -> Result<()> 
     }
 
     let store = Arc::new(crate::open_store(db).await?);
-    let auth = AuthManager::new(store, wreq::Client::new());
+    let auth = AuthManager::new(store, reqwest::Client::new());
     for provider in ProviderId::all() {
         if let Some(outcome) = account(&auth, &config, provider).await {
             report(&provider.to_string(), outcome);
@@ -104,7 +104,7 @@ fn brew_service() -> bool {
         })
 }
 
-async fn reachable(http: &wreq::Client, url: &str) -> Outcome {
+async fn reachable(http: &reqwest::Client, url: &str) -> Outcome {
     let started = Instant::now();
     match http.get(format!("{url}/v1/models")).send().await {
         Ok(r) if r.status().is_success() => Outcome::Ok(format!(
@@ -119,7 +119,7 @@ async fn reachable(http: &wreq::Client, url: &str) -> Outcome {
     }
 }
 
-async fn models(http: &wreq::Client, url: &str) -> Outcome {
+async fn models(http: &reqwest::Client, url: &str) -> Outcome {
     let body: Value = match http.get(format!("{url}/v1/models?limit=1000")).send().await {
         Ok(r) => r.json().await.unwrap_or_default(),
         Err(e) => return Outcome::Fail(redact(&e.to_string())),
@@ -142,7 +142,7 @@ async fn models(http: &wreq::Client, url: &str) -> Outcome {
 }
 
 /// Exact token counting through whichever backend serves Claude Code.
-async fn count_tokens(http: &wreq::Client, url: &str) -> Outcome {
+async fn count_tokens(http: &reqwest::Client, url: &str) -> Outcome {
     let body = json!({
         "model": "claude-sonnet-5",
         "messages": [{"role": "user", "content": "ping"}],

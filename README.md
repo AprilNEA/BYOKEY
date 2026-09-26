@@ -18,7 +18,7 @@ A local Anthropic Messages API backed by GitHub Copilot, Cursor or your own Clau
 &nbsp;
 [![license](https://img.shields.io/badge/license-MIT%20%7C%20Apache--2.0-444?style=flat-square&labelColor=000)](LICENSE-MIT)
 &nbsp;
-[![rust](https://img.shields.io/badge/rust-1.98+-444?style=flat-square&labelColor=000&logo=rust&logoColor=fff)](https://www.rust-lang.org)
+[![rust](https://img.shields.io/badge/rust-1.91+-444?style=flat-square&labelColor=000&logo=rust&logoColor=fff)](https://www.rust-lang.org)
 
 </div>
 
@@ -100,7 +100,7 @@ cd BYOKEY
 cargo install --path .
 ```
 
-> **Requirements:** Rust 1.98+ (edition 2024), a C compiler for SQLite, and `protoc` for ConnectRPC code generation (`brew install protobuf`, `apt-get install protobuf-compiler`, or `choco install protoc`).
+> **Requirements:** Rust 1.91+ (edition 2024), a C compiler for SQLite, and `protoc` for ConnectRPC code generation (`brew install protobuf`, `apt-get install protobuf-compiler`, or `choco install protoc`).
 
 ## Quick Start
 

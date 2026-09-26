@@ -65,18 +65,18 @@ pub enum ByokError {
 
 // ── Feature-gated From impls ──────────────────────────────────────────────────
 
-#[cfg(feature = "wreq")]
-impl From<wreq::Error> for ByokError {
-    fn from(e: wreq::Error) -> Self {
+#[cfg(feature = "reqwest")]
+impl From<reqwest::Error> for ByokError {
+    fn from(e: reqwest::Error) -> Self {
         Self::Http(e.to_string())
     }
 }
 
-#[cfg(feature = "wreq")]
+#[cfg(feature = "reqwest")]
 impl ByokError {
     /// The error for a non-success upstream response: its status,
     /// `retry-after` and body, so the client sees what the upstream said.
-    pub async fn from_response(resp: wreq::Response) -> Self {
+    pub async fn from_response(resp: reqwest::Response) -> Self {
         let status = resp.status().as_u16();
         let retry_after = resp
             .headers()

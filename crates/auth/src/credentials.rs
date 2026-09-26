@@ -32,7 +32,7 @@ pub struct OAuthCredentials {
 /// Returns [`ByokError::Auth`] if the request fails or the JSON cannot be parsed.
 pub async fn fetch(
     provider_name: &str,
-    http: &wreq::Client,
+    http: &reqwest::Client,
 ) -> Result<OAuthCredentials, ByokError> {
     let url = format!("{BASE_URL}/{provider_name}.json");
 

@@ -78,7 +78,7 @@ impl AuthCodeFlow for Claude {
 
     async fn exchange_code(
         &self,
-        http: &wreq::Client,
+        http: &reqwest::Client,
         creds: &OAuthCredentials,
         code: &str,
         verifier: &str,

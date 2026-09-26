@@ -76,7 +76,7 @@ fn token_from(pair: TokenPair, credential: Option<&str>) -> Result<OAuthToken> {
 ///
 /// Returns [`ByokError::Auth`] with an `invalid_grant:` prefix when Cursor
 /// rejects the credential, or a network/parse error.
-pub async fn exchange(http: &wreq::Client, credential: &str) -> Result<OAuthToken> {
+pub async fn exchange(http: &reqwest::Client, credential: &str) -> Result<OAuthToken> {
     let resp = http
         .post(format!("{API}/auth/exchange_user_api_key"))
         .bearer_auth(credential)
@@ -105,7 +105,11 @@ pub async fn exchange(http: &wreq::Client, credential: &str) -> Result<OAuthToke
 ///
 /// Returns an error if the user rejects the login, it times out, or the
 /// token cannot be saved.
-pub async fn login(auth: &AuthManager, http: &wreq::Client, account: Option<&str>) -> Result<()> {
+pub async fn login(
+    auth: &AuthManager,
+    http: &reqwest::Client,
+    account: Option<&str>,
+) -> Result<()> {
     let (verifier, challenge) = pkce::generate_pkce();
     let uuid = uuid::Uuid::new_v4().to_string();
     let url = login_url(&challenge, &uuid);

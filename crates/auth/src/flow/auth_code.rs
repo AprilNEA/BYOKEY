@@ -32,7 +32,7 @@ pub trait AuthCodeFlow: Send + Sync {
     /// and parses the response.
     async fn exchange_code(
         &self,
-        http: &wreq::Client,
+        http: &reqwest::Client,
         creds: &OAuthCredentials,
         code: &str,
         pkce_verifier: &str,
@@ -49,7 +49,7 @@ pub trait AuthCodeFlow: Send + Sync {
 pub async fn run<P: AuthCodeFlow>(
     provider: &P,
     auth: &AuthManager,
-    http: &wreq::Client,
+    http: &reqwest::Client,
     account: Option<&str>,
 ) -> Result<()> {
     tracing::info!(provider = %provider.provider_name(), "starting OAuth login");
@@ -101,7 +101,7 @@ pub async fn run<P: AuthCodeFlow>(
 ///
 /// Returns an error if the response body cannot be parsed as JSON or is missing
 /// the `access_token` field.
-pub async fn send_and_parse_token(resp: wreq::Response) -> Result<OAuthToken> {
+pub async fn send_and_parse_token(resp: reqwest::Response) -> Result<OAuthToken> {
     let status = resp.status();
     let json: serde_json::Value = resp
         .json()

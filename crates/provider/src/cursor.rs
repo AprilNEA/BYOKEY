@@ -55,7 +55,7 @@ pub type EventStream = Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>;
 
 /// The Cursor account BYOKEY runs turns as.
 pub struct CursorUpstream {
-    http: wreq::Client,
+    http: reqwest::Client,
     auth: Arc<AuthManager>,
     api_key: Option<String>,
 }
@@ -65,7 +65,7 @@ impl CursorUpstream {
     /// An `api_key` (`crsr_…`) is exchanged for an access token per request;
     /// otherwise the stored login is used.
     #[builder]
-    pub fn new(http: wreq::Client, auth: Arc<AuthManager>, api_key: Option<String>) -> Self {
+    pub fn new(http: reqwest::Client, auth: Arc<AuthManager>, api_key: Option<String>) -> Self {
         Self {
             http,
             auth,

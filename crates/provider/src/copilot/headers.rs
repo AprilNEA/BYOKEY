@@ -85,7 +85,7 @@ impl Default for CopilotIdentity {
 impl CopilotIdentity {
     /// The identity for the versions published at `VERSIONS_URL`, or the
     /// compile-time defaults when they cannot be fetched.
-    pub async fn fetch(http: &wreq::Client) -> Self {
+    pub async fn fetch(http: &reqwest::Client) -> Self {
         let fetched: Result<CopilotVersions, String> = async {
             let resp = http
                 .get(VERSIONS_URL)

@@ -34,7 +34,7 @@ pub async fn login(
     auth: &AuthManager,
     options: LoginOptions<'_>,
 ) -> Result<()> {
-    let http = wreq::Client::new();
+    let http = reqwest::Client::new();
     let account = options.account;
     if let Some(client) = options.client
         && provider != ProviderId::Copilot
@@ -85,7 +85,7 @@ mod tests {
     use std::sync::Arc;
 
     fn auth() -> AuthManager {
-        AuthManager::new(Arc::new(InMemoryTokenStore::new()), wreq::Client::new())
+        AuthManager::new(Arc::new(InMemoryTokenStore::new()), reqwest::Client::new())
     }
 
     #[tokio::test]

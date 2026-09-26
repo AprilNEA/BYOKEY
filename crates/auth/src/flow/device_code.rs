@@ -39,14 +39,14 @@ pub trait DeviceCodeFlow: Send + Sync {
     /// Send the device code request and return the parsed response.
     async fn request_device_code(
         &self,
-        http: &wreq::Client,
+        http: &reqwest::Client,
         creds: &OAuthCredentials,
     ) -> Result<DeviceCodeResponse>;
 
     /// Send a single token poll request.
     async fn poll_token(
         &self,
-        http: &wreq::Client,
+        http: &reqwest::Client,
         creds: &OAuthCredentials,
         device_code: &str,
     ) -> Result<PollResult>;
@@ -66,7 +66,7 @@ pub trait DeviceCodeFlow: Send + Sync {
 pub async fn run<P: DeviceCodeFlow>(
     provider: &P,
     auth: &AuthManager,
-    http: &wreq::Client,
+    http: &reqwest::Client,
     account: Option<&str>,
 ) -> Result<()> {
     let creds = crate::credentials::fetch(provider.provider_name(), http).await?;

@@ -167,7 +167,7 @@ fn claude_logged_in() -> Result<bool> {
 /// Fail early with a clear message instead of letting Claude Code retry
 /// against a server that is not there.
 pub(crate) fn ensure_reachable(url: &str) -> Result<()> {
-    let uri: wreq::Uri = url.parse()?;
+    let uri: http::Uri = url.parse()?;
     let host = uri.host().context("base URL has no host")?;
     let host = host.trim_start_matches('[').trim_end_matches(']');
     let port = uri
@@ -265,7 +265,7 @@ pub(crate) fn local_url(host: &str, port: u16) -> String {
 }
 
 fn validate_url(url: &str) -> Result<()> {
-    let uri: wreq::Uri = url
+    let uri: http::Uri = url
         .parse()
         .with_context(|| format!("invalid base URL {url}"))?;
     if !matches!(uri.scheme_str(), Some("http" | "https")) || uri.host().is_none() {

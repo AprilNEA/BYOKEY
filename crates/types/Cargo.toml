@@ -13,7 +13,7 @@ homepage.workspace   = true
 workspace = true
 
 [features]
-wreq = ["dep:wreq"]
+reqwest = ["dep:reqwest"]
 sea-orm = ["dep:sea-orm"]
 
 [dependencies]
@@ -24,6 +24,6 @@ async-trait.workspace = true
 futures-core.workspace = true
 bytes.workspace = true
 
-# Optional — enable `From<wreq::Error>` / `From<sea_orm::DbErr>` for `ByokError`.
-wreq = { workspace = true, optional = true }
+# Optional — enable `From<reqwest::Error>` / `From<sea_orm::DbErr>` for `ByokError`.
+reqwest = { workspace = true, optional = true }
 sea-orm = { workspace = true, optional = true }

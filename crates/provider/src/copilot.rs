@@ -169,7 +169,7 @@ fn quota_score(q: Option<&CachedQuota>) -> f64 {
 }
 
 /// Send `builder`, turning a non-success status into [`ByokError::Upstream`].
-async fn send(builder: wreq::RequestBuilder) -> Result<wreq::Response> {
+async fn send(builder: reqwest::RequestBuilder) -> Result<reqwest::Response> {
     let resp = builder.send().await?;
     if resp.status().is_success() {
         Ok(resp)
@@ -180,7 +180,7 @@ async fn send(builder: wreq::RequestBuilder) -> Result<wreq::Response> {
 
 /// The GitHub Copilot accounts BYOKEY can send requests as.
 pub struct CopilotUpstream {
-    http: wreq::Client,
+    http: reqwest::Client,
     api_key: Option<String>,
     base_url: Option<String>,
     auth: Arc<AuthManager>,
@@ -193,7 +193,7 @@ impl CopilotUpstream {
     /// the stored GitHub logins are used.
     #[builder]
     pub fn new(
-        http: wreq::Client,
+        http: reqwest::Client,
         auth: Arc<AuthManager>,
         api_key: Option<String>,
         base_url: Option<String>,
@@ -220,7 +220,7 @@ impl CopilotUpstream {
         url: &str,
         client: CopilotClient,
         github_token: &str,
-    ) -> wreq::RequestBuilder {
+    ) -> reqwest::RequestBuilder {
         let mut builder = self
             .http
             .get(url)
@@ -611,10 +611,10 @@ mod tests {
     fn make_upstream() -> CopilotUpstream {
         let auth = Arc::new(AuthManager::new(
             Arc::new(byokey_store::InMemoryTokenStore::new()),
-            wreq::Client::new(),
+            reqwest::Client::new(),
         ));
         CopilotUpstream::builder()
-            .http(wreq::Client::new())
+            .http(reqwest::Client::new())
             .auth(auth)
             .build()
     }
