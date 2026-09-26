@@ -263,6 +263,10 @@ and `cursor` are rejected.
 Code makes several tool-less calls around each turn (titles, suggestions,
 summaries). Set `providers.copilot.small_model: gpt-5-mini` to serve those with
 a cheaper model; compaction requests keep the model you chose.
+Copilot's Messages endpoint does not serve Anthropic's `web_search` and
+`web_fetch` server tools; BYOKEY removes them from requests, so Claude Code's
+`WebSearch` and `WebFetch` are unavailable on Copilot while its other built-in
+tools work.
 
 **Cursor** serves every model on your Cursor plan, including variants such as
 `claude-opus-5-5-high-fast` or `gpt-5.6-sol-low-fast`. Name them as

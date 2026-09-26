@@ -249,6 +249,9 @@ providers:
 前后会发出多个不带工具的调用（标题、建议、摘要）。设置
 `providers.copilot.small_model: gpt-5-mini` 可以让这些调用改走便宜的模型；
 compaction 请求仍使用你选择的模型。
+Copilot 的 Messages 端点不提供 Anthropic 的 `web_search` 和 `web_fetch` 服务端工具，
+BYOKEY 会从请求中移除它们，因此走 Copilot 时 Claude Code 的 `WebSearch`、`WebFetch`
+不可用，其余内建工具正常。
 
 **Cursor** 提供 Cursor 套餐内的全部模型，包括 `claude-opus-5-5-high-fast`、
 `gpt-5.6-sol-low-fast` 这类变体。以 `cursor/<model>` 指定，例如

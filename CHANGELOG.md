@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude Code no longer sits on `Waiting for API response · will retry in …` while Copilot is slow to answer: BYOKEY answers a streaming request itself once the upstream's headers are 15 s late, writes an SSE keepalive comment every 10 s the upstream stays silent, and ends a stream that has been silent for two minutes with an `error` event instead of leaving the client to give up after five.
 - Dead upstream connections are noticed within about half a minute (HTTP/2 PING every 15 s, also while idle) and their streams end with an `error` event, so the retry lands on a fresh connection instead of the same dead one. Body errors are logged with their full cause chain.
 - An invalid `proxy_url` now fails startup instead of silently sending traffic directly.
+- Copilot requests drop the `web_search` and `web_fetch` server tools Copilot rejects with 400, so Claude Code's web tools degrade instead of failing the turn.
 
 ### Changed
 

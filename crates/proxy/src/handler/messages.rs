@@ -592,10 +592,19 @@ pub(super) fn copilot_request(
     builder.json(body)
 }
 
-/// Drop request fields Copilot's `/v1/messages` rejects with "Extra inputs
-/// are not permitted": the per-message `output_config` of the
+/// Anthropic server tools Copilot's `/v1/messages` rejects with 400 ("The
+/// use of the web search tool is not supported", "rejected tool(s):
+/// `web_fetch`"). Its other built-in tools (`bash`, `text_editor`,
+/// `code_execution`) are accepted.
+const COPILOT_REJECTED_TOOLS: &[&str] = &["web_search", "web_fetch"];
+
+/// Drop what Copilot's `/v1/messages` rejects: the fields it answers with
+/// "Extra inputs are not permitted" (the per-message `output_config` of the
 /// `per-turn-control` beta, the top-level `safeguards`, and the `scope` of
-/// `cache_control` markers, all of which Claude Code sends by default.
+/// `cache_control` markers), and the server tools in
+/// [`COPILOT_REJECTED_TOOLS`]. Claude Code sends all of these by default;
+/// without the tools its `WebSearch` and `WebFetch` are unavailable, with
+/// them the whole turn would fail.
 pub(super) fn strip_copilot_unsupported(body: &mut Value) {
     strip_cache_scope(body);
     let Some(body) = body.as_object_mut() else {
@@ -605,6 +614,23 @@ pub(super) fn strip_copilot_unsupported(body: &mut Value) {
     if let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) {
         for message in messages.iter_mut().filter_map(Value::as_object_mut) {
             message.remove("output_config");
+        }
+    }
+    if let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) {
+        tools.retain(|tool| {
+            let server_tool = tool.get("type").and_then(Value::as_str).is_some_and(|t| {
+                COPILOT_REJECTED_TOOLS.iter().any(|name| {
+                    t.strip_prefix(name)
+                        .is_some_and(|rest| rest.starts_with('_'))
+                })
+            });
+            if server_tool {
+                tracing::debug!(tool = %tool["type"], "dropping a server tool Copilot rejects");
+            }
+            !server_tool
+        });
+        if tools.is_empty() {
+            body.remove("tools");
         }
     }
 }
@@ -1076,7 +1102,12 @@ mod tests {
             "output_config": {"effort": "high"},
             "context_management": {"edits": []},
             "system": [{"type": "text", "text": "s", "cache_control": {"type": "ephemeral", "scope": "global"}}],
-            "tools": [{"name": "t", "input_schema": {}, "eager_input_streaming": true}],
+            "tools": [
+                {"name": "t", "input_schema": {}, "eager_input_streaming": true},
+                {"type": "web_search_20250305", "name": "web_search", "max_uses": 3},
+                {"type": "web_fetch_20250910", "name": "web_fetch"},
+                {"type": "text_editor_20250728", "name": "str_replace_based_edit_tool"}
+            ],
             "messages": [
                 {"role": "user", "content": "hi", "output_config": {"effort": "low"}},
                 {"role": "assistant", "content": "hello"},
@@ -1093,7 +1124,10 @@ mod tests {
                 "output_config": {"effort": "high"},
                 "context_management": {"edits": []},
                 "system": [{"type": "text", "text": "s", "cache_control": {"type": "ephemeral"}}],
-                "tools": [{"name": "t", "input_schema": {}, "eager_input_streaming": true}],
+                "tools": [
+                    {"name": "t", "input_schema": {}, "eager_input_streaming": true},
+                    {"type": "text_editor_20250728", "name": "str_replace_based_edit_tool"}
+                ],
                 "messages": [
                     {"role": "user", "content": "hi"},
                     {"role": "assistant", "content": "hello"},
@@ -1103,6 +1137,21 @@ mod tests {
                 ]
             })
         );
+    }
+
+    #[test]
+    fn a_request_left_with_only_rejected_tools_has_no_tools_field() {
+        let mut body = json!({
+            "model": "claude-sonnet-5",
+            "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        strip_copilot_unsupported(&mut body);
+        assert!(body.get("tools").is_none());
+        // A custom tool that merely mentions the name is kept.
+        let mut body = json!({"tools": [{"name": "web_search_notes", "input_schema": {}}]});
+        strip_copilot_unsupported(&mut body);
+        assert_eq!(body["tools"].as_array().unwrap().len(), 1);
     }
 
     #[test]
