@@ -3,21 +3,8 @@ use std::process::Stdio;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::control;
 use crate::error::{DaemonError, Result};
-use crate::paths;
-
-/// Options for starting the daemon.
-pub struct StartOptions {
-    /// Path to the byokey executable. `None` = `current_exe()`.
-    pub exe: Option<PathBuf>,
-    pub config: Option<PathBuf>,
-    pub port: Option<u16>,
-    pub host: Option<String>,
-    pub db: Option<PathBuf>,
-    pub log_file: Option<PathBuf>,
-    pub pid_file: Option<PathBuf>,
-}
+use crate::{ServeOptions, control, paths};
 
 pub struct StartResult {
     pub pid: u32,
@@ -36,7 +23,7 @@ pub enum ServerStatus {
 
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-pub fn start(opts: StartOptions) -> Result<StartResult> {
+pub fn start(opts: &ServeOptions) -> Result<StartResult> {
     // Authoritative liveness: control socket.
     if let Ok(info) = control::status() {
         return Err(DaemonError::AlreadyRunning { pid: info.pid });
@@ -46,7 +33,7 @@ pub fn start(opts: StartOptions) -> Result<StartResult> {
     if let Ok(sock) = paths::control_sock_path() {
         let _ = std::fs::remove_file(&sock);
     }
-    let pid_path = opts.pid_file.clone().map_or_else(paths::pid_path, Ok)?;
+    let pid_path = paths::pid_path()?;
     if pid_path.exists() {
         let _ = std::fs::remove_file(&pid_path);
     }
@@ -71,24 +58,9 @@ pub fn start(opts: StartOptions) -> Result<StartResult> {
         source: e,
     })?;
 
-    let exe = match opts.exe {
-        Some(p) => p,
-        None => std::env::current_exe().map_err(DaemonError::SpawnFailed)?,
-    };
+    let exe = std::env::current_exe().map_err(DaemonError::SpawnFailed)?;
     let mut cmd = std::process::Command::new(&exe);
-    cmd.arg("serve");
-    if let Some(p) = &opts.config {
-        cmd.args(["--config", &p.to_string_lossy()]);
-    }
-    if let Some(p) = opts.port {
-        cmd.args(["--port", &p.to_string()]);
-    }
-    if let Some(h) = &opts.host {
-        cmd.args(["--host", h]);
-    }
-    if let Some(d) = &opts.db {
-        cmd.args(["--db", &d.to_string_lossy()]);
-    }
+    cmd.args(opts.args());
     cmd.stdout(log_f).stderr(log_f2).stdin(Stdio::null());
     // Detach from the terminal's process group so the child survives terminal close.
     #[cfg(unix)]
@@ -163,7 +135,7 @@ pub fn stop() -> Result<StopResult> {
     }
 }
 
-pub fn restart(opts: StartOptions) -> Result<StartResult> {
+pub fn restart(opts: &ServeOptions) -> Result<StartResult> {
     let _ = stop();
     // Give the socket/pid cleanup a moment (stop() already waited for graceful exit).
     thread::sleep(Duration::from_millis(100));

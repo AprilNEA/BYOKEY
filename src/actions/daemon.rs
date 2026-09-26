@@ -1,4 +1,5 @@
 use anyhow::Result;
+use byokey_daemon::ServeOptions;
 use clap::Subcommand;
 
 use crate::DaemonArgs;
@@ -30,31 +31,21 @@ pub fn cmd_service(action: ServiceAction) -> Result<()> {
     }
 }
 
-fn start_opts(args: DaemonArgs) -> byokey_daemon::process::StartOptions {
-    byokey_daemon::process::StartOptions {
-        exe: None,
-        config: args.server.config,
-        port: args.server.port,
-        host: args.server.host,
-        db: args.server.db,
-        log_file: args.server.log_file,
-        pid_file: None,
-    }
-}
-
-fn service_opts(args: DaemonArgs) -> byokey_daemon::service::ServiceOptions {
-    byokey_daemon::service::ServiceOptions {
-        exe: None,
-        config: args.server.config,
-        port: args.server.port,
-        host: args.server.host,
-        db: args.server.db,
-        log_file: args.server.log_file,
+impl From<DaemonArgs> for ServeOptions {
+    fn from(args: DaemonArgs) -> Self {
+        let server = args.server;
+        Self {
+            config: server.config,
+            port: server.port,
+            host: server.host,
+            db: server.db,
+            log_file: server.log_file,
+        }
     }
 }
 
 pub fn cmd_start(args: DaemonArgs) -> Result<()> {
-    let result = byokey_daemon::process::start(start_opts(args))?;
+    let result = byokey_daemon::process::start(&args.into())?;
     println!("byokey started (pid {})", result.pid);
     println!("logs: {}", result.log_path.display());
     Ok(())
@@ -70,7 +61,7 @@ pub fn cmd_stop() -> Result<()> {
 }
 
 pub fn cmd_restart(args: DaemonArgs) -> Result<()> {
-    let result = byokey_daemon::process::restart(start_opts(args))?;
+    let result = byokey_daemon::process::restart(&args.into())?;
     println!("byokey started (pid {})", result.pid);
     println!("logs: {}", result.log_path.display());
     Ok(())
@@ -85,7 +76,7 @@ pub fn cmd_reload() -> Result<()> {
 // ── Service (OS-managed) ─────────────────────────────────────────────────────
 
 fn cmd_service_install(args: DaemonArgs) -> Result<()> {
-    let result = byokey_daemon::service::install(service_opts(args))?;
+    let result = byokey_daemon::service::install(&args.into())?;
     println!("service installed ({})", result.backend);
     println!("label:   {}", result.label);
     println!("logs:    {}", result.log_path.display());
