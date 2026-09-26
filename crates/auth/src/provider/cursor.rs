@@ -110,9 +110,9 @@ pub async fn login(
     http: &reqwest::Client,
     account: Option<&str>,
 ) -> Result<()> {
-    let (verifier, challenge) = pkce::generate_pkce();
+    let pkce = pkce::Pkce::generate();
     let uuid = uuid::Uuid::new_v4().to_string();
-    let url = login_url(&challenge, &uuid);
+    let url = login_url(&pkce.challenge, &uuid);
     println!("Open this URL in your browser: {url}");
     open_browser(&url);
 
@@ -124,7 +124,10 @@ pub async fn login(
         }
         let resp = http
             .get(format!("{API}/auth/poll"))
-            .query(&[("uuid", uuid.as_str()), ("verifier", verifier.as_str())])
+            .query(&[
+                ("uuid", uuid.as_str()),
+                ("verifier", pkce.verifier.as_str()),
+            ])
             .send()
             .await?;
         match resp.status().as_u16() {

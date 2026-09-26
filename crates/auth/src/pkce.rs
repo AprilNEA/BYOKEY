@@ -4,22 +4,27 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::RngCore as _;
 use sha2::{Digest, Sha256};
 
-/// Generate a PKCE `(code_verifier, code_challenge_s256)` pair using SHA-256.
-#[must_use]
-pub fn generate_pkce() -> (String, String) {
-    let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    let verifier = URL_SAFE_NO_PAD.encode(bytes);
-    let digest = Sha256::digest(verifier.as_bytes());
-    let challenge = URL_SAFE_NO_PAD.encode(digest.as_slice());
-    (verifier, challenge)
+/// A PKCE pair: the secret `code_verifier` the client keeps, and its S256
+/// `code_challenge` sent with the authorization request.
+#[derive(Debug, Clone)]
+pub struct Pkce {
+    pub verifier: String,
+    pub challenge: String,
 }
 
-/// Compute the S256 challenge for an existing `code_verifier`.
-#[must_use]
-pub fn challenge_for(verifier: &str) -> String {
-    let digest = Sha256::digest(verifier.as_bytes());
-    URL_SAFE_NO_PAD.encode(digest.as_slice())
+impl Pkce {
+    /// A fresh random verifier and its SHA-256 challenge.
+    #[must_use]
+    pub fn generate() -> Self {
+        let mut bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        let verifier = URL_SAFE_NO_PAD.encode(bytes);
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+        Self {
+            verifier,
+            challenge,
+        }
+    }
 }
 
 /// Generate a random `state` parameter (hex-encoded, 32 lowercase hex chars, matching the vibeproxy Go implementation).
@@ -40,7 +45,7 @@ mod tests {
 
     #[test]
     fn test_verifier_is_base64url() {
-        let (verifier, _) = generate_pkce();
+        let Pkce { verifier, .. } = Pkce::generate();
         // base64url-no-pad: only A-Z a-z 0-9 - _
         assert!(
             verifier
@@ -51,17 +56,20 @@ mod tests {
     }
 
     #[test]
-    fn test_challenge_differs_from_verifier() {
-        let (verifier, challenge) = generate_pkce();
-        assert_ne!(verifier, challenge);
+    fn test_challenge_is_the_s256_of_the_verifier() {
+        let pkce = Pkce::generate();
+        assert_eq!(
+            pkce.challenge,
+            URL_SAFE_NO_PAD.encode(Sha256::digest(pkce.verifier.as_bytes()))
+        );
+        assert_ne!(pkce.verifier, pkce.challenge);
     }
 
     #[test]
     fn test_two_calls_produce_different_values() {
-        let (v1, c1) = generate_pkce();
-        let (v2, c2) = generate_pkce();
-        assert_ne!(v1, v2);
-        assert_ne!(c1, c2);
+        let (a, b) = (Pkce::generate(), Pkce::generate());
+        assert_ne!(a.verifier, b.verifier);
+        assert_ne!(a.challenge, b.challenge);
     }
 
     #[test]

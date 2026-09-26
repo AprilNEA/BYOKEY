@@ -59,9 +59,9 @@ pub async fn run<P: AuthCodeFlow>(
     );
     let creds = crate::credentials::fetch(provider.provider_name(), http).await?;
 
-    let (verifier, challenge) = pkce::generate_pkce();
+    let pkce = pkce::Pkce::generate();
     let state = pkce::random_state();
-    let auth_url = provider.build_auth_url(&creds.client_id, &challenge, &state);
+    let auth_url = provider.build_auth_url(&creds.client_id, &pkce.challenge, &state);
 
     let listeners = callback::bind_callback(provider.callback_port()).await?;
     eprintln!(
@@ -86,7 +86,7 @@ pub async fn run<P: AuthCodeFlow>(
     tracing::info!(provider = %provider.provider_name(), "received OAuth code, exchanging");
     eprintln!("[login] received OAuth code, exchanging for token...");
     let tok = provider
-        .exchange_code(http, &creds, code, &verifier, &state)
+        .exchange_code(http, &creds, code, &pkce.verifier, &state)
         .await?;
 
     save_login_token(auth, provider.provider_id(), tok, account).await?;

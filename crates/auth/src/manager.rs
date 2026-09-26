@@ -19,14 +19,40 @@ use crate::{credentials, token};
 
 const REFRESH_COOLDOWN: Duration = Duration::from_secs(30);
 
-struct ProviderState {
-    last_refresh_attempt: Option<Instant>,
+/// When each provider last attempted a token refresh, so a failing refresh
+/// is not retried more often than every [`REFRESH_COOLDOWN`].
+#[derive(Default)]
+struct RefreshCooldown(Mutex<HashMap<ProviderId, Instant>>);
+
+impl RefreshCooldown {
+    /// Whether `provider` may attempt a refresh now.
+    fn ready(&self, provider: ProviderId) -> bool {
+        self.0
+            .lock()
+            .unwrap()
+            .get(&provider)
+            .is_none_or(|last| last.elapsed() >= REFRESH_COOLDOWN)
+    }
+
+    /// Mark a refresh attempt for `provider`, unless one happened within the
+    /// cooldown. Returns whether the attempt may proceed.
+    fn try_start(&self, provider: ProviderId) -> bool {
+        let mut attempts = self.0.lock().unwrap();
+        if attempts
+            .get(&provider)
+            .is_some_and(|last| last.elapsed() < REFRESH_COOLDOWN)
+        {
+            return false;
+        }
+        attempts.insert(provider, Instant::now());
+        true
+    }
 }
 
 pub struct AuthManager {
     store: Arc<dyn TokenStore>,
     http: reqwest::Client,
-    state: Mutex<HashMap<ProviderId, ProviderState>>,
+    cooldown: RefreshCooldown,
     /// Per-provider async locks to deduplicate concurrent refresh attempts.
     refresh_locks: Mutex<HashMap<ProviderId, Arc<TokioMutex<()>>>>,
 }
@@ -36,7 +62,7 @@ impl AuthManager {
         Self {
             store,
             http,
-            state: Mutex::new(HashMap::new()),
+            cooldown: RefreshCooldown::default(),
             refresh_locks: Mutex::new(HashMap::new()),
         }
     }
@@ -340,11 +366,7 @@ impl AuthManager {
     /// Returns `false` if a refresh was attempted within the cooldown period,
     /// avoiding redundant background tasks.
     fn should_spawn_proactive_refresh(&self, provider: ProviderId) -> bool {
-        let state = self.state.lock().unwrap();
-        state.get(&provider).is_none_or(|ps| {
-            ps.last_refresh_attempt
-                .is_none_or(|last| last.elapsed() >= REFRESH_COOLDOWN)
-        })
+        self.cooldown.ready(provider)
     }
 
     async fn refresh_token(&self, provider: ProviderId, token: &OAuthToken) -> Result<OAuthToken> {
@@ -362,27 +384,10 @@ impl AuthManager {
             return Ok(current);
         }
 
-        // Check cooldown period
-        {
-            let state = self.state.lock().unwrap();
-            if let Some(ps) = state.get(&provider)
-                && let Some(last) = ps.last_refresh_attempt
-                && last.elapsed() < REFRESH_COOLDOWN
-            {
-                return Err(ByokError::Auth(format!(
-                    "refresh cooldown active for {provider}"
-                )));
-            }
-        }
-        // Record refresh attempt timestamp
-        {
-            let mut state = self.state.lock().unwrap();
-            state.insert(
-                provider,
-                ProviderState {
-                    last_refresh_attempt: Some(Instant::now()),
-                },
-            );
+        if !self.cooldown.try_start(provider) {
+            return Err(ByokError::Auth(format!(
+                "refresh cooldown active for {provider}"
+            )));
         }
 
         let refresh_token = token
