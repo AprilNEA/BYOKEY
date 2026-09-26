@@ -78,7 +78,7 @@ static ENDPOINTS: LazyLock<Mutex<HashMap<String, (Instant, String)>>> =
 
 /// Anthropic server tool types an account's organisation policy rejected,
 /// per credential, so later requests leave them out instead of failing.
-/// Learned from the 400 (see [`CopilotUpstream::rejected_tool`]); Copilot
+/// Learned from the 400 (see [`CopilotCredentials::reject_tool`]); Copilot
 /// exposes no flag for it up front.
 static REJECTED_TOOLS: LazyLock<Mutex<HashMap<String, HashSet<String>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
