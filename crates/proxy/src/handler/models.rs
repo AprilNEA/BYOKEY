@@ -10,6 +10,11 @@
 //! and get Anthropic's list shape; everyone else gets the `OpenAI` one.
 //! Claude Desktop reads `supports_1m` and offers the `<id>[1m]` variant of
 //! such models in its picker.
+//!
+//! Pickers keep list order, so each provider's models are listed in lineup
+//! order (see [`lineup`]), dated with their release.
+
+mod lineup;
 
 use axum::{
     Json,
@@ -31,6 +36,7 @@ use crate::AppState;
 pub struct ModelEntry {
     pub id: String,
     pub object: String,
+    /// Release time, as Unix seconds (0 when unknown).
     pub created: i64,
     pub owned_by: String,
     /// Label for model pickers, when the upstream names the model.
@@ -39,17 +45,30 @@ pub struct ModelEntry {
     /// The model takes a 1M-token context, selected as `<id>[1m]`.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub supports_1m: bool,
+    #[serde(skip)]
+    released: Option<time::Date>,
 }
 
 impl ModelEntry {
     fn new(id: String, owned_by: &ProviderId, display_name: Option<String>) -> Self {
+        let released = lineup::released_on(&id);
         Self {
             id,
             object: "model".into(),
-            created: 0,
+            created: released.map_or(0, |d| d.midnight().assume_utc().unix_timestamp()),
             owned_by: owned_by.to_string(),
             display_name,
             supports_1m: false,
+            released,
+        }
+    }
+
+    /// Anthropic's RFC 3339 `created_at`: the release at midnight UTC, or
+    /// the Unix epoch when unknown, as Anthropic's API does.
+    fn created_at(&self) -> String {
+        match self.released {
+            Some(d) => format!("{d}T00:00:00Z"),
+            None => "1970-01-01T00:00:00Z".to_owned(),
         }
     }
 }
@@ -99,8 +118,8 @@ pub async fn list_models(State(state): State<Arc<AppState>>, headers: HeaderMap)
                 json!({
                     "type": "model",
                     "display_name": m.display_name.as_ref().unwrap_or(&m.id),
+                    "created_at": m.created_at(),
                     "id": m.id,
-                    "created_at": "1970-01-01T00:00:00Z",
                     "supports_1m": m.supports_1m,
                 })
             })
@@ -207,6 +226,7 @@ fn messages_models(config: &Config, live: &Live) -> Vec<ModelEntry> {
                     None,
                 ));
             }
+            lineup::sort(&mut out, |e| &e.id);
         }
         _ => {}
     }
@@ -220,15 +240,16 @@ fn messages_models(config: &Config, live: &Live) -> Vec<ModelEntry> {
     out
 }
 
-/// Append `models` of `provider`, skipping ids already listed. Qualified
-/// entries are listed as `provider/<id>` and named after their provider too,
-/// since several providers serve the same models.
+/// Append `models` of `provider` in lineup order, skipping ids already
+/// listed. Qualified entries are listed as `provider/<id>` and named after
+/// their provider too, since several providers serve the same models.
 fn push_all(
     out: &mut Vec<ModelEntry>,
     provider: &ProviderId,
     models: &[LiveModel],
     qualified: bool,
 ) {
+    let start = out.len();
     for m in models {
         let listed = if qualified {
             format!("{provider}/{}", m.id)
@@ -247,6 +268,7 @@ fn push_all(
             });
         }
     }
+    lineup::sort(&mut out[start..], |e| &e.id);
 }
 
 #[cfg(test)]
@@ -353,5 +375,40 @@ mod tests {
             cursor: Vec::new(),
         };
         assert!(messages_models(&Config::default(), &live).is_empty());
+    }
+
+    #[test]
+    fn each_provider_is_listed_in_lineup_order_with_release_dates() {
+        let cursor = |id: &str| LiveModel::from((id.to_owned(), id.to_owned()));
+        let live = Live {
+            usable: vec![ProviderId::Copilot, ProviderId::Cursor],
+            // Copilot's own catalog order.
+            copilot: ["claude-opus-4.7", "claude-haiku-4.5", "claude-opus-5.5"]
+                .into_iter()
+                .map(|id| copilot(id, true, true))
+                .collect(),
+            cursor: vec![cursor("claude-sonnet-4-6"), cursor("claude-fable-5-1")],
+        };
+        let listed = messages_models(&backend(ProviderId::Copilot), &live);
+        assert_eq!(
+            ids(&listed),
+            [
+                "claude-opus-5.5",
+                "claude-haiku-4.5",
+                "claude-opus-4.7",
+                "cursor/claude-fable-5-1",
+                "cursor/claude-sonnet-4-6",
+            ],
+            "sorted within each provider, providers kept apart"
+        );
+        assert_eq!(listed[0].created_at(), "2026-09-22T00:00:00Z");
+        assert_eq!(listed[0].created, 1_790_035_200);
+    }
+
+    #[test]
+    fn unknown_release_dates_fall_back_to_the_epoch() {
+        let entry = ModelEntry::new("composer-2.5".into(), &ProviderId::Cursor, None);
+        assert_eq!(entry.created, 0);
+        assert_eq!(entry.created_at(), "1970-01-01T00:00:00Z");
     }
 }

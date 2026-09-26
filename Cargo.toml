@@ -83,6 +83,8 @@ sea-orm-migration = { version = "2.0.0-rc.38", default-features = false, feature
 async-trait = "0.1"
 # Builder
 bon = "3"
+# Dates
+time = { version = "0.3.47", features = ["macros"] }
 # URL encoding
 serde_urlencoded = "0.7"
 # CLI

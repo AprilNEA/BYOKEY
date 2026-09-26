@@ -33,6 +33,7 @@ aigw.workspace = true
 http.workspace = true
 uuid.workspace = true
 connectrpc.workspace = true
+time.workspace = true
 
 [dev-dependencies]
 byokey-store.workspace = true
