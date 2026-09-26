@@ -20,6 +20,7 @@ use byokey_types::{ByokError, ProviderId, ThinkingCapability, Usage, traits::Byt
 use bytes::Bytes;
 use futures_util::{Future, StreamExt as _, TryStreamExt as _};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::sync::Arc;
 use std::time::Duration;
@@ -592,19 +593,10 @@ pub(super) fn copilot_request(
     builder.json(body)
 }
 
-/// Anthropic server tools Copilot's `/v1/messages` rejects with 400 ("The
-/// use of the web search tool is not supported", "rejected tool(s):
-/// `web_fetch`"). Its other built-in tools (`bash`, `text_editor`,
-/// `code_execution`) are accepted.
-const COPILOT_REJECTED_TOOLS: &[&str] = &["web_search", "web_fetch"];
-
-/// Drop what Copilot's `/v1/messages` rejects: the fields it answers with
-/// "Extra inputs are not permitted" (the per-message `output_config` of the
+/// Drop the request fields Copilot's `/v1/messages` answers with "Extra
+/// inputs are not permitted": the per-message `output_config` of the
 /// `per-turn-control` beta, the top-level `safeguards`, and the `scope` of
-/// `cache_control` markers), and the server tools in
-/// [`COPILOT_REJECTED_TOOLS`]. Claude Code sends all of these by default;
-/// without the tools its `WebSearch` and `WebFetch` are unavailable, with
-/// them the whole turn would fail.
+/// `cache_control` markers, all of which Claude Code sends by default.
 pub(super) fn strip_copilot_unsupported(body: &mut Value) {
     strip_cache_scope(body);
     let Some(body) = body.as_object_mut() else {
@@ -616,23 +608,64 @@ pub(super) fn strip_copilot_unsupported(body: &mut Value) {
             message.remove("output_config");
         }
     }
-    if let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) {
-        tools.retain(|tool| {
-            let server_tool = tool.get("type").and_then(Value::as_str).is_some_and(|t| {
-                COPILOT_REJECTED_TOOLS.iter().any(|name| {
-                    t.strip_prefix(name)
-                        .is_some_and(|rest| rest.starts_with('_'))
-                })
-            });
-            if server_tool {
-                tracing::debug!(tool = %tool["type"], "dropping a server tool Copilot rejects");
-            }
-            !server_tool
-        });
-        if tools.is_empty() {
-            body.remove("tools");
-        }
+}
+
+/// Anthropic server tools a Copilot organisation policy can turn off:
+/// `web_search_*` and `web_fetch_*`. Copilot then rejects the whole request
+/// with 400 and no flag announces it up front, so the account's rejection
+/// is learned from the error (see [`rejected_server_tool`]) and remembered
+/// on its [`CopilotCredentials`].
+const POLICED_SERVER_TOOLS: &[&str] = &["web_search", "web_fetch"];
+
+/// The server tool kind (`web_search`, `web_fetch`) of `tool`, if it is one
+/// Copilot policy can reject.
+fn policed_server_tool(tool: &Value) -> Option<&'static str> {
+    let ty = tool.get("type").and_then(Value::as_str)?;
+    POLICED_SERVER_TOOLS.iter().copied().find(|kind| {
+        ty.strip_prefix(kind)
+            .is_some_and(|rest| rest.starts_with('_'))
+    })
+}
+
+/// Remove the server tools in `rejected` from `body.tools`. Returns whether
+/// anything was removed.
+pub(super) fn strip_server_tools(body: &mut Value, rejected: &HashSet<String>) -> bool {
+    if rejected.is_empty() {
+        return false;
     }
+    let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let before = tools.len();
+    tools.retain(|tool| !policed_server_tool(tool).is_some_and(|kind| rejected.contains(kind)));
+    let removed = tools.len() < before;
+    if tools.is_empty()
+        && let Some(body) = body.as_object_mut()
+    {
+        body.remove("tools");
+    }
+    removed
+}
+
+/// The server tool a Copilot 400 rejected, if that is what it says: "The
+/// use of the web search tool is not supported" (`unsupported_value`) or
+/// "rejected tool(s): `web_fetch`" (`invalid_request_body`).
+pub(super) fn rejected_server_tool(err: &ByokError) -> Option<&'static str> {
+    let ByokError::Upstream {
+        status: 400, body, ..
+    } = err
+    else {
+        return None;
+    };
+    let message = serde_json::from_str::<Value>(body)
+        .ok()?
+        .pointer("/error/message")?
+        .as_str()?
+        .to_ascii_lowercase();
+    POLICED_SERVER_TOOLS
+        .iter()
+        .copied()
+        .find(|kind| message.contains(&kind.replace('_', " ")) || message.contains(kind))
 }
 
 /// Remove `scope` from every `cache_control` marker in `value`.
@@ -718,6 +751,10 @@ async fn copilot_messages(
 ) -> Result<Response, ApiError> {
     strip_copilot_unsupported(&mut body);
     let copilot = copilot_upstream(state);
+    let has_server_tools = body
+        .get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| tools.iter().any(|t| policed_server_tool(t).is_some()));
     let small_model = state
         .config
         .load()
@@ -776,6 +813,11 @@ async fn copilot_messages(
                 return Err(ApiError::from(e));
             }
         };
+        // What this account's organisation policy rejected before is left
+        // out up front; a rejection learned now is retried without the tool.
+        if has_server_tools && strip_server_tools(&mut body, &creds.rejected_tools()) {
+            tracing::info!("leaving out server tools this Copilot account's policy rejects");
+        }
         tracing::info!(
             endpoint = %creds.endpoint,
             model = %body.get("model").and_then(|v| v.as_str()).unwrap_or("unknown"),
@@ -826,6 +868,19 @@ async fn copilot_messages(
         {
             token_refreshed = true;
             tracing::warn!(attempt, "copilot rejected its token, exchanging a new one");
+            continue;
+        }
+        // The account's policy rejects a server tool: remember it and retry
+        // the same account without that tool. Claude Code's WebSearch or
+        // WebFetch then just does nothing on this account.
+        if let Some(kind) = rejected_server_tool(&err.error)
+            && creds.reject_tool(kind)
+            && strip_server_tools(&mut body, &HashSet::from([kind.to_owned()]))
+        {
+            tracing::warn!(
+                tool = kind,
+                "this Copilot account's policy rejects a server tool; retrying without it"
+            );
             continue;
         }
         if !err.error.is_retryable() || last_attempt {
@@ -1082,9 +1137,7 @@ mod tests {
             "system": [{"type": "text", "text": "s", "cache_control": {"type": "ephemeral", "scope": "global"}}],
             "tools": [
                 {"name": "t", "input_schema": {}, "eager_input_streaming": true},
-                {"type": "web_search_20250305", "name": "web_search", "max_uses": 3},
-                {"type": "web_fetch_20250910", "name": "web_fetch"},
-                {"type": "text_editor_20250728", "name": "str_replace_based_edit_tool"}
+                {"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
             ],
             "messages": [
                 {"role": "user", "content": "hi", "output_config": {"effort": "low"}},
@@ -1104,7 +1157,7 @@ mod tests {
                 "system": [{"type": "text", "text": "s", "cache_control": {"type": "ephemeral"}}],
                 "tools": [
                     {"name": "t", "input_schema": {}, "eager_input_streaming": true},
-                    {"type": "text_editor_20250728", "name": "str_replace_based_edit_tool"}
+                    {"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
                 ],
                 "messages": [
                     {"role": "user", "content": "hi"},
@@ -1118,18 +1171,77 @@ mod tests {
     }
 
     #[test]
-    fn a_request_left_with_only_rejected_tools_has_no_tools_field() {
+    fn server_tools_an_account_rejects_are_removed_and_recognised() {
+        let rejected = HashSet::from(["web_search".to_owned()]);
         let mut body = json!({
-            "model": "claude-sonnet-5",
-            "tools": [{"type": "web_search_20250305", "name": "web_search"}],
-            "messages": [{"role": "user", "content": "hi"}]
+            "tools": [
+                {"type": "web_search_20250305", "name": "web_search"},
+                {"type": "web_fetch_20250910", "name": "web_fetch"},
+                {"type": "text_editor_20250728", "name": "str_replace_based_edit_tool"},
+                {"name": "web_search_notes", "input_schema": {}}
+            ]
         });
-        strip_copilot_unsupported(&mut body);
-        assert!(body.get("tools").is_none());
-        // A custom tool that merely mentions the name is kept.
-        let mut body = json!({"tools": [{"name": "web_search_notes", "input_schema": {}}]});
-        strip_copilot_unsupported(&mut body);
-        assert_eq!(body["tools"].as_array().unwrap().len(), 1);
+        assert!(strip_server_tools(&mut body, &rejected));
+        let kept: Vec<&str> = body["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                "web_fetch",
+                "str_replace_based_edit_tool",
+                "web_search_notes"
+            ],
+            "only the rejected kind goes; a custom tool that mentions the name stays"
+        );
+        assert!(
+            !strip_server_tools(&mut body, &rejected),
+            "nothing left to remove"
+        );
+
+        let mut body = json!({"tools": [{"type": "web_search_20250305", "name": "web_search"}]});
+        assert!(strip_server_tools(&mut body, &rejected));
+        assert!(body.get("tools").is_none(), "an emptied list is dropped");
+        assert!(!strip_server_tools(
+            &mut json!({"tools": []}),
+            &HashSet::new()
+        ));
+
+        let upstream = |body: &str| ByokError::Upstream {
+            status: 400,
+            body: body.into(),
+            retry_after: None,
+        };
+        assert_eq!(
+            rejected_server_tool(&upstream(
+                r#"{"error":{"message":"The use of the web search tool is not supported.","code":"unsupported_value"}}"#
+            )),
+            Some("web_search")
+        );
+        assert_eq!(
+            rejected_server_tool(&upstream(
+                r#"{"error":{"message":"rejected tool(s): web_fetch","code":"invalid_request_body"}}"#
+            )),
+            Some("web_fetch")
+        );
+        assert_eq!(
+            rejected_server_tool(&upstream(
+                r#"{"error":{"message":"The requested model is not supported.","code":"model_not_supported"}}"#
+            )),
+            None
+        );
+        assert_eq!(
+            rejected_server_tool(&ByokError::Upstream {
+                status: 403,
+                body: "web search".into(),
+                retry_after: None
+            }),
+            None,
+            "only a 400 is a policy rejection"
+        );
     }
 
     #[test]

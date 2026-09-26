@@ -1,10 +1,15 @@
-//! GitHub Copilot accounts: credentials, quota-aware account selection and
-//! the model catalog.
+//! GitHub Copilot accounts: credentials, quota-aware account selection, the
+//! model catalog, and what each account's organisation policy rejects.
 //!
 //! Auth: device code flow → GitHub token. `OpenCode` tokens authenticate API
 //! requests directly; VS Code tokens are first exchanged for a short-lived
 //! Copilot API token. The proxy sends the Anthropic Messages requests
 //! themselves, with the headers [`CopilotIdentity`] provides.
+//!
+//! Every account is served from the API host GitHub names for it in
+//! `/copilot_internal/user` (`endpoints.api`: `api.githubcopilot.com` for
+//! individual seats, `api.enterprise.githubcopilot.com` or a GHE host for
+//! organisation seats), as VS Code does.
 mod device;
 mod headers;
 
@@ -16,7 +21,7 @@ use byokey_types::{AccountInfo, ByokError, CopilotClient, OAuthToken, ProviderId
 use serde_json::Value;
 use std::{
     cmp::Ordering as CmpOrdering,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
 };
@@ -56,8 +61,27 @@ const REBALANCE_INTERVAL: Duration = Duration::from_secs(5 * 60);
 #[allow(clippy::duration_suboptimal_units)]
 const QUOTA_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 
-/// Default GitHub Copilot API base URL.
+/// The Copilot API host when GitHub names none for the account.
 const DEFAULT_BASE_URL: &str = "https://api.githubcopilot.com";
+
+/// How long an account's API host from `/copilot_internal/user` is reused.
+#[allow(
+    clippy::duration_suboptimal_units,
+    reason = "`Duration::from_hours` is not a const fn on stable"
+)]
+const ENDPOINT_TTL: Duration = Duration::from_secs(6 * 3600);
+
+/// API host per `OpenCode` credential, from `/copilot_internal/user`.
+/// Process-wide because upstreams are built per request.
+static ENDPOINTS: LazyLock<Mutex<HashMap<String, (Instant, String)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Anthropic server tool types an account's organisation policy rejected,
+/// per credential, so later requests leave them out instead of failing.
+/// Learned from the 400 (see [`CopilotUpstream::rejected_tool`]); Copilot
+/// exposes no flag for it up front.
+static REJECTED_TOOLS: LazyLock<Mutex<HashMap<String, HashSet<String>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Endpoint to exchange a VS Code GitHub token for a short-lived Copilot API token.
 const COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/token";
@@ -83,6 +107,42 @@ pub struct CopilotCredentials {
     pub client: CopilotClient,
     /// The machine the account appears to be using.
     pub device: CopilotDevice,
+    /// The credential the account was resolved from (a GitHub token or a
+    /// configured key), keying what BYOKEY remembers about the account.
+    credential: String,
+}
+
+impl CopilotCredentials {
+    /// Server tool types this account's policy rejected earlier, by
+    /// `type` prefix (`web_search`, `web_fetch`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the rejected-tools mutex is poisoned.
+    #[must_use]
+    pub fn rejected_tools(&self) -> HashSet<String> {
+        REJECTED_TOOLS
+            .lock()
+            .unwrap()
+            .get(&self.credential)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Remember that this account's policy rejects the server tool `kind`
+    /// (`web_search`, `web_fetch`). Returns whether it is news.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the rejected-tools mutex is poisoned.
+    pub fn reject_tool(&self, kind: &str) -> bool {
+        REJECTED_TOOLS
+            .lock()
+            .unwrap()
+            .entry(self.credential.clone())
+            .or_default()
+            .insert(kind.to_owned())
+    }
 }
 
 /// VS Code GitHub token → short-lived Copilot API token.
@@ -244,12 +304,60 @@ impl CopilotUpstream {
         match CopilotClient::of(token)? {
             CopilotClient::OpenCode => Ok(CopilotCredentials {
                 token: token.access_token.clone(),
-                endpoint: self.default_endpoint(),
+                endpoint: self.account_endpoint(token).await,
                 client: CopilotClient::OpenCode,
                 device: CopilotDevice::for_credential(&token.access_token),
+                credential: token.access_token.clone(),
             }),
             CopilotClient::VsCode => self.exchange_and_cache(&token.access_token).await,
         }
+    }
+
+    /// The API host GitHub names for `token`'s account, cached for
+    /// [`ENDPOINT_TTL`]. A configured `base_url` wins; when GitHub cannot be
+    /// asked, the default host, which serves every seat type.
+    async fn account_endpoint(&self, token: &OAuthToken) -> String {
+        if let Some(url) = &self.base_url {
+            return url.trim_end_matches('/').to_owned();
+        }
+        if let Some((at, endpoint)) = ENDPOINTS.lock().unwrap().get(&token.access_token)
+            && at.elapsed() < ENDPOINT_TTL
+        {
+            return endpoint.clone();
+        }
+        let endpoint = self
+            .user_info(token)
+            .await
+            .and_then(|user| {
+                user.pointer("/endpoints/api")
+                    .and_then(Value::as_str)
+                    .map(|url| url.trim_end_matches('/').to_owned())
+            })
+            .unwrap_or_else(|| DEFAULT_BASE_URL.to_owned());
+        ENDPOINTS.lock().unwrap().insert(
+            token.access_token.clone(),
+            (Instant::now(), endpoint.clone()),
+        );
+        endpoint
+    }
+
+    /// `/copilot_internal/user` for `token`'s account, or `None` on any
+    /// failure (the callers have defaults).
+    async fn user_info(&self, token: &OAuthToken) -> Option<Value> {
+        let resp = self
+            .github_request(
+                COPILOT_USER_URL,
+                CopilotClient::of(token).ok()?,
+                &token.access_token,
+            )
+            .send()
+            .await
+            .ok()?;
+        if !resp.status().is_success() {
+            tracing::debug!(status = %resp.status(), "copilot_internal/user failed");
+            return None;
+        }
+        resp.json().await.ok()
     }
 
     /// Exchange a VS Code GitHub token for a Copilot API token and cache the result.
@@ -265,6 +373,7 @@ impl CopilotUpstream {
                     endpoint: cached.api_endpoint.clone(),
                     client: CopilotClient::VsCode,
                     device: CopilotDevice::for_credential(github_token),
+                    credential: github_token.to_owned(),
                 });
             }
         }
@@ -331,6 +440,7 @@ impl CopilotUpstream {
             endpoint: api_endpoint,
             client: CopilotClient::VsCode,
             device: CopilotDevice::for_credential(github_token),
+            credential: github_token.to_owned(),
         })
     }
 
@@ -338,21 +448,7 @@ impl CopilotUpstream {
     ///
     /// Returns `(percent_remaining, unlimited)` on success, `None` on any failure.
     async fn fetch_quota(&self, token: &OAuthToken) -> Option<(f64, bool)> {
-        let resp = self
-            .github_request(
-                COPILOT_USER_URL,
-                CopilotClient::of(token).ok()?,
-                &token.access_token,
-            )
-            .send()
-            .await
-            .ok()?;
-
-        if !resp.status().is_success() {
-            return None;
-        }
-
-        let json: Value = resp.json().await.ok()?;
+        let json = self.user_info(token).await?;
         let pi = json.pointer("/quota_snapshots/premium_interactions")?;
         let unlimited = pi
             .get("unlimited")
@@ -501,6 +597,7 @@ impl CopilotUpstream {
                 endpoint: self.default_endpoint(),
                 client: CopilotClient::default(),
                 device: CopilotDevice::for_credential(key),
+                credential: key.clone(),
             });
         }
 
@@ -635,6 +732,7 @@ mod tests {
             endpoint: DEFAULT_BASE_URL.to_owned(),
             client: CopilotClient::VsCode,
             device: CopilotDevice::for_credential(github_token),
+            credential: github_token.to_owned(),
         };
         assert!(CopilotUpstream::forget_token(&creds));
         assert!(!TOKEN_CACHE.lock().unwrap().contains_key(github_token));
@@ -664,5 +762,59 @@ mod tests {
             .expect("served from cache, no network");
         assert_eq!(creds.token, "copilot-api-token");
         assert_eq!(creds.endpoint, "https://api.individual.githubcopilot.com");
+    }
+
+    #[tokio::test]
+    async fn a_cached_account_endpoint_is_used_without_a_round_trip() {
+        let token = OAuthToken::new("gho_cached_endpoint").with_client("opencode");
+        ENDPOINTS.lock().unwrap().insert(
+            token.access_token.clone(),
+            (
+                Instant::now(),
+                "https://api.enterprise.githubcopilot.com".to_owned(),
+            ),
+        );
+        let creds = make_upstream()
+            .credentials_for(&token)
+            .await
+            .expect("served from cache, no network");
+        assert_eq!(creds.endpoint, "https://api.enterprise.githubcopilot.com");
+        assert_eq!(creds.client, CopilotClient::OpenCode);
+
+        // A configured base_url overrides whatever GitHub names.
+        let auth = Arc::new(AuthManager::new(
+            Arc::new(byokey_store::InMemoryTokenStore::new()),
+            reqwest::Client::new(),
+        ));
+        let pinned = CopilotUpstream::builder()
+            .http(reqwest::Client::new())
+            .auth(auth)
+            .base_url("https://copilot-api.ghe.example/".to_owned())
+            .build();
+        let creds = pinned.credentials_for(&token).await.unwrap();
+        assert_eq!(creds.endpoint, "https://copilot-api.ghe.example");
+    }
+
+    #[test]
+    fn rejected_tools_are_remembered_per_credential() {
+        let a = CopilotCredentials {
+            token: "t".into(),
+            endpoint: DEFAULT_BASE_URL.into(),
+            client: CopilotClient::OpenCode,
+            device: CopilotDevice::for_credential("gho_a"),
+            credential: "gho_rejected_tools_a".into(),
+        };
+        let b = CopilotCredentials {
+            credential: "gho_rejected_tools_b".into(),
+            ..a.clone()
+        };
+        assert!(a.rejected_tools().is_empty());
+        assert!(a.reject_tool("web_search"), "first time is news");
+        assert!(!a.reject_tool("web_search"), "second time is not");
+        assert_eq!(a.rejected_tools(), HashSet::from(["web_search".to_owned()]));
+        assert!(
+            b.rejected_tools().is_empty(),
+            "another account is unaffected"
+        );
     }
 }

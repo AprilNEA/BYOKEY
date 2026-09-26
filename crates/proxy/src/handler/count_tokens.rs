@@ -17,7 +17,8 @@ use std::sync::Arc;
 
 use super::messages::{
     AnthropicUpstream, Backend, CONTEXT_1M_BETA, build_beta_header, copilot_request,
-    copilot_upstream, sanitize_system, strip_copilot_unsupported, take_long_context_suffix,
+    copilot_upstream, sanitize_system, strip_copilot_unsupported, strip_server_tools,
+    take_long_context_suffix,
 };
 use crate::{AppState, error::ApiError};
 
@@ -49,6 +50,9 @@ async fn serve_count_tokens(
             strip_copilot_unsupported(&mut body);
             let copilot = copilot_upstream(state);
             let creds = copilot.credentials().await?;
+            // Counting is not worth a learning round trip: leave out what
+            // the account is already known to reject.
+            strip_server_tools(&mut body, &creds.rejected_tools());
             let conversation = Conversation::from_messages(&[]);
             copilot_request(
                 &state.http,
