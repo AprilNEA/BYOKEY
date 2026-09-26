@@ -14,51 +14,103 @@ use std::time::{Duration, Instant};
 
 const TTL: Duration = Duration::from_mins(15);
 
+/// Model parameters (`effort`, `thinking`, `fast`, …) in the order Cursor
+/// lists them, each key at most once.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Params(Vec<(String, String)>);
+
+impl Params {
+    /// The value of `key`, if set.
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.0
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// Set `key` to `value`, in place if it is already set.
+    pub fn set(&mut self, key: &str, value: &str) {
+        match self.0.iter_mut().find(|(k, _)| k == key) {
+            Some(slot) => value.clone_into(&mut slot.1),
+            None => self.0.push((key.to_owned(), value.to_owned())),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// `(key, value)` pairs in order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.0.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+    }
+}
+
+impl<K: Into<String>, V: Into<String>> FromIterator<(K, V)> for Params {
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(pairs: I) -> Self {
+        let mut params = Self::default();
+        for (k, v) in pairs {
+            params.set(&k.into(), &v.into());
+        }
+        params
+    }
+}
+
+/// A parameter a model takes and the values it allows, in display order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParamOption {
+    id: String,
+    values: Vec<String>,
+}
+
+/// A name that selects a model with given parameters: a variant, alias or
+/// legacy slug.
+#[derive(Debug, Clone)]
+struct Spelling {
+    name: String,
+    params: Params,
+}
+
 /// One model and every spelling that selects it.
 #[derive(Debug, Clone)]
 struct Model {
     id: String,
     /// Human-readable name, e.g. `Claude Opus 5.5`.
     display: String,
-    /// Parameter id → allowed values, in display order.
-    options: Vec<(String, Vec<String>)>,
+    options: Vec<ParamOption>,
     /// Parameters sent when the caller names only the model.
-    defaults: Vec<(String, String)>,
-    /// `(name, parameters)` for each variant, alias and legacy slug.
-    names: Vec<(String, Vec<(String, String)>)>,
+    defaults: Params,
+    names: Vec<Spelling>,
+}
+
+impl Model {
+    /// The parameter that takes `value`, if any.
+    fn option_taking(&self, value: &str) -> Option<&str> {
+        self.options
+            .iter()
+            .find(|o| o.values.iter().any(|v| v == value))
+            .map(|o| o.id.as_str())
+    }
 }
 
 /// A resolved model: what goes on the wire.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolved {
     pub id: String,
-    pub params: Vec<(String, String)>,
+    pub params: Params,
 }
-
-impl Resolved {
-    fn set(&mut self, key: &str, value: &str) {
-        match self.params.iter_mut().find(|(k, _)| k == key) {
-            Some(slot) => value.clone_into(&mut slot.1),
-            None => self.params.push((key.to_owned(), value.to_owned())),
-        }
-    }
-}
-
-type Params = Vec<(String, String)>;
 
 /// The catalog and when it was fetched.
 type Cached = Option<(Instant, Vec<Model>)>;
 
 static CACHE: LazyLock<Mutex<Cached>> = LazyLock::new(|| Mutex::new(None));
 
-fn param_pairs(f: &Fields<'_>, field: u32) -> Vec<(String, String)> {
+fn param_pairs(f: &Fields<'_>, field: u32) -> Params {
     f.all_bytes(field)
         .filter_map(|p| {
             let p = Fields::parse(p);
-            Some((
-                p.str(1)?.to_owned(),
-                p.str(2).unwrap_or_default().to_owned(),
-            ))
+            Some((p.str(1)?, p.str(2).unwrap_or_default()))
         })
         .collect()
 }
@@ -69,11 +121,11 @@ fn parse_model(buf: &[u8]) -> Option<Model> {
         .str(1)
         .filter(|s| !s.is_empty() && *s != "default")?
         .to_owned();
-    let options: Vec<(String, Vec<String>)> = f
+    let options: Vec<ParamOption> = f
         .all_bytes(29)
         .filter_map(|def| {
             let def = Fields::parse(def);
-            let pid = def.str(1).filter(|s| !s.is_empty())?.to_owned();
+            let id = def.str(1).filter(|s| !s.is_empty())?.to_owned();
             let values = def.message(4).map_or_else(Vec::new, |v| {
                 // Bool option groups (1), then enum option groups (2).
                 [1, 2]
@@ -87,7 +139,7 @@ fn parse_model(buf: &[u8]) -> Option<Model> {
                     })
                     .collect()
             });
-            Some((pid, values))
+            Some(ParamOption { id, values })
         })
         .collect();
     let mut defaults = None;
@@ -106,26 +158,32 @@ fn parse_model(buf: &[u8]) -> Option<Model> {
             .flatten()
             .filter(|s| !s.is_empty())
         {
-            names.push((name.to_owned(), params.clone()));
+            names.push(Spelling {
+                name: name.to_owned(),
+                params: params.clone(),
+            });
         }
     }
     let defaults = defaults.unwrap_or_else(|| {
         options
             .iter()
-            .filter_map(|(pid, values)| {
-                let pick = match pid.as_str() {
+            .filter_map(|ParamOption { id, values }| {
+                let pick = match id.as_str() {
                     "thinking" if values.iter().any(|v| v == "true") => "true",
                     "effort" | "reasoning" if values.iter().any(|v| v == "high") => "high",
                     "effort" | "reasoning" => values.last()?,
                     _ => values.first()?,
                 };
-                Some((pid.clone(), pick.to_owned()))
+                Some((id.as_str(), pick))
             })
             .collect()
     });
     for alias in f.all_bytes(37).chain(f.all_bytes(36)) {
         if let Ok(name) = std::str::from_utf8(alias) {
-            names.push((name.to_owned(), defaults.clone()));
+            names.push(Spelling {
+                name: name.to_owned(),
+                params: defaults.clone(),
+            });
         }
     }
     let display = f
@@ -254,7 +312,7 @@ fn resolve_in(models: &[Model], name: &str) -> Option<Resolved> {
         let mut hit = resolve_in(models, head)?;
         for pair in tail.split(',') {
             if let Some((k, v)) = pair.split_once('=') {
-                hit.set(k.trim(), v.trim());
+                hit.params.set(k.trim(), v.trim());
             }
         }
         return Some(hit);
@@ -265,7 +323,7 @@ fn resolve_in(models: &[Model], name: &str) -> Option<Resolved> {
             std::iter::once((m.id.to_ascii_lowercase(), (m, &m.defaults))).chain(
                 m.names
                     .iter()
-                    .map(move |(n, p)| (n.to_ascii_lowercase(), (m, p))),
+                    .map(move |s| (s.name.to_ascii_lowercase(), (m, &s.params))),
             )
         })
         .rev() // first spelling wins on collision
@@ -289,16 +347,10 @@ fn resolve_in(models: &[Model], name: &str) -> Option<Resolved> {
         };
         for tok in &parts[cut..] {
             match *tok {
-                "thinking" | "think" => hit.set("thinking", "true"),
-                "nothinking" | "nonthinking" => hit.set("thinking", "false"),
-                "fast" => hit.set("fast", "true"),
-                tok => {
-                    let (pid, _) = model
-                        .options
-                        .iter()
-                        .find(|(_, vs)| vs.iter().any(|v| v == tok))?;
-                    hit.set(pid, tok);
-                }
+                "thinking" | "think" => hit.params.set("thinking", "true"),
+                "nothinking" | "nonthinking" => hit.params.set("thinking", "false"),
+                "fast" => hit.params.set("fast", "true"),
+                tok => hit.params.set(model.option_taking(tok)?, tok),
             }
         }
         Some(hit)
@@ -309,11 +361,22 @@ fn resolve_in(models: &[Model], name: &str) -> Option<Resolved> {
 mod tests {
     use super::*;
 
-    fn p(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-        pairs
-            .iter()
-            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-            .collect()
+    fn p(pairs: &[(&str, &str)]) -> Params {
+        pairs.iter().copied().collect()
+    }
+
+    fn option(id: &str, values: &[&str]) -> ParamOption {
+        ParamOption {
+            id: id.into(),
+            values: values.iter().map(|&v| v.into()).collect(),
+        }
+    }
+
+    fn spelling(name: &str, params: &[(&str, &str)]) -> Spelling {
+        Spelling {
+            name: name.into(),
+            params: p(params),
+        }
     }
 
     fn opus() -> Model {
@@ -321,16 +384,16 @@ mod tests {
             id: "claude-opus-5-5".into(),
             display: "Claude Opus 5.5".into(),
             options: vec![
-                ("effort".into(), vec!["low".into(), "high".into()]),
-                ("fast".into(), vec!["false".into(), "true".into()]),
+                option("effort", &["low", "high"]),
+                option("fast", &["false", "true"]),
             ],
             defaults: p(&[("effort", "high"), ("fast", "false")]),
             names: vec![
-                (
-                    "claude-opus-5-5-low-fast".into(),
-                    p(&[("effort", "low"), ("fast", "true")]),
+                spelling(
+                    "claude-opus-5-5-low-fast",
+                    &[("effort", "low"), ("fast", "true")],
                 ),
-                ("opus".into(), p(&[("effort", "high"), ("fast", "false")])),
+                spelling("opus", &[("effort", "high"), ("fast", "false")]),
             ],
         }
     }
@@ -380,16 +443,10 @@ mod tests {
             .str(37, "alias")
             .finish();
         let m = parse_model(&raw).unwrap();
-        assert_eq!(
-            m.options,
-            vec![(
-                "effort".to_owned(),
-                vec!["low".to_owned(), "high".to_owned()]
-            )]
-        );
+        assert_eq!(m.options, [option("effort", &["low", "high"])]);
         assert_eq!(m.defaults, p(&[("effort", "low")]));
         assert_eq!(
-            m.names.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+            m.names.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
             ["m-low", "alias"]
         );
         assert_eq!(m.display, "m");

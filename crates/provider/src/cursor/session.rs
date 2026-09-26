@@ -10,6 +10,7 @@
 //! The task surfaces only what the API caller needs as [`Event`]s: text,
 //! thinking, caller tool calls, and the end of the turn.
 
+use super::models::Params;
 use super::pb::{Fields, Msg, decode_json_value};
 use byokey_types::{ByokError, Result};
 use bytes::{Buf as _, Bytes, BytesMut};
@@ -60,7 +61,7 @@ pub struct ToolSpec {
 #[derive(Debug, Clone)]
 pub struct RunSpec {
     pub model: String,
-    pub params: Vec<(String, String)>,
+    pub params: Params,
     pub system: Option<String>,
     pub prompt: String,
     pub tools: Vec<ToolSpec>,
@@ -313,7 +314,7 @@ fn run_request(spec: &RunSpec, tools: &Tools, run_id: &str) -> Bytes {
         .varint(4, 1);
     let action = Msg::new().msg(1, &Msg::new().msg(1, &user_message));
     let mut model = Msg::new().str(1, &spec.model);
-    for (k, v) in &spec.params {
+    for (k, v) in spec.params.iter() {
         model = model.msg(3, &Msg::new().str(1, k).str(2, v));
     }
     let mut run = Msg::new()

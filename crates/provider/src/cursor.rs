@@ -135,12 +135,9 @@ impl CursorUpstream {
         // Thinking costs time to first token; skip it unless it was asked for.
         if request.thinking.is_none()
             && !request.model.contains("think")
-            && let Some(slot) = model
-                .params
-                .iter_mut()
-                .find(|(k, v)| k == "thinking" && v == "true")
+            && model.params.get("thinking") == Some("true")
         {
-            slot.1 = "false".into();
+            model.params.set("thinking", "false");
         }
         let (system, prompt) = render(&request.messages);
         let tools = match request
