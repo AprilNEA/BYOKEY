@@ -99,17 +99,22 @@ impl ApiError {
             Wire::OpenAi => json!({
                 "error": {"message": message, "type": error_type, "code": code}
             }),
-            Wire::Anthropic => json!({
-                "type": "error",
-                "error": {"type": error_type, "message": message}
-            }),
+            Wire::Anthropic => anthropic_envelope(error_type, message),
         }
     }
 }
 
+/// The Anthropic error envelope.
+pub(crate) fn anthropic_envelope(error_type: &str, message: &str) -> Value {
+    json!({
+        "type": "error",
+        "error": {"type": error_type, "message": message}
+    })
+}
+
 /// The Anthropic error type and `OpenAI` error code that describe an
 /// upstream status, for bodies that need wrapping.
-fn describe_status(status: StatusCode) -> (&'static str, &'static str) {
+pub(crate) fn describe_status(status: StatusCode) -> (&'static str, &'static str) {
     match status.as_u16() {
         400 | 404 | 422 => ("invalid_request_error", "invalid_request"),
         401 => ("authentication_error", "invalid_api_key"),

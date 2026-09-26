@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Config keys `model_alias`, `excluded_models`, `streaming`, `payload` and `routing_policies`, and the provider keys `api_keys`, `routing`, `fallback`, `max_retry_credentials`, `claude_headers`, `codex_headers`, `cloak` and `websocket`, are removed and rejected.
 - The management API keeps `GetStatus`, `GetUsage` and `ListAccounts`, which is what `byokey tui` reads; the other RPCs are removed.
 
+### Fixed
+
+- Claude Code no longer sits on `Waiting for API response · will retry in …` while Copilot is slow to answer: BYOKEY answers a streaming request itself once the upstream's headers are 15 s late, writes an SSE keepalive comment every 10 s the upstream stays silent, and ends a stream that has been silent for two minutes with an `error` event instead of leaving the client to give up after five.
+- Dead upstream connections are noticed within about half a minute (HTTP/2 PING every 15 s, also while idle) and their streams end with an `error` event, so the retry lands on a fresh connection instead of the same dead one. Body errors are logged with their full cause chain.
+- An invalid `proxy_url` now fails startup instead of silently sending traffic directly.
+
 ### Changed
 
 - The HTTP client is `reqwest` instead of `wreq`. Nothing used `wreq`'s TLS impersonation, and `reqwest` was already in the dependency tree twice. TLS certificates are now verified against the operating system's trust store instead of a bundled Mozilla root set, so a CA installed on the machine (a corporate proxy, for example) is trusted, and a container without `ca-certificates` needs them installed. The minimum supported Rust version drops from 1.98 to 1.91.

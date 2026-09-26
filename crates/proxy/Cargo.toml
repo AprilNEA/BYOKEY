@@ -37,6 +37,7 @@ time.workspace = true
 
 [dev-dependencies]
 byokey-store.workspace = true
+tokio-stream.workspace = true
 tokio = { version = "1", features = ["full", "test-util"] }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"

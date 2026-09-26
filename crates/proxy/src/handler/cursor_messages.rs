@@ -22,7 +22,14 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use crate::util::sse_response;
-use crate::util::stream::{AnthropicParser, tap_usage_stream, terminate_anthropic_stream};
+use crate::util::stream::{
+    AnthropicParser, keep_alive, tap_usage_stream, terminate_anthropic_stream,
+};
+use std::time::Duration;
+
+/// See `messages::KEEPALIVE_INTERVAL`; a Cursor run parked on a tool call
+/// can legitimately sit silent, so it gets no silence limit.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
 use crate::{AppState, error::ApiError};
 
 /// Serve an Anthropic Messages request from Cursor. `body.model` is the
@@ -81,9 +88,10 @@ pub(crate) async fn cursor_messages(
         byokey_types::DEFAULT_ACCOUNT.into(),
         AnthropicParser::new(),
     );
+    let alive = keep_alive(tapped, KEEPALIVE_INTERVAL, Duration::MAX);
     Ok(sse_response(
         StatusCode::OK,
-        terminate_anthropic_stream(tapped).map(|r| r.map_err(std::io::Error::other)),
+        terminate_anthropic_stream(alive).map(|r| r.map_err(std::io::Error::other)),
     ))
 }
 

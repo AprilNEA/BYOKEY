@@ -5,16 +5,19 @@
 //! - [`handler`]  — HTTP route handlers (Anthropic Messages API, management).
 //! - [`router`]   — Axum router construction and route registration.
 //! - [`error`]    — [`ApiError`], rendered in the Anthropic error envelope.
+//! - [`http`]     — The upstream HTTP client and its connection probing.
 //! - [`usage`]    — In-memory request/token usage tracking.
 
 pub mod error;
 pub mod handler;
+pub mod http;
 pub mod middleware;
 pub mod router;
 pub mod usage;
 pub(crate) mod util;
 
 pub use error::ApiError;
+pub use http::upstream_client;
 pub use router::make_router;
 pub use usage::{UsageRecorder, UsageStats};
 
@@ -44,16 +47,15 @@ pub struct AppState {
 impl AppState {
     /// Creates a new shared application state wrapped in an `Arc`.
     ///
-    /// If the config specifies a `proxy_url`, the HTTP client is built with that proxy.
-    /// An optional [`UsageStore`] enables persistent usage tracking.
+    /// `http` is the upstream client (see [`upstream_client`]). An optional
+    /// [`UsageStore`] enables persistent usage tracking.
     pub fn new(
         config: Arc<ArcSwap<byokey_config::Config>>,
         auth: Arc<AuthManager>,
+        http: reqwest::Client,
         usage_store: Option<Arc<dyn UsageStore>>,
         copilot_identity: CopilotIdentity,
     ) -> Arc<Self> {
-        let snapshot = config.load();
-        let http = build_http_client(snapshot.proxy_url.as_deref());
         Arc::new(Self {
             config,
             auth,
@@ -63,22 +65,4 @@ impl AppState {
             copilot_identity,
         })
     }
-}
-
-/// Build an HTTP client, optionally configured with a proxy URL.
-fn build_http_client(proxy_url: Option<&str>) -> reqwest::Client {
-    if let Some(url) = proxy_url {
-        match reqwest::Proxy::all(url) {
-            Ok(proxy) => {
-                return reqwest::Client::builder()
-                    .proxy(proxy)
-                    .build()
-                    .unwrap_or_else(|_| reqwest::Client::new());
-            }
-            Err(e) => {
-                tracing::warn!(url = url, error = %e, "invalid proxy_url, using direct connection");
-            }
-        }
-    }
-    reqwest::Client::new()
 }

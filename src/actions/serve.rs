@@ -106,7 +106,10 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
     let addr = format!("{effective_host}:{effective_port}");
 
     let store = Arc::new(crate::open_store(db).await?);
-    let auth = Arc::new(AuthManager::new(store.clone(), reqwest::Client::new()));
+    // One client for every upstream: token refreshes, catalog and version
+    // fetches, and the proxied requests themselves.
+    let http = byokey_proxy::upstream_client(snapshot.proxy_url.as_deref())?;
+    let auth = Arc::new(AuthManager::new(store.clone(), http.clone()));
 
     // Background token refresh: check every 60s, refresh tokens within 5 min of expiry.
     let _refresh_handle = auth.spawn_refresh_loop(
@@ -115,12 +118,13 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
     );
 
     // The Copilot client versions to present (compile-time defaults offline).
-    let copilot_identity = byokey_provider::CopilotIdentity::fetch(&reqwest::Client::new()).await;
+    let copilot_identity = byokey_provider::CopilotIdentity::fetch(&http).await;
 
     let usage_store: Arc<dyn byokey_types::UsageStore> = store;
     let state = AppState::new(
         Arc::clone(&config_arc),
         auth,
+        http,
         Some(usage_store.clone()),
         copilot_identity,
     );

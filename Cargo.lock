@@ -864,6 +864,7 @@ dependencies = [
  "serde_json",
  "time",
  "tokio",
+ "tokio-stream",
  "tower",
  "tower-http",
  "tracing",

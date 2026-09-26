@@ -18,16 +18,30 @@ use byokey_provider::cloak::{derive_cc_entrypoint, inject_billing_header};
 use byokey_provider::{Conversation, CopilotCredentials, CopilotIdentity, CopilotUpstream};
 use byokey_types::{ByokError, ProviderId, ThinkingCapability, traits::ByteStream};
 use bytes::Bytes;
-use futures_util::{StreamExt as _, TryStreamExt as _};
+use futures_util::{Future, StreamExt as _, TryStreamExt as _};
 use serde_json::Value;
 use std::fmt::Write as _;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::util::stream::{
-    AnthropicParser, response_to_stream, tap_usage_stream, terminate_anthropic_stream,
+    AnthropicParser, deferred_stream, keep_alive, response_to_stream, tap_usage_stream,
+    terminate_anthropic_stream,
 };
 use crate::util::{extract_usage, sse_response, strip_gateway_headers};
 use crate::{AppState, UsageRecorder, error::ApiError};
+
+/// How long a streaming request waits for the upstream's headers before the
+/// client gets a response of its own, with keepalives, so that Claude Code
+/// (which shows a retry banner after 20 s without a byte) keeps waiting.
+/// Errors the upstream returns within this window keep their HTTP status.
+const FIRST_BYTE_GRACE: Duration = Duration::from_secs(15);
+/// A keepalive comment is written after this much upstream silence.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+/// This much upstream silence in a row ends the stream with an error. A
+/// live upstream sends `ping` events every few seconds even while the model
+/// thinks, so a longer silence means the connection is gone.
+const SILENCE_LIMIT: Duration = Duration::from_secs(120);
 
 /// Default thinking budget (tokens) for `Auto` mode on legacy Claude models
 /// that require an explicit `budget_tokens` value with `thinking.type: "enabled"`.
@@ -413,22 +427,13 @@ async fn serve_messages(
         .unwrap_or("unknown")
         .to_string();
 
-    let resp = builder
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| ApiError::from(ByokError::from(e)))?;
-
-    forward_response(
-        resp,
-        stream,
-        &state.usage,
-        &model_name,
-        "claude",
-        &upstream.account_id,
-        is_oauth,
-    )
-    .await
+    let attribution = Attribution {
+        usage: state.usage.clone(),
+        model: model_name,
+        provider: "claude",
+        account_id: upstream.account_id,
+    };
+    forward(builder.json(&body).send(), stream, attribution, is_oauth).await
 }
 
 /// Default Anthropic API base URL.
@@ -752,7 +757,7 @@ async fn copilot_messages(
             "routing Anthropic messages through Copilot"
         );
 
-        let resp = copilot_request(
+        let pending = copilot_request(
             &state.http,
             "/v1/messages",
             &creds,
@@ -762,57 +767,47 @@ async fn copilot_messages(
             &body,
         )
         .header("accept", accept)
-        .send()
-        .await;
+        .send();
 
-        match resp {
-            Ok(r) if r.status().is_success() => {
-                // Copilot does its own account rotation inside CopilotUpstream;
-                // the specific account isn't easily exposed here yet, so we
-                // attribute to DEFAULT_ACCOUNT for now.
-                return forward_response(
-                    r,
-                    stream,
-                    &state.usage,
-                    &model_name,
-                    "copilot",
-                    byokey_types::DEFAULT_ACCOUNT,
-                    false,
-                )
-                .await;
+        // Copilot does its own account rotation inside CopilotUpstream; the
+        // specific account isn't exposed here, so usage goes to DEFAULT_ACCOUNT.
+        let attribution = Attribution {
+            usage: state.usage.clone(),
+            model: model_name.clone(),
+            provider: "copilot",
+            account_id: byokey_types::DEFAULT_ACCOUNT.to_owned(),
+        };
+        // Only the last attempt may hand the client a response before the
+        // upstream answered: an earlier one still needs the status to decide
+        // whether to try the next account.
+        let last_attempt = attempt + 1 >= max_attempts;
+        let outcome = if last_attempt {
+            forward(pending, stream, attribution, false).await
+        } else {
+            match pending.await {
+                Ok(resp) => forward_response(resp, stream, attribution, false).await,
+                Err(e) => Err(ApiError::from(ByokError::from(e))),
             }
-            Ok(r) => {
-                let err = ByokError::from_response(r).await;
-                // The cached token may have been revoked ahead of its expiry.
-                if matches!(err, ByokError::Upstream { status: 401, .. })
-                    && !token_refreshed
-                    && CopilotUpstream::forget_token(&creds)
-                {
-                    token_refreshed = true;
-                    tracing::warn!(attempt, "copilot rejected its token, exchanging a new one");
-                    continue;
-                }
-                if !err.is_retryable() || attempt + 1 >= max_attempts {
-                    return Err(ApiError::from(err));
-                }
-                tracing::warn!(
-                    attempt,
-                    error = %err,
-                    "copilot messages failed, trying next account"
-                );
-                CopilotUpstream::invalidate_current_account();
-                last_err = Some(ApiError::from(err));
-            }
-            Err(e) => {
-                let err = ByokError::from(e);
-                if !err.is_retryable() || attempt + 1 >= max_attempts {
-                    return Err(ApiError::from(err));
-                }
-                tracing::warn!(attempt, error = %err, "copilot messages transport error, trying next");
-                CopilotUpstream::invalidate_current_account();
-                last_err = Some(ApiError::from(err));
-            }
+        };
+        let err = match outcome {
+            Ok(response) => return Ok(response),
+            Err(err) => err,
+        };
+        // The cached token may have been revoked ahead of its expiry.
+        if matches!(err.error, ByokError::Upstream { status: 401, .. })
+            && !token_refreshed
+            && CopilotUpstream::forget_token(&creds)
+        {
+            token_refreshed = true;
+            tracing::warn!(attempt, "copilot rejected its token, exchanging a new one");
+            continue;
         }
+        if !err.error.is_retryable() || last_attempt {
+            return Err(err);
+        }
+        tracing::warn!(attempt, error = %err.error, "copilot messages failed, trying next account");
+        CopilotUpstream::invalidate_current_account();
+        last_err = Some(err);
         attempt += 1;
     }
 
@@ -827,24 +822,69 @@ async fn copilot_messages(
         .unwrap_or_else(|| ApiError::from(ByokError::Auth("no copilot accounts available".into()))))
 }
 
+/// Whom a request's token usage is recorded against.
+struct Attribution {
+    usage: Arc<UsageRecorder>,
+    model: String,
+    provider: &'static str,
+    account_id: String,
+}
+
+/// Forward the response to `pending` back to the client.
+///
+/// A streaming client is answered as soon as [`FIRST_BYTE_GRACE`] passes
+/// without upstream headers: it gets a `200` and keepalive comments until
+/// the upstream's body arrives, or its error as an in-stream `error` event.
+/// Upstream errors that arrive within the grace period, and every
+/// non-streaming response, keep their HTTP status.
+async fn forward(
+    pending: impl Future<Output = reqwest::Result<reqwest::Response>> + Send + 'static,
+    stream: bool,
+    attribution: Attribution,
+    reverse_remap_tools: bool,
+) -> Result<Response, ApiError> {
+    if !stream {
+        let resp = pending
+            .await
+            .map_err(|e| ApiError::from(ByokError::from(e)))?;
+        return forward_response(resp, false, attribution, reverse_remap_tools).await;
+    }
+    let mut pending = Box::pin(pending);
+    match tokio::time::timeout(FIRST_BYTE_GRACE, &mut pending).await {
+        Ok(Ok(resp)) => forward_response(resp, true, attribution, reverse_remap_tools).await,
+        Ok(Err(e)) => Err(ApiError::from(ByokError::from(e))),
+        Err(_elapsed) => {
+            tracing::info!(
+                grace_secs = FIRST_BYTE_GRACE.as_secs(),
+                "upstream headers are late; streaming keepalives to the client"
+            );
+            Ok(stream_response(
+                StatusCode::OK,
+                &HeaderMap::new(),
+                deferred_stream(pending),
+                attribution,
+                reverse_remap_tools,
+            ))
+        }
+    }
+}
+
 /// Forward an upstream response back to the client, recording token usage.
 async fn forward_response(
     resp: reqwest::Response,
     stream: bool,
-    usage: &Arc<UsageRecorder>,
-    model: &str,
-    provider: &str,
-    account_id: &str,
+    attribution: Attribution,
     reverse_remap_tools: bool,
 ) -> Result<Response, ApiError> {
     let status = resp.status();
     if !status.is_success() {
         let err = ByokError::from_response(resp).await;
-        tracing::error!(
-            status = status.as_u16(),
-            "anthropic upstream error (non-retryable)"
+        tracing::error!(status = status.as_u16(), "upstream error");
+        attribution.usage.record_failure_for(
+            &attribution.model,
+            attribution.provider,
+            &attribution.account_id,
         );
-        usage.record_failure_for(model, provider, account_id);
         return Err(ApiError::from(err));
     }
 
@@ -872,66 +912,90 @@ async fn forward_response(
     }
 
     if stream {
-        let raw = response_to_stream(resp);
-        let remapped: ByteStream = if reverse_remap_tools {
-            Box::pin(raw.map(move |chunk| {
-                let bytes = chunk?;
-                let text = String::from_utf8_lossy(&bytes);
-                let mut output = String::new();
-                for line in text.split_inclusive('\n') {
-                    if let Some(data) = line.trim().strip_prefix("data: ")
-                        && let Ok(mut ev) = serde_json::from_str::<Value>(data)
-                    {
-                        byokey_provider::cloak::reverse_remap_tool_name_sse(&mut ev);
-                        let _ = writeln!(output, "data: {ev}");
-                        continue;
-                    }
-                    output.push_str(line);
-                }
-                Ok(Bytes::from(output))
-            }))
-        } else {
-            raw
-        };
-        let tapped = tap_usage_stream(
-            remapped,
-            usage.clone(),
-            model.to_string(),
-            provider.to_string(),
-            account_id.to_string(),
-            AnthropicParser::new(),
-        );
-        let mapped =
-            terminate_anthropic_stream(tapped).map_err(|e| std::io::Error::other(e.to_string()));
-        let mut sse = sse_response(upstream_status, mapped);
-        // Merge upstream headers (gateway-stripped) into the SSE response.
-        // We do not overwrite the SSE-specific headers set by sse_response.
-        for (name, value) in &upstream_headers {
-            sse.headers_mut()
-                .entry(name)
-                .or_insert_with(|| value.clone());
-        }
-        Ok(sse)
-    } else {
-        let mut json: Value = resp
-            .json()
-            .await
-            .map_err(|e| ApiError::from(ByokError::from(e)))?;
-        if reverse_remap_tools {
-            byokey_provider::cloak::reverse_remap_tool_names_response(&mut json);
-        }
-        let (input, output) = extract_usage(&json, "/usage/input_tokens", "/usage/output_tokens");
-        usage.record_success_for(model, provider, account_id, input, output);
-        let mut response = (upstream_status, axum::Json(json)).into_response();
-        // Merge upstream headers (gateway-stripped) into the JSON response.
-        for (name, value) in &upstream_headers {
-            response
-                .headers_mut()
-                .entry(name)
-                .or_insert_with(|| value.clone());
-        }
-        Ok(response)
+        return Ok(stream_response(
+            upstream_status,
+            &upstream_headers,
+            response_to_stream(resp),
+            attribution,
+            reverse_remap_tools,
+        ));
     }
+    let mut json: Value = resp
+        .json()
+        .await
+        .map_err(|e| ApiError::from(ByokError::from(e)))?;
+    if reverse_remap_tools {
+        byokey_provider::cloak::reverse_remap_tool_names_response(&mut json);
+    }
+    let (input, output) = extract_usage(&json, "/usage/input_tokens", "/usage/output_tokens");
+    attribution.usage.record_success_for(
+        &attribution.model,
+        attribution.provider,
+        &attribution.account_id,
+        input,
+        output,
+    );
+    let mut response = (upstream_status, axum::Json(json)).into_response();
+    // Merge upstream headers (gateway-stripped) into the JSON response.
+    for (name, value) in &upstream_headers {
+        response
+            .headers_mut()
+            .entry(name)
+            .or_insert_with(|| value.clone());
+    }
+    Ok(response)
+}
+
+/// The SSE response for an upstream byte stream: tool names mapped back for
+/// OAuth, usage recorded, keepalives while the upstream is silent, and a
+/// guaranteed terminal event.
+fn stream_response(
+    status: StatusCode,
+    upstream_headers: &HeaderMap,
+    raw: ByteStream,
+    attribution: Attribution,
+    reverse_remap_tools: bool,
+) -> Response {
+    let remapped: ByteStream = if reverse_remap_tools {
+        Box::pin(raw.map(move |chunk| {
+            let bytes = chunk?;
+            let text = String::from_utf8_lossy(&bytes);
+            let mut output = String::new();
+            for line in text.split_inclusive('\n') {
+                if let Some(data) = line.trim().strip_prefix("data: ")
+                    && let Ok(mut ev) = serde_json::from_str::<Value>(data)
+                {
+                    byokey_provider::cloak::reverse_remap_tool_name_sse(&mut ev);
+                    let _ = writeln!(output, "data: {ev}");
+                    continue;
+                }
+                output.push_str(line);
+            }
+            Ok(Bytes::from(output))
+        }))
+    } else {
+        raw
+    };
+    let tapped = tap_usage_stream(
+        remapped,
+        attribution.usage,
+        attribution.model,
+        attribution.provider.to_owned(),
+        attribution.account_id,
+        AnthropicParser::new(),
+    );
+    let alive = keep_alive(tapped, KEEPALIVE_INTERVAL, SILENCE_LIMIT);
+    let mapped =
+        terminate_anthropic_stream(alive).map_err(|e| std::io::Error::other(e.to_string()));
+    let mut sse = sse_response(status, mapped);
+    // Merge upstream headers (gateway-stripped) into the SSE response,
+    // without overwriting the SSE-specific ones sse_response set.
+    for (name, value) in upstream_headers {
+        sse.headers_mut()
+            .entry(name)
+            .or_insert_with(|| value.clone());
+    }
+    sse
 }
 
 #[cfg(test)]
@@ -1298,10 +1362,13 @@ mod tests {
             .unwrap()
             .into();
 
-        let usage = Arc::new(UsageRecorder::new(None));
-        let Ok(response) =
-            forward_response(upstream, false, &usage, "m", "copilot", "a", false).await
-        else {
+        let attribution = Attribution {
+            usage: Arc::new(UsageRecorder::new(None)),
+            model: "m".into(),
+            provider: "copilot",
+            account_id: "a".into(),
+        };
+        let Ok(response) = forward_response(upstream, false, attribution, false).await else {
             panic!("a 200 upstream response must forward");
         };
 

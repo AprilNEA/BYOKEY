@@ -117,13 +117,15 @@ mod tests {
 
     fn make_state() -> Arc<AppState> {
         let store = Arc::new(InMemoryTokenStore::new());
-        let auth = Arc::new(AuthManager::new(store, reqwest::Client::new()));
+        let http = reqwest::Client::new();
+        let auth = Arc::new(AuthManager::new(store, http.clone()));
         let config = Arc::new(arc_swap::ArcSwap::from_pointee(
             byokey_config::Config::default(),
         ));
         AppState::new(
             config,
             auth,
+            http,
             None,
             byokey_provider::CopilotIdentity::default(),
         )
