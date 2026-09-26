@@ -12,7 +12,7 @@ impl TokenStore for SqliteTokenStore {
     // ── Active-account shortcuts ──────────────────────────────────────────
 
     /// Loads the token for the active account of the given provider from `SQLite`.
-    async fn load(&self, provider: &ProviderId) -> Result<Option<OAuthToken>> {
+    async fn load(&self, provider: ProviderId) -> Result<Option<OAuthToken>> {
         let key = provider.to_string();
 
         if let Some(token) = self.cache.lock().unwrap().get(&key).cloned() {
@@ -39,7 +39,7 @@ impl TokenStore for SqliteTokenStore {
     /// Saves (upserts) the token for the active account of the given provider.
     ///
     /// If no account exists yet, creates a `"default"` account and marks it active.
-    async fn save(&self, provider: &ProviderId, token: &OAuthToken) -> Result<()> {
+    async fn save(&self, provider: ProviderId, token: &OAuthToken) -> Result<()> {
         // Resolve the active account so refreshes overwrite the row that
         // `load()` reads. Falling back to literal `"default"` here would
         // strand the active account's expired token in place and write a
@@ -55,7 +55,7 @@ impl TokenStore for SqliteTokenStore {
     }
 
     /// Removes the active account's token for the given provider.
-    async fn remove(&self, provider: &ProviderId) -> Result<()> {
+    async fn remove(&self, provider: ProviderId) -> Result<()> {
         let key = provider.to_string();
         account::Entity::delete_many()
             .filter(account::Column::Provider.eq(&key))
@@ -70,7 +70,7 @@ impl TokenStore for SqliteTokenStore {
 
     async fn load_account(
         &self,
-        provider: &ProviderId,
+        provider: ProviderId,
         account_id: &str,
     ) -> Result<Option<OAuthToken>> {
         let key = provider.to_string();
@@ -90,7 +90,7 @@ impl TokenStore for SqliteTokenStore {
 
     async fn save_account(
         &self,
-        provider: &ProviderId,
+        provider: ProviderId,
         account_id: &str,
         label: Option<&str>,
         token: &OAuthToken,
@@ -161,7 +161,7 @@ impl TokenStore for SqliteTokenStore {
         Ok(())
     }
 
-    async fn remove_account(&self, provider: &ProviderId, account_id: &str) -> Result<()> {
+    async fn remove_account(&self, provider: ProviderId, account_id: &str) -> Result<()> {
         let key = provider.to_string();
         account::Entity::delete_by_id((key.clone(), account_id.to_string()))
             .exec(&self.db)
@@ -170,7 +170,7 @@ impl TokenStore for SqliteTokenStore {
         Ok(())
     }
 
-    async fn list_accounts(&self, provider: &ProviderId) -> Result<Vec<AccountInfo>> {
+    async fn list_accounts(&self, provider: ProviderId) -> Result<Vec<AccountInfo>> {
         let key = provider.to_string();
         let rows = account::Entity::find()
             .filter(account::Column::Provider.eq(&key))
@@ -189,7 +189,7 @@ impl TokenStore for SqliteTokenStore {
             .collect())
     }
 
-    async fn set_active(&self, provider: &ProviderId, account_id: &str) -> Result<()> {
+    async fn set_active(&self, provider: ProviderId, account_id: &str) -> Result<()> {
         tracing::debug!(%provider, %account_id, "setting active account");
         let key = provider.to_string();
 
@@ -230,7 +230,7 @@ impl TokenStore for SqliteTokenStore {
         Ok(())
     }
 
-    async fn load_all_tokens(&self, provider: &ProviderId) -> Result<Vec<(String, OAuthToken)>> {
+    async fn load_all_tokens(&self, provider: ProviderId) -> Result<Vec<(String, OAuthToken)>> {
         let key = provider.to_string();
         let rows = account::Entity::find()
             .filter(account::Column::Provider.eq(&key))
@@ -262,8 +262,8 @@ mod tests {
     async fn test_save_and_load() {
         let s = mem().await;
         let tok = OAuthToken::new("access").with_refresh("refresh");
-        s.save(&ProviderId::Claude, &tok).await.unwrap();
-        let loaded = s.load(&ProviderId::Claude).await.unwrap().unwrap();
+        s.save(ProviderId::Claude, &tok).await.unwrap();
+        let loaded = s.load(ProviderId::Claude).await.unwrap().unwrap();
         assert_eq!(loaded.access_token, "access");
         assert_eq!(loaded.refresh_token, Some("refresh".into()));
     }
@@ -271,30 +271,30 @@ mod tests {
     #[tokio::test]
     async fn test_load_missing() {
         let s = mem().await;
-        assert!(s.load(&ProviderId::Cursor).await.unwrap().is_none());
+        assert!(s.load(ProviderId::Cursor).await.unwrap().is_none());
     }
 
     #[tokio::test]
     async fn test_remove() {
         let s = mem().await;
-        s.save(&ProviderId::Copilot, &OAuthToken::new("tok"))
+        s.save(ProviderId::Copilot, &OAuthToken::new("tok"))
             .await
             .unwrap();
-        s.remove(&ProviderId::Copilot).await.unwrap();
-        assert!(s.load(&ProviderId::Copilot).await.unwrap().is_none());
+        s.remove(ProviderId::Copilot).await.unwrap();
+        assert!(s.load(ProviderId::Copilot).await.unwrap().is_none());
     }
 
     #[tokio::test]
     async fn test_upsert() {
         let s = mem().await;
-        s.save(&ProviderId::Claude, &OAuthToken::new("first"))
+        s.save(ProviderId::Claude, &OAuthToken::new("first"))
             .await
             .unwrap();
-        s.save(&ProviderId::Claude, &OAuthToken::new("second"))
+        s.save(ProviderId::Claude, &OAuthToken::new("second"))
             .await
             .unwrap();
         assert_eq!(
-            s.load(&ProviderId::Claude)
+            s.load(ProviderId::Claude)
                 .await
                 .unwrap()
                 .unwrap()
@@ -306,14 +306,14 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_providers() {
         let s = mem().await;
-        s.save(&ProviderId::Claude, &OAuthToken::new("c"))
+        s.save(ProviderId::Claude, &OAuthToken::new("c"))
             .await
             .unwrap();
-        s.save(&ProviderId::Cursor, &OAuthToken::new("g"))
+        s.save(ProviderId::Cursor, &OAuthToken::new("g"))
             .await
             .unwrap();
         assert_eq!(
-            s.load(&ProviderId::Claude)
+            s.load(ProviderId::Claude)
                 .await
                 .unwrap()
                 .unwrap()
@@ -321,7 +321,7 @@ mod tests {
             "c"
         );
         assert_eq!(
-            s.load(&ProviderId::Cursor)
+            s.load(ProviderId::Cursor)
                 .await
                 .unwrap()
                 .unwrap()
@@ -334,8 +334,8 @@ mod tests {
     async fn test_expiry_persists() {
         let s = mem().await;
         let tok = OAuthToken::new("tok").with_expiry(3600);
-        s.save(&ProviderId::Cursor, &tok).await.unwrap();
-        let loaded = s.load(&ProviderId::Cursor).await.unwrap().unwrap();
+        s.save(ProviderId::Cursor, &tok).await.unwrap();
+        let loaded = s.load(ProviderId::Cursor).await.unwrap().unwrap();
         assert!(loaded.expires_at.is_some());
     }
 
@@ -346,22 +346,22 @@ mod tests {
         // (e.g. "claude-code" from import-claude-code).
         let s = mem().await;
         s.save_account(
-            &ProviderId::Claude,
+            ProviderId::Claude,
             "claude-code",
             Some("Claude Code"),
             &OAuthToken::new("imported"),
         )
         .await
         .unwrap();
-        s.save(&ProviderId::Claude, &OAuthToken::new("refreshed"))
+        s.save(ProviderId::Claude, &OAuthToken::new("refreshed"))
             .await
             .unwrap();
-        let accounts = s.list_accounts(&ProviderId::Claude).await.unwrap();
+        let accounts = s.list_accounts(ProviderId::Claude).await.unwrap();
         assert_eq!(accounts.len(), 1, "save must not create a second account");
         assert_eq!(accounts[0].account_id, "claude-code");
         assert!(accounts[0].is_active);
         assert_eq!(
-            s.load(&ProviderId::Claude)
+            s.load(ProviderId::Claude)
                 .await
                 .unwrap()
                 .unwrap()
@@ -376,11 +376,11 @@ mod tests {
     async fn test_save_and_load_account() {
         let s = mem().await;
         let tok = OAuthToken::new("work-token");
-        s.save_account(&ProviderId::Claude, "work", Some("Work Account"), &tok)
+        s.save_account(ProviderId::Claude, "work", Some("Work Account"), &tok)
             .await
             .unwrap();
         let loaded = s
-            .load_account(&ProviderId::Claude, "work")
+            .load_account(ProviderId::Claude, "work")
             .await
             .unwrap()
             .unwrap();
@@ -390,49 +390,44 @@ mod tests {
     #[tokio::test]
     async fn test_first_account_becomes_active() {
         let s = mem().await;
-        s.save_account(&ProviderId::Claude, "first", None, &OAuthToken::new("tok1"))
+        s.save_account(ProviderId::Claude, "first", None, &OAuthToken::new("tok1"))
             .await
             .unwrap();
-        let loaded = s.load(&ProviderId::Claude).await.unwrap().unwrap();
+        let loaded = s.load(ProviderId::Claude).await.unwrap().unwrap();
         assert_eq!(loaded.access_token, "tok1");
     }
 
     #[tokio::test]
     async fn test_second_account_not_active() {
         let s = mem().await;
-        s.save_account(&ProviderId::Claude, "first", None, &OAuthToken::new("tok1"))
+        s.save_account(ProviderId::Claude, "first", None, &OAuthToken::new("tok1"))
             .await
             .unwrap();
-        s.save_account(
-            &ProviderId::Claude,
-            "second",
-            None,
-            &OAuthToken::new("tok2"),
-        )
-        .await
-        .unwrap();
-        let loaded = s.load(&ProviderId::Claude).await.unwrap().unwrap();
+        s.save_account(ProviderId::Claude, "second", None, &OAuthToken::new("tok2"))
+            .await
+            .unwrap();
+        let loaded = s.load(ProviderId::Claude).await.unwrap().unwrap();
         assert_eq!(loaded.access_token, "tok1");
     }
 
     #[tokio::test]
     async fn test_set_active() {
         let s = mem().await;
-        s.save_account(&ProviderId::Claude, "a", None, &OAuthToken::new("tok-a"))
+        s.save_account(ProviderId::Claude, "a", None, &OAuthToken::new("tok-a"))
             .await
             .unwrap();
-        s.save_account(&ProviderId::Claude, "b", None, &OAuthToken::new("tok-b"))
+        s.save_account(ProviderId::Claude, "b", None, &OAuthToken::new("tok-b"))
             .await
             .unwrap();
-        s.set_active(&ProviderId::Claude, "b").await.unwrap();
-        let loaded = s.load(&ProviderId::Claude).await.unwrap().unwrap();
+        s.set_active(ProviderId::Claude, "b").await.unwrap();
+        let loaded = s.load(ProviderId::Claude).await.unwrap().unwrap();
         assert_eq!(loaded.access_token, "tok-b");
     }
 
     #[tokio::test]
     async fn test_set_active_nonexistent() {
         let s = mem().await;
-        let err = s.set_active(&ProviderId::Claude, "nope").await.unwrap_err();
+        let err = s.set_active(ProviderId::Claude, "nope").await.unwrap_err();
         assert!(err.to_string().contains("not found"));
     }
 
@@ -440,7 +435,7 @@ mod tests {
     async fn test_list_accounts() {
         let s = mem().await;
         s.save_account(
-            &ProviderId::Claude,
+            ProviderId::Claude,
             "work",
             Some("Work"),
             &OAuthToken::new("w"),
@@ -448,7 +443,7 @@ mod tests {
         .await
         .unwrap();
         s.save_account(
-            &ProviderId::Claude,
+            ProviderId::Claude,
             "personal",
             Some("Personal"),
             &OAuthToken::new("p"),
@@ -456,7 +451,7 @@ mod tests {
         .await
         .unwrap();
 
-        let accounts = s.list_accounts(&ProviderId::Claude).await.unwrap();
+        let accounts = s.list_accounts(ProviderId::Claude).await.unwrap();
         assert_eq!(accounts.len(), 2);
         assert!(accounts[0].is_active);
         assert_eq!(accounts[0].account_id, "work");
@@ -466,14 +461,14 @@ mod tests {
     #[tokio::test]
     async fn test_load_all_tokens() {
         let s = mem().await;
-        s.save_account(&ProviderId::Claude, "a", None, &OAuthToken::new("tok-a"))
+        s.save_account(ProviderId::Claude, "a", None, &OAuthToken::new("tok-a"))
             .await
             .unwrap();
-        s.save_account(&ProviderId::Claude, "b", None, &OAuthToken::new("tok-b"))
+        s.save_account(ProviderId::Claude, "b", None, &OAuthToken::new("tok-b"))
             .await
             .unwrap();
 
-        let all = s.load_all_tokens(&ProviderId::Claude).await.unwrap();
+        let all = s.load_all_tokens(ProviderId::Claude).await.unwrap();
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].0, "a");
     }
@@ -481,12 +476,12 @@ mod tests {
     #[tokio::test]
     async fn test_remove_account() {
         let s = mem().await;
-        s.save_account(&ProviderId::Claude, "work", None, &OAuthToken::new("w"))
+        s.save_account(ProviderId::Claude, "work", None, &OAuthToken::new("w"))
             .await
             .unwrap();
-        s.remove_account(&ProviderId::Claude, "work").await.unwrap();
+        s.remove_account(ProviderId::Claude, "work").await.unwrap();
         assert!(
-            s.load_account(&ProviderId::Claude, "work")
+            s.load_account(ProviderId::Claude, "work")
                 .await
                 .unwrap()
                 .is_none()

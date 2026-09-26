@@ -380,7 +380,7 @@ impl CopilotUpstream {
         // Fetch the GitHub token for this account.
         let github_token = match self
             .auth
-            .get_token_for(&ProviderId::Copilot, account_id)
+            .get_token_for(ProviderId::Copilot, account_id)
             .await
         {
             Ok(t) => t,
@@ -504,14 +504,14 @@ impl CopilotUpstream {
             });
         }
 
-        let accounts = self.auth.list_accounts(&ProviderId::Copilot).await?;
+        let accounts = self.auth.list_accounts(ProviderId::Copilot).await?;
         let token = if accounts.len() > 1 {
             let account_id = self.select_account(&accounts).await?;
             self.auth
-                .get_token_for(&ProviderId::Copilot, &account_id)
+                .get_token_for(ProviderId::Copilot, &account_id)
                 .await?
         } else {
-            self.auth.get_token(&ProviderId::Copilot).await?
+            self.auth.get_token(ProviderId::Copilot).await?
         };
         self.credentials_for(&token).await
     }

@@ -30,14 +30,14 @@ pub struct LoginOptions<'a> {
 /// state mismatch, missing callback parameters, or token parse failure), or if
 /// `options.client` is not a client of `provider`.
 pub async fn login(
-    provider: &ProviderId,
+    provider: ProviderId,
     auth: &AuthManager,
     options: LoginOptions<'_>,
 ) -> Result<()> {
     let http = wreq::Client::new();
     let account = options.account;
     if let Some(client) = options.client
-        && *provider != ProviderId::Copilot
+        && provider != ProviderId::Copilot
     {
         return Err(ByokError::Auth(format!(
             "{provider} has a single login client; '{client}' is not selectable"
@@ -60,7 +60,7 @@ pub async fn login(
 /// Save a token for a provider, routing to the named account if specified.
 pub(crate) async fn save_login_token(
     auth: &AuthManager,
-    provider: &ProviderId,
+    provider: ProviderId,
     token: OAuthToken,
     account: Option<&str>,
 ) -> Result<()> {
@@ -94,7 +94,7 @@ mod tests {
             client: Some("vscode"),
             ..LoginOptions::default()
         };
-        assert!(login(&ProviderId::Claude, &auth(), options).await.is_err());
+        assert!(login(ProviderId::Claude, &auth(), options).await.is_err());
     }
 
     #[tokio::test]
@@ -103,6 +103,6 @@ mod tests {
             client: Some("jetbrains"),
             ..LoginOptions::default()
         };
-        assert!(login(&ProviderId::Copilot, &auth(), options).await.is_err());
+        assert!(login(ProviderId::Copilot, &auth(), options).await.is_err());
     }
 }

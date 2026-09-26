@@ -185,8 +185,8 @@ pub async fn list_models(State(state): State<Arc<AppState>>, headers: HeaderMap)
 }
 
 /// Whether `provider` may be listed: enabled, and signed in or keyed.
-async fn usable(state: &AppState, config: &Config, provider: &ProviderId) -> bool {
-    let pc = config.providers.get(provider);
+async fn usable(state: &AppState, config: &Config, provider: ProviderId) -> bool {
+    let pc = config.providers.get(&provider);
     if pc.is_some_and(|c| !c.enabled) {
         return false;
     }
@@ -235,7 +235,7 @@ impl Live {
         let mut usable = Vec::new();
         for provider in ProviderId::all() {
             if self::usable(state, config, provider).await {
-                usable.push(provider.clone());
+                usable.push(provider);
             }
         }
         let copilot = if usable.contains(&ProviderId::Copilot) {
@@ -279,8 +279,8 @@ impl Live {
         }
     }
 
-    fn has(&self, provider: &ProviderId) -> bool {
-        self.usable.contains(provider)
+    fn has(&self, provider: ProviderId) -> bool {
+        self.usable.contains(&provider)
     }
 }
 
@@ -291,12 +291,12 @@ fn messages_models(config: &Config, live: &Live) -> Vec<ModelEntry> {
     let backend = config
         .providers
         .get(&ProviderId::Claude)
-        .and_then(|c| c.backend.clone());
+        .and_then(|c| c.backend);
     let mut out = Vec::new();
     match backend {
-        Some(ProviderId::Copilot) => push_all(&mut out, &ProviderId::Copilot, &live.copilot, false),
-        Some(ProviderId::Cursor) => push_all(&mut out, &ProviderId::Cursor, &live.cursor, false),
-        _ if live.has(&ProviderId::Claude) => {
+        Some(ProviderId::Copilot) => push_all(&mut out, ProviderId::Copilot, &live.copilot, false),
+        Some(ProviderId::Cursor) => push_all(&mut out, ProviderId::Cursor, &live.cursor, false),
+        _ if live.has(ProviderId::Claude) => {
             out.extend(
                 all_models()
                     .iter()
@@ -308,10 +308,10 @@ fn messages_models(config: &Config, live: &Live) -> Vec<ModelEntry> {
     }
     // The backend's models are already listed unprefixed.
     if backend != Some(ProviderId::Copilot) {
-        push_all(&mut out, &ProviderId::Copilot, &live.copilot, true);
+        push_all(&mut out, ProviderId::Copilot, &live.copilot, true);
     }
     if backend != Some(ProviderId::Cursor) {
-        push_all(&mut out, &ProviderId::Cursor, &live.cursor, true);
+        push_all(&mut out, ProviderId::Cursor, &live.cursor, true);
     }
     out
 }
@@ -321,7 +321,7 @@ fn messages_models(config: &Config, live: &Live) -> Vec<ModelEntry> {
 /// their provider too, since several providers serve the same models.
 fn push_all(
     out: &mut Vec<ModelEntry>,
-    provider: &ProviderId,
+    provider: ProviderId,
     models: &[LiveModel],
     qualified: bool,
 ) {
@@ -339,7 +339,7 @@ fn push_all(
             out.push(ModelEntry {
                 display_name: Some(name),
                 supports_1m: m.supports_1m,
-                ..ModelEntry::new(id, provider.clone())
+                ..ModelEntry::new(id, provider)
             });
         }
     }

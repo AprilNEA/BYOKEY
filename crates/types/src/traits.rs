@@ -34,18 +34,18 @@ pub trait TokenStore: Send + Sync {
     // ── Active-account shortcuts (backward-compatible) ────────────────────
 
     /// Load the token for the active account of the given provider.
-    async fn load(&self, provider: &ProviderId) -> Result<Option<OAuthToken>>;
+    async fn load(&self, provider: ProviderId) -> Result<Option<OAuthToken>>;
     /// Persist a token for the active account of the given provider.
-    async fn save(&self, provider: &ProviderId, token: &OAuthToken) -> Result<()>;
+    async fn save(&self, provider: ProviderId, token: &OAuthToken) -> Result<()>;
     /// Remove the active account's token for the given provider.
-    async fn remove(&self, provider: &ProviderId) -> Result<()>;
+    async fn remove(&self, provider: ProviderId) -> Result<()>;
 
     // ── Multi-account operations ──────────────────────────────────────────
 
     /// Load a token for a specific account.
     async fn load_account(
         &self,
-        provider: &ProviderId,
+        provider: ProviderId,
         account_id: &str,
     ) -> Result<Option<OAuthToken>> {
         if account_id == DEFAULT_ACCOUNT {
@@ -59,7 +59,7 @@ pub trait TokenStore: Send + Sync {
     /// Persist a token for a specific account, optionally with a label.
     async fn save_account(
         &self,
-        provider: &ProviderId,
+        provider: ProviderId,
         account_id: &str,
         label: Option<&str>,
         token: &OAuthToken,
@@ -74,7 +74,7 @@ pub trait TokenStore: Send + Sync {
     }
 
     /// Remove a specific account's token.
-    async fn remove_account(&self, provider: &ProviderId, account_id: &str) -> Result<()> {
+    async fn remove_account(&self, provider: ProviderId, account_id: &str) -> Result<()> {
         if account_id == DEFAULT_ACCOUNT {
             return self.remove(provider).await;
         }
@@ -84,19 +84,19 @@ pub trait TokenStore: Send + Sync {
     }
 
     /// List all accounts for a provider.
-    async fn list_accounts(&self, _provider: &ProviderId) -> Result<Vec<AccountInfo>> {
+    async fn list_accounts(&self, _provider: ProviderId) -> Result<Vec<AccountInfo>> {
         Ok(Vec::new())
     }
 
     /// Set a specific account as the active one for a provider.
-    async fn set_active(&self, _provider: &ProviderId, _account_id: &str) -> Result<()> {
+    async fn set_active(&self, _provider: ProviderId, _account_id: &str) -> Result<()> {
         Err(ByokError::Storage(
             "multi-account not supported by this store".into(),
         ))
     }
 
     /// Load all valid tokens for a provider (for round-robin rotation).
-    async fn load_all_tokens(&self, _provider: &ProviderId) -> Result<Vec<(String, OAuthToken)>> {
+    async fn load_all_tokens(&self, _provider: ProviderId) -> Result<Vec<(String, OAuthToken)>> {
         Ok(Vec::new())
     }
 }

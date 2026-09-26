@@ -180,9 +180,9 @@ async fn count_tokens(http: &wreq::Client, url: &str) -> Outcome {
 async fn account(
     auth: &AuthManager,
     config: &byokey_config::Config,
-    provider: &ProviderId,
+    provider: ProviderId,
 ) -> Option<Outcome> {
-    let pc = config.providers.get(provider);
+    let pc = config.providers.get(&provider);
     if pc.is_some_and(|c| !c.enabled) {
         return None;
     }

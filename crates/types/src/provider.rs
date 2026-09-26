@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Identifies a supported upstream AI provider.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderId {
     Claude,
@@ -44,7 +44,7 @@ impl std::str::FromStr for ProviderId {
 impl ProviderId {
     /// Returns a human-readable display name for the provider.
     #[must_use]
-    pub fn display_name(&self) -> &'static str {
+    pub fn display_name(self) -> &'static str {
         match self {
             Self::Claude => "Claude (Anthropic)",
             Self::Copilot => "GitHub Copilot",
@@ -54,8 +54,8 @@ impl ProviderId {
 
     /// Returns all known provider variants.
     #[must_use]
-    pub fn all() -> &'static [Self] {
-        &[Self::Claude, Self::Copilot, Self::Cursor]
+    pub const fn all() -> [Self; 3] {
+        [Self::Claude, Self::Copilot, Self::Cursor]
     }
 }
 
@@ -111,9 +111,9 @@ mod tests {
     #[test]
     fn test_serde_roundtrip() {
         for p in ProviderId::all() {
-            let json = serde_json::to_string(p).unwrap();
+            let json = serde_json::to_string(&p).unwrap();
             let back: ProviderId = serde_json::from_str(&json).unwrap();
-            assert_eq!(&back, p);
+            assert_eq!(back, p);
         }
     }
 

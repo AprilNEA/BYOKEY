@@ -28,7 +28,7 @@ impl AuthCmd {
             account: account.as_deref(),
             client: client.as_deref(),
         };
-        byokey_auth::flow::login(&provider, &self.auth, options)
+        byokey_auth::flow::login(provider, &self.auth, options)
             .await
             .map_err(|e| anyhow::anyhow!("login failed: {e}"))?;
         Ok(())
@@ -63,7 +63,7 @@ impl AuthCmd {
             client: None,
         };
         self.auth
-            .save_token_for(&provider, &account_id, label.as_deref(), token)
+            .save_token_for(provider, &account_id, label.as_deref(), token)
             .await
             .map_err(|e| anyhow::anyhow!("add-api-key failed: {e}"))?;
         println!("{provider}: API key saved to account '{account_id}'");
@@ -93,7 +93,7 @@ impl AuthCmd {
             .to_string();
         let label = label.unwrap_or_else(|| "Claude Code".to_string());
         self.auth
-            .save_token_for(&provider, &account_id, Some(label.as_str()), token)
+            .save_token_for(provider, &account_id, Some(label.as_str()), token)
             .await
             .map_err(|e| anyhow::anyhow!("save Claude Code token: {e}"))?;
         println!("{provider}: imported Claude Code credentials to account '{account_id}'");
@@ -103,13 +103,13 @@ impl AuthCmd {
     pub async fn logout(&self, provider: ProviderId, account: Option<String>) -> Result<()> {
         if let Some(account_id) = &account {
             self.auth
-                .remove_token_for(&provider, account_id)
+                .remove_token_for(provider, account_id)
                 .await
                 .map_err(|e| anyhow::anyhow!("logout failed: {e}"))?;
             println!("{provider} account '{account_id}' logged out");
         } else {
             self.auth
-                .remove_token(&provider)
+                .remove_token(provider)
                 .await
                 .map_err(|e| anyhow::anyhow!("logout failed: {e}"))?;
             println!("{provider} logged out");
@@ -150,7 +150,7 @@ impl AuthCmd {
     pub async fn accounts(&self, provider: ProviderId) -> Result<()> {
         let accounts = self
             .auth
-            .list_accounts(&provider)
+            .list_accounts(provider)
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         if accounts.is_empty() {
@@ -170,7 +170,7 @@ impl AuthCmd {
 
     pub async fn switch(&self, provider: ProviderId, account: String) -> Result<()> {
         self.auth
-            .set_active_account(&provider, &account)
+            .set_active_account(provider, &account)
             .await
             .map_err(|e| anyhow::anyhow!("switch failed: {e}"))?;
         println!("{provider}: switched to account '{account}'");

@@ -57,7 +57,7 @@ impl stat::StatusService for StatusServiceImpl {
 
         let mut providers = Vec::new();
         for pid in byokey_types::ProviderId::all() {
-            let cfg = snapshot.providers.get(pid);
+            let cfg = snapshot.providers.get(&pid);
             let has_key = cfg.is_some_and(|c| c.api_key.is_some());
             let auth = if has_key || self.0.auth.is_authenticated(pid).await {
                 stat::AuthStatus::AUTH_STATUS_VALID

@@ -89,7 +89,7 @@ pub async fn run<P: AuthCodeFlow>(
         .exchange_code(http, &creds, code, &verifier, &state)
         .await?;
 
-    save_login_token(auth, &provider.provider_id(), tok, account).await?;
+    save_login_token(auth, provider.provider_id(), tok, account).await?;
     Ok(())
 }
 

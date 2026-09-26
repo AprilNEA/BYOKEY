@@ -469,7 +469,7 @@ impl AnthropicUpstream {
             } else {
                 let (account_id, token) = state
                     .auth
-                    .get_token_with_account(&ProviderId::Claude)
+                    .get_token_with_account(ProviderId::Claude)
                     .await?;
                 (Credential::OAuth(token.access_token), account_id)
             };
@@ -537,7 +537,7 @@ impl Backend {
             config
                 .providers
                 .get(&ProviderId::Claude)
-                .and_then(|c| c.backend.clone())
+                .and_then(|c| c.backend)
         });
         match backend {
             Some(ProviderId::Cursor) => Self::Cursor,
@@ -702,7 +702,7 @@ async fn copilot_messages(
 
     let accounts = state
         .auth
-        .list_accounts(&ProviderId::Copilot)
+        .list_accounts(ProviderId::Copilot)
         .await
         .unwrap_or_default();
     let max_attempts = if accounts.len() > 1 {

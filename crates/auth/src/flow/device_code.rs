@@ -93,7 +93,7 @@ pub async fn run<P: DeviceCodeFlow>(
 
         match provider.poll_token(http, &creds, &dc.device_code).await? {
             PollResult::Success(tok) => {
-                save_login_token(auth, &provider_id, tok, account).await?;
+                save_login_token(auth, provider_id, tok, account).await?;
                 println!("{provider_id} login successful");
                 tracing::info!(provider = %provider_id, "login successful");
                 return Ok(());

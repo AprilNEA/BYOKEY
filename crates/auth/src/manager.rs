@@ -42,10 +42,10 @@ impl AuthManager {
     }
 
     /// Return (or create) the per-provider async mutex used for refresh dedup.
-    fn get_refresh_lock(&self, provider: &ProviderId) -> Arc<TokioMutex<()>> {
+    fn get_refresh_lock(&self, provider: ProviderId) -> Arc<TokioMutex<()>> {
         let mut locks = self.refresh_locks.lock().unwrap();
         locks
-            .entry(provider.clone())
+            .entry(provider)
             .or_insert_with(|| Arc::new(TokioMutex::new(())))
             .clone()
     }
@@ -61,12 +61,12 @@ impl AuthManager {
     /// # Errors
     ///
     /// Returns an error if the token is not found, expired and cannot be refreshed, or invalid.
-    pub async fn get_token(self: &Arc<Self>, provider: &ProviderId) -> Result<OAuthToken> {
+    pub async fn get_token(self: &Arc<Self>, provider: ProviderId) -> Result<OAuthToken> {
         let token = self
             .store
             .load(provider)
             .await?
-            .ok_or_else(|| ByokError::TokenNotFound(provider.clone()))?;
+            .ok_or(ByokError::TokenNotFound(provider))?;
 
         match token.state() {
             TokenState::Valid => {
@@ -76,10 +76,9 @@ impl AuthManager {
                 if token.should_proactive_refresh() && self.should_spawn_proactive_refresh(provider)
                 {
                     let this = Arc::clone(self);
-                    let provider = provider.clone();
                     let token = token.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = this.refresh_token(&provider, &token).await {
+                        if let Err(e) = this.refresh_token(provider, &token).await {
                             tracing::debug!(%provider, %e, "proactive refresh failed (non-critical)");
                         }
                     });
@@ -87,12 +86,12 @@ impl AuthManager {
                 Ok(token)
             }
             TokenState::Expired => self.refresh_token(provider, &token).await,
-            TokenState::Invalid => Err(ByokError::TokenExpired(provider.clone())),
+            TokenState::Invalid => Err(ByokError::TokenExpired(provider)),
         }
     }
 
     /// Check whether the provider is authenticated (active account token exists and is not invalid).
-    pub async fn is_authenticated(&self, provider: &ProviderId) -> bool {
+    pub async fn is_authenticated(&self, provider: ProviderId) -> bool {
         match self.store.load(provider).await {
             Ok(Some(t)) => t.state() != TokenState::Invalid,
             _ => false,
@@ -102,7 +101,7 @@ impl AuthManager {
     /// Return the current [`TokenState`] for the active account.
     ///
     /// Returns [`TokenState::Invalid`] if the token is missing or the store fails.
-    pub async fn token_state(&self, provider: &ProviderId) -> TokenState {
+    pub async fn token_state(&self, provider: ProviderId) -> TokenState {
         match self.store.load(provider).await {
             Ok(Some(t)) => t.state(),
             _ => TokenState::Invalid,
@@ -114,7 +113,7 @@ impl AuthManager {
     /// # Errors
     ///
     /// Returns an error if the underlying store fails to persist the token.
-    pub async fn save_token(&self, provider: &ProviderId, token: OAuthToken) -> Result<()> {
+    pub async fn save_token(&self, provider: ProviderId, token: OAuthToken) -> Result<()> {
         self.store.save(provider, &token).await
     }
 
@@ -123,7 +122,7 @@ impl AuthManager {
     /// # Errors
     ///
     /// Returns an error if the underlying store fails to remove the token.
-    pub async fn remove_token(&self, provider: &ProviderId) -> Result<()> {
+    pub async fn remove_token(&self, provider: ProviderId) -> Result<()> {
         self.store.remove(provider).await
     }
 
@@ -136,7 +135,7 @@ impl AuthManager {
     /// Returns an error if the underlying store fails to persist the token.
     pub async fn save_token_for(
         &self,
-        provider: &ProviderId,
+        provider: ProviderId,
         account_id: &str,
         label: Option<&str>,
         token: OAuthToken,
@@ -153,24 +152,23 @@ impl AuthManager {
     /// Returns an error if the token is not found, expired, or invalid.
     pub async fn get_token_for(
         self: &Arc<Self>,
-        provider: &ProviderId,
+        provider: ProviderId,
         account_id: &str,
     ) -> Result<OAuthToken> {
         let token = self
             .store
             .load_account(provider, account_id)
             .await?
-            .ok_or_else(|| ByokError::TokenNotFound(provider.clone()))?;
+            .ok_or(ByokError::TokenNotFound(provider))?;
 
         match token.state() {
             TokenState::Valid => {
                 if token.should_proactive_refresh() && self.should_spawn_proactive_refresh(provider)
                 {
                     let this = Arc::clone(self);
-                    let provider = provider.clone();
                     let token = token.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = this.refresh_token(&provider, &token).await {
+                        if let Err(e) = this.refresh_token(provider, &token).await {
                             tracing::debug!(%provider, %e, "proactive refresh failed (non-critical)");
                         }
                     });
@@ -178,7 +176,7 @@ impl AuthManager {
                 Ok(token)
             }
             TokenState::Expired => self.refresh_token(provider, &token).await,
-            TokenState::Invalid => Err(ByokError::TokenExpired(provider.clone())),
+            TokenState::Invalid => Err(ByokError::TokenExpired(provider)),
         }
     }
 
@@ -187,7 +185,7 @@ impl AuthManager {
     /// # Errors
     ///
     /// Returns an error if the underlying store fails.
-    pub async fn remove_token_for(&self, provider: &ProviderId, account_id: &str) -> Result<()> {
+    pub async fn remove_token_for(&self, provider: ProviderId, account_id: &str) -> Result<()> {
         self.store.remove_account(provider, account_id).await
     }
 
@@ -196,7 +194,7 @@ impl AuthManager {
     /// # Errors
     ///
     /// Returns an error if the underlying store fails.
-    pub async fn list_accounts(&self, provider: &ProviderId) -> Result<Vec<AccountInfo>> {
+    pub async fn list_accounts(&self, provider: ProviderId) -> Result<Vec<AccountInfo>> {
         self.store.list_accounts(provider).await
     }
 
@@ -205,7 +203,7 @@ impl AuthManager {
     /// # Errors
     ///
     /// Returns an error if the account does not exist or the store fails.
-    pub async fn set_active_account(&self, provider: &ProviderId, account_id: &str) -> Result<()> {
+    pub async fn set_active_account(&self, provider: ProviderId, account_id: &str) -> Result<()> {
         self.store.set_active(provider, account_id).await
     }
 
@@ -221,7 +219,7 @@ impl AuthManager {
     /// falls back to the default-account path when no named accounts exist.
     pub async fn get_token_with_account(
         self: &Arc<Self>,
-        provider: &ProviderId,
+        provider: ProviderId,
     ) -> Result<(String, OAuthToken)> {
         // Single store call establishes the account snapshot. If any account
         // is marked active, use it. Otherwise, if accounts exist but none is
@@ -270,7 +268,7 @@ impl AuthManager {
     /// # Errors
     ///
     /// Returns an error if the store fails.
-    pub async fn get_all_tokens(&self, provider: &ProviderId) -> Result<Vec<(String, OAuthToken)>> {
+    pub async fn get_all_tokens(&self, provider: ProviderId) -> Result<Vec<(String, OAuthToken)>> {
         self.store.load_all_tokens(provider).await
     }
 
@@ -301,7 +299,7 @@ impl AuthManager {
     /// Scans all providers and refreshes tokens expiring within `lead_time`.
     async fn refresh_due_tokens(self: &Arc<Self>, lead_time: Duration) {
         for provider in ProviderId::all() {
-            if *provider == ProviderId::Copilot {
+            if provider == ProviderId::Copilot {
                 continue;
             }
 
@@ -341,15 +339,15 @@ impl AuthManager {
     /// Check whether a proactive (background) refresh should be spawned.
     /// Returns `false` if a refresh was attempted within the cooldown period,
     /// avoiding redundant background tasks.
-    fn should_spawn_proactive_refresh(&self, provider: &ProviderId) -> bool {
+    fn should_spawn_proactive_refresh(&self, provider: ProviderId) -> bool {
         let state = self.state.lock().unwrap();
-        state.get(provider).is_none_or(|ps| {
+        state.get(&provider).is_none_or(|ps| {
             ps.last_refresh_attempt
                 .is_none_or(|last| last.elapsed() >= REFRESH_COOLDOWN)
         })
     }
 
-    async fn refresh_token(&self, provider: &ProviderId, token: &OAuthToken) -> Result<OAuthToken> {
+    async fn refresh_token(&self, provider: ProviderId, token: &OAuthToken) -> Result<OAuthToken> {
         // Acquire the per-provider async lock so that concurrent callers
         // coalesce into a single refresh round-trip.
         let lock = self.get_refresh_lock(provider);
@@ -367,7 +365,7 @@ impl AuthManager {
         // Check cooldown period
         {
             let state = self.state.lock().unwrap();
-            if let Some(ps) = state.get(provider)
+            if let Some(ps) = state.get(&provider)
                 && let Some(last) = ps.last_refresh_attempt
                 && last.elapsed() < REFRESH_COOLDOWN
             {
@@ -380,7 +378,7 @@ impl AuthManager {
         {
             let mut state = self.state.lock().unwrap();
             state.insert(
-                provider.clone(),
+                provider,
                 ProviderState {
                     last_refresh_attempt: Some(Instant::now()),
                 },
@@ -410,7 +408,7 @@ impl AuthManager {
                 if let Err(e) = self.store.remove(provider).await {
                     tracing::warn!(%provider, error = %e, "failed to remove revoked token from store");
                 }
-                return Err(ByokError::TokenExpired(provider.clone()));
+                return Err(ByokError::TokenExpired(provider));
             }
             Err(e) => return Err(e),
         };
@@ -432,11 +430,7 @@ impl AuthManager {
 
     /// Refresh through the provider's `OAuth2` token endpoint (from the CDN
     /// credentials).
-    async fn refresh_oauth(
-        &self,
-        provider: &ProviderId,
-        refresh_token: &str,
-    ) -> Result<OAuthToken> {
+    async fn refresh_oauth(&self, provider: ProviderId, refresh_token: &str) -> Result<OAuthToken> {
         // Fetch credentials (client_id, client_secret, token_url) from CDN.
         let provider_name = provider.to_string();
         let creds = credentials::fetch(&provider_name, &self.http).await?;
@@ -512,7 +506,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_token_not_found() {
         let m = make_manager();
-        let err = m.get_token(&ProviderId::Claude).await.unwrap_err();
+        let err = m.get_token(ProviderId::Claude).await.unwrap_err();
         assert!(matches!(err, ByokError::TokenNotFound(_)));
     }
 
@@ -520,8 +514,8 @@ mod tests {
     async fn test_get_valid_token() {
         let m = make_manager();
         let tok = OAuthToken::new("valid").with_expiry(3600);
-        m.save_token(&ProviderId::Claude, tok).await.unwrap();
-        let got = m.get_token(&ProviderId::Claude).await.unwrap();
+        m.save_token(ProviderId::Claude, tok).await.unwrap();
+        let got = m.get_token(ProviderId::Claude).await.unwrap();
         assert_eq!(got.access_token, "valid");
     }
 
@@ -535,34 +529,34 @@ mod tests {
             token_type: None,
             client: None,
         };
-        m.save_token(&ProviderId::Cursor, tok).await.unwrap();
-        let err = m.get_token(&ProviderId::Cursor).await.unwrap_err();
+        m.save_token(ProviderId::Cursor, tok).await.unwrap();
+        let err = m.get_token(ProviderId::Cursor).await.unwrap_err();
         assert!(matches!(err, ByokError::TokenExpired(_)));
     }
 
     #[tokio::test]
     async fn test_is_authenticated_false_when_missing() {
         let m = make_manager();
-        assert!(!m.is_authenticated(&ProviderId::Cursor).await);
+        assert!(!m.is_authenticated(ProviderId::Cursor).await);
     }
 
     #[tokio::test]
     async fn test_is_authenticated_true_when_valid() {
         let m = make_manager();
-        m.save_token(&ProviderId::Cursor, OAuthToken::new("tok"))
+        m.save_token(ProviderId::Cursor, OAuthToken::new("tok"))
             .await
             .unwrap();
-        assert!(m.is_authenticated(&ProviderId::Cursor).await);
+        assert!(m.is_authenticated(ProviderId::Cursor).await);
     }
 
     #[tokio::test]
     async fn test_remove_token() {
         let m = make_manager();
-        m.save_token(&ProviderId::Copilot, OAuthToken::new("tok"))
+        m.save_token(ProviderId::Copilot, OAuthToken::new("tok"))
             .await
             .unwrap();
-        m.remove_token(&ProviderId::Copilot).await.unwrap();
-        assert!(!m.is_authenticated(&ProviderId::Copilot).await);
+        m.remove_token(ProviderId::Copilot).await.unwrap();
+        assert!(!m.is_authenticated(ProviderId::Copilot).await);
     }
 
     #[tokio::test]
@@ -576,14 +570,14 @@ mod tests {
             token_type: None,
             client: None,
         };
-        m.save_token(&ProviderId::Copilot, tok).await.unwrap();
+        m.save_token(ProviderId::Copilot, tok).await.unwrap();
 
         // First refresh attempt (expected to fail, but not due to cooldown)
-        let err1 = m.get_token(&ProviderId::Copilot).await.unwrap_err();
+        let err1 = m.get_token(ProviderId::Copilot).await.unwrap_err();
         assert!(matches!(err1, ByokError::Auth(_)));
 
         // Second attempt immediately (should hit cooldown)
-        let err2 = m.get_token(&ProviderId::Copilot).await.unwrap_err();
+        let err2 = m.get_token(ProviderId::Copilot).await.unwrap_err();
         let msg = err2.to_string();
         assert!(
             msg.contains("cooldown"),
@@ -597,14 +591,14 @@ mod tests {
     async fn test_save_and_get_token_for() {
         let m = make_manager();
         m.save_token_for(
-            &ProviderId::Claude,
+            ProviderId::Claude,
             "work",
             Some("Work Account"),
             OAuthToken::new("work-tok").with_expiry(3600),
         )
         .await
         .unwrap();
-        let tok = m.get_token_for(&ProviderId::Claude, "work").await.unwrap();
+        let tok = m.get_token_for(ProviderId::Claude, "work").await.unwrap();
         assert_eq!(tok.access_token, "work-tok");
     }
 
@@ -612,48 +606,46 @@ mod tests {
     async fn test_list_accounts() {
         let m = make_manager();
         m.save_token_for(
-            &ProviderId::Claude,
+            ProviderId::Claude,
             "a",
             Some("Account A"),
             OAuthToken::new("a"),
         )
         .await
         .unwrap();
-        m.save_token_for(&ProviderId::Claude, "b", None, OAuthToken::new("b"))
+        m.save_token_for(ProviderId::Claude, "b", None, OAuthToken::new("b"))
             .await
             .unwrap();
-        let accounts = m.list_accounts(&ProviderId::Claude).await.unwrap();
+        let accounts = m.list_accounts(ProviderId::Claude).await.unwrap();
         assert_eq!(accounts.len(), 2);
     }
 
     #[tokio::test]
     async fn test_set_active_account() {
         let m = make_manager();
-        m.save_token_for(&ProviderId::Claude, "a", None, OAuthToken::new("tok-a"))
+        m.save_token_for(ProviderId::Claude, "a", None, OAuthToken::new("tok-a"))
             .await
             .unwrap();
-        m.save_token_for(&ProviderId::Claude, "b", None, OAuthToken::new("tok-b"))
+        m.save_token_for(ProviderId::Claude, "b", None, OAuthToken::new("tok-b"))
             .await
             .unwrap();
-        m.set_active_account(&ProviderId::Claude, "b")
-            .await
-            .unwrap();
+        m.set_active_account(ProviderId::Claude, "b").await.unwrap();
         // Active-account shortcut now returns "b".
-        let tok = m.get_token(&ProviderId::Claude).await.unwrap();
+        let tok = m.get_token(ProviderId::Claude).await.unwrap();
         assert_eq!(tok.access_token, "tok-b");
     }
 
     #[tokio::test]
     async fn test_remove_token_for() {
         let m = make_manager();
-        m.save_token_for(&ProviderId::Claude, "work", None, OAuthToken::new("w"))
+        m.save_token_for(ProviderId::Claude, "work", None, OAuthToken::new("w"))
             .await
             .unwrap();
-        m.remove_token_for(&ProviderId::Claude, "work")
+        m.remove_token_for(ProviderId::Claude, "work")
             .await
             .unwrap();
         let err = m
-            .get_token_for(&ProviderId::Claude, "work")
+            .get_token_for(ProviderId::Claude, "work")
             .await
             .unwrap_err();
         assert!(matches!(err, ByokError::TokenNotFound(_)));
@@ -662,13 +654,13 @@ mod tests {
     #[tokio::test]
     async fn test_get_all_tokens() {
         let m = make_manager();
-        m.save_token_for(&ProviderId::Claude, "a", None, OAuthToken::new("tok-a"))
+        m.save_token_for(ProviderId::Claude, "a", None, OAuthToken::new("tok-a"))
             .await
             .unwrap();
-        m.save_token_for(&ProviderId::Claude, "b", None, OAuthToken::new("tok-b"))
+        m.save_token_for(ProviderId::Claude, "b", None, OAuthToken::new("tok-b"))
             .await
             .unwrap();
-        let all = m.get_all_tokens(&ProviderId::Claude).await.unwrap();
+        let all = m.get_all_tokens(ProviderId::Claude).await.unwrap();
         assert_eq!(all.len(), 2);
     }
 }

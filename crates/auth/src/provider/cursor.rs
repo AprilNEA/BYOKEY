@@ -136,7 +136,7 @@ pub async fn login(auth: &AuthManager, http: &wreq::Client, account: Option<&str
         }
     };
     let token = token_from(pair, None)?;
-    save_login_token(auth, &byokey_types::ProviderId::Cursor, token, account).await?;
+    save_login_token(auth, byokey_types::ProviderId::Cursor, token, account).await?;
     println!("cursor login successful");
     Ok(())
 }

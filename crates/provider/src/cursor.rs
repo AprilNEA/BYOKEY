@@ -78,7 +78,7 @@ impl CursorUpstream {
     async fn access_token(&self) -> Result<String> {
         let credential = match &self.api_key {
             Some(key) => key.clone(),
-            None => self.auth.get_token(&ProviderId::Cursor).await?.access_token,
+            None => self.auth.get_token(ProviderId::Cursor).await?.access_token,
         };
         if !credential.starts_with("crsr_") {
             return Ok(credential);
