@@ -47,7 +47,7 @@ pub fn desktop(args: DesktopArgs) -> Result<()> {
     if !Path::new(APP).exists() {
         bail!("Claude Desktop is not installed at {APP}");
     }
-    let (_, url) = args.target.resolve()?;
+    let url = args.target.resolve()?.url;
     ensure_reachable(&url)?;
     let profile = profile_dir()?;
     if third_party_running(&profile) {

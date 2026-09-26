@@ -74,11 +74,18 @@ pub fn cmd_claude(action: ClaudeAction) -> Result<()> {
     }
 }
 
+/// The BYOKEY a Claude client should talk to.
+pub(crate) struct Resolved {
+    pub(crate) config: Config,
+    /// BYOKEY's base URL, without `/v1`.
+    pub(crate) url: String,
+}
+
 impl Target {
     /// Load the BYOKEY config and resolve the URL Claude Code should use:
     /// `--url`, then `claude_code.settings.env.ANTHROPIC_BASE_URL`, then the
     /// configured listen address.
-    pub(crate) fn resolve(self) -> Result<(Config, String)> {
+    pub(crate) fn resolve(self) -> Result<Resolved> {
         let config = load_config(self.config)?;
         let url = match self.url {
             Some(url) => url,
@@ -88,12 +95,12 @@ impl Target {
             },
         };
         validate_url(&url)?;
-        Ok((config, url))
+        Ok(Resolved { config, url })
     }
 }
 
 fn start(args: StartArgs) -> Result<()> {
-    let (_, url) = args.target.resolve()?;
+    let Resolved { url, .. } = args.target.resolve()?;
     ensure_reachable(&url)?;
 
     let mut claude = Command::new("claude");
@@ -121,7 +128,7 @@ fn run(mut command: Command) -> Result<()> {
 }
 
 fn inject(args: InjectArgs) -> Result<()> {
-    let (config, url) = args.target.resolve()?;
+    let Resolved { config, url } = args.target.resolve()?;
     let path = match args.settings {
         Some(path) => path,
         None => default_settings_path().context("cannot locate the Claude Code settings")?,

@@ -28,6 +28,26 @@ impl Outcome {
     }
 }
 
+/// Prints each check as it completes and remembers whether any failed.
+#[derive(Default)]
+struct Report {
+    failed: bool,
+}
+
+impl Report {
+    fn check(&mut self, name: &str, outcome: Outcome) {
+        self.failed |= matches!(outcome, Outcome::Fail(_));
+        outcome.print(name);
+    }
+
+    /// Exit non-zero when any check failed.
+    fn finish(self) {
+        if self.failed {
+            std::process::exit(1);
+        }
+    }
+}
+
 /// Run every check and print one line per check. Exits non-zero when any
 /// check fails.
 pub async fn cmd_doctor(url: Option<String>, db: Option<PathBuf>) -> Result<()> {
@@ -36,37 +56,31 @@ pub async fn cmd_doctor(url: Option<String>, db: Option<PathBuf>) -> Result<()> 
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()?;
-    let mut failed = false;
-    let mut report = |name: &str, outcome: Outcome| {
-        failed |= matches!(outcome, Outcome::Fail(_));
-        outcome.print(name);
-    };
+    let mut report = Report::default();
 
-    report("server", server());
-    report("service", service());
+    report.check("server", server());
+    report.check("service", service());
     let reachable = reachable(&http, &url).await;
     let up = matches!(reachable, Outcome::Ok(_));
-    report("listener", reachable);
+    report.check("listener", reachable);
     if up {
-        report("models", models(&http, &url).await);
-        report("count_tokens", count_tokens(&http, &url).await);
+        report.check("models", models(&http, &url).await);
+        report.check("count_tokens", count_tokens(&http, &url).await);
     }
 
     let store = Arc::new(crate::open_store(db).await?);
     let auth = AuthManager::new(store, reqwest::Client::new());
     for provider in ProviderId::all() {
         if let Some(outcome) = account(&auth, &config, provider).await {
-            report(&provider.to_string(), outcome);
+            report.check(&provider.to_string(), outcome);
         }
     }
-    report("claude code", claude_code(&url));
+    report.check("claude code", claude_code(&url));
     if let Some(outcome) = claude_desktop(&url) {
-        report("claude desktop", outcome);
+        report.check("claude desktop", outcome);
     }
 
-    if failed {
-        std::process::exit(1);
-    }
+    report.finish();
     Ok(())
 }
 
