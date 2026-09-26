@@ -54,14 +54,14 @@ pub fn desktop(args: DesktopArgs) -> Result<()> {
         bail!("a BYOKEY Claude Desktop is already open; quit it to open one with new settings");
     }
     // Undo a `3p` the previous BYOKEY instance wrote back, whatever happens next.
-    set_mode(&profile, "1p")?;
+    set_mode(&profile, DeploymentMode::Official)?;
     let log = log_path()?;
     let offset = std::fs::metadata(&log).map_or(0, |m| m.len());
 
     write_profile(&profile, &url)?;
     let launched = launch(&log, offset);
     // Whatever happened, try to keep a normal launch official.
-    set_mode(&profile, "1p")?;
+    set_mode(&profile, DeploymentMode::Official)?;
     launched?;
     println!("Opened Claude Desktop against BYOKEY at {url}, alongside the official one");
     eprintln!(
@@ -158,15 +158,32 @@ fn write_profile(profile: &Path, url: &str) -> Result<()> {
         &gateway_config(url),
     )?;
     write_json(&meta_path, &Value::Object(meta))?;
-    set_mode(profile, "3p")
+    set_mode(profile, DeploymentMode::ThirdParty)
 }
 
-/// Persist the launch mode: `"3p"` applies the library entry, `"1p"` keeps
-/// the official sign-in.
-fn set_mode(profile: &Path, mode: &str) -> Result<()> {
+/// Which mode Claude Desktop starts in, its persisted `deploymentMode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeploymentMode {
+    /// `"1p"`: the official claude.ai sign-in.
+    Official,
+    /// `"3p"`: the inference provider the config library applies.
+    ThirdParty,
+}
+
+impl DeploymentMode {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Official => "1p",
+            Self::ThirdParty => "3p",
+        }
+    }
+}
+
+/// Persist the mode Desktop starts in.
+fn set_mode(profile: &Path, mode: DeploymentMode) -> Result<()> {
     let path = profile.join("claude_desktop_config.json");
     let mut desktop = read_object(&path)?;
-    desktop.insert("deploymentMode".into(), mode.into());
+    desktop.insert("deploymentMode".into(), mode.as_str().into());
     write_json(&path, &Value::Object(desktop))
 }
 
