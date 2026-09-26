@@ -17,34 +17,25 @@ byokey-types = { workspace = true, features = ["wreq"] }
 byokey-config.workspace = true
 byokey-auth.workspace = true
 byokey-provider.workspace = true
-byokey-store.workspace = true
 byokey-proto.workspace = true
 axum.workspace = true
-tower.workspace = true
 tower-http.workspace = true
 wreq.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-anyhow.workspace = true
-thiserror.workspace = true
 tokio.workspace = true
-async-trait.workspace = true
 futures-util.workspace = true
 bytes.workspace = true
 arc-swap.workspace = true
 tracing.workspace = true
 sentry.workspace = true
-utoipa.workspace = true
 aigw.workspace = true
-aigw-core.workspace = true
-reqwest.workspace = true
-secrecy.workspace = true
+http.workspace = true
 uuid.workspace = true
 connectrpc.workspace = true
-buffa.workspace = true
-tokio-stream.workspace = true
 
 [dev-dependencies]
+byokey-store.workspace = true
 tokio = { version = "1", features = ["full", "test-util"] }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"

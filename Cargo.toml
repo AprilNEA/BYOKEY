@@ -37,13 +37,8 @@ byokey-proto = { version = "2.1.0", path = "crates/proto" }
 byokey-proxy = { version = "2.1.0", path = "crates/proxy" }
 byokey-daemon = { version = "2.1.0", path = "crates/daemon" }
 byokey-tui = { version = "2.1.0", path = "crates/tui" }
-loadwise-core = "0.1.0"
-aigw = { version = "0.7.0", default-features = false, features = ["anthropic", "anthropic-claude-code", "openai", "openai-compat", "gemini"] }
+aigw = { version = "0.7.0", default-features = false, features = ["anthropic"] }
 aigw-core = "0.7.0"
-aigw-openai = "0.7.0"
-aigw-gemini = "0.7.0"
-reqwest = { version = "0.12", default-features = false }
-secrecy = "0.10"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -51,7 +46,6 @@ tokio = { version = "1", features = ["full"] }
 listenfd = "1"
 # HTTP
 axum = { version = "0.8", features = ["macros"] }
-tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "request-id"] }
 wreq = { version = "0.16", features = [
     "json",
@@ -66,7 +60,6 @@ wreq = { version = "0.16", features = [
     "socks",
     "system-proxy",
 ] }
-eventsource-stream = "0.2"
 # Serde
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -78,14 +71,12 @@ figment = { version = "0.10", features = ["yaml", "json", "env"] }
 notify = "7"
 arc-swap = "1"
 # Auth
-oauth2 = "5"
 rand = { version = "0.8", features = ["std"] }
 uuid = { version = "1", features = ["v4", "v5"] }
 sha2 = "0.10"
 base64 = "0.22"
 open = "5"
 # Storage
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 sea-orm = { version = "2.0.0-rc.38", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
 sea-orm-migration = { version = "2.0.0-rc.38", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
 # Async trait
@@ -101,12 +92,10 @@ clap_complete = "4"
 tarpc = { version = "0.37", features = ["tokio1", "serde-transport", "unix", "serde-transport-json"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 # Futures
-futures = "0.3"
 futures-core = "0.3"
 futures-util = "0.3"
 tokio-stream = "0.1"
 bytes = "1"
-tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 http = "1"
 # Observability
 tracing = "0.1"
@@ -124,8 +113,6 @@ sentry = { version = "0.47", default-features = false, features = [
     "tower",
     "tower-http",
 ] }
-# OpenAPI
-utoipa = "5"
 # ConnectRPC (Rust server, buffa-based protobuf)
 # `json` became a feature in connectrpc 0.9; it was unconditional in 0.3.
 connectrpc = { version = "0.9", default-features = false, features = ["axum", "gzip", "json"] }
@@ -174,6 +161,7 @@ byokey-store.workspace = true
 byokey-types.workspace = true
 byokey-daemon.workspace = true
 byokey-tui.workspace = true
+byokey-provider.workspace = true
 axum.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
@@ -191,4 +179,3 @@ tokio-util.workspace = true
 futures-util.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
 tempfile = "3"
-utoipa.workspace = true

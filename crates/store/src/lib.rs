@@ -1,6 +1,7 @@
-//! Token storage backends for persisting OAuth tokens.
+//! Token and usage storage.
 //!
-//! Provides an in-memory store for testing and a SQLite-backed store for production.
+//! Provides an in-memory token store for testing and a `SQLite`-backed
+//! token and usage store for production.
 
 pub mod entity;
 pub mod memory;

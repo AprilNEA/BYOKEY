@@ -9,8 +9,8 @@
 # BYOKEY
 
 **Bring Your Own Keys**<br>
-Turn AI subscriptions into standard API endpoints.<br>
-Expose any provider as OpenAI- or Anthropic-compatible API — locally or in the cloud.
+Run Claude Code and Claude Desktop on the subscription you already pay for.<br>
+A local Anthropic Messages API backed by GitHub Copilot, Cursor or your own Claude login.
 
 [![ci](https://img.shields.io/github/actions/workflow/status/AprilNEA/BYOKEY/ci.yml?style=flat-square&labelColor=000&color=444&label=ci)](https://github.com/AprilNEA/BYOKEY/actions/workflows/ci.yml)
 &nbsp;
@@ -23,42 +23,26 @@ Expose any provider as OpenAI- or Anthropic-compatible API — locally or in the
 </div>
 
 ```
-Subscriptions                                     Tools
+Subscriptions                                     Clients
 
-Claude Pro  ─┐                              ┌──  Claude Code
-OpenAI Plus ─┼──  byokey serve  ────────────┼──  Cursor · Windsurf
-Copilot     ─┘                              ├──  Factory CLI (Droid)
-                                            └──  any OpenAI / Anthropic client
+GitHub Copilot ─┐                            ┌──  Claude Code
+Cursor         ─┼──  byokey serve  ──────────┼──  Claude Desktop
+Claude Pro/Max ─┘                            └──  any Anthropic Messages client
 ```
 
 ## Features
 
-- **Multi-format API** — OpenAI and Anthropic compatible endpoints; just change the base URL
-- **OAuth login flows** — PKCE, device-code, and auth-code flows handled automatically
-- **Token persistence** — SQLite at `~/.byokey/tokens.db`; survives restarts
-- **API key passthrough** — Set raw keys in config to skip OAuth entirely
-- **Deploy anywhere** — Run locally as a CLI, or deploy as a shared AI gateway
-- **Hot-reload config** — YAML-based with sensible defaults
+- **Anthropic Messages API** — `/v1/messages`, `/v1/messages/count_tokens` and `/v1/models`, as Claude Code and Claude Desktop expect them; `[1m]` long-context ids included
+- **Copilot as a Claude backend** — Copilot's Anthropic-format endpoint, with quota-aware rotation across accounts, a cheaper model for Claude Code's incidental calls, and the request fields Copilot rejects stripped
+- **Cursor as a Claude backend** — every model on your Cursor plan, driven through Cursor's agent protocol
+- **Claude Code and Claude Desktop wiring** — `byokey claude start`, `byokey claude inject`, `byokey claude desktop`; `byokey doctor` checks it all
+- **OAuth login and token persistence** — device-code and PKCE flows; SQLite at `~/.byokey/tokens.db`, tokens refreshed in the background
+- **Runs as a service** — launchd / systemd / Windows SCM registration, hot-reloaded config
 
 ## Supported Providers
 
 <table>
   <tr>
-    <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/claude.svg" width="36" alt="Claude"><br>
-      <b>Claude</b><br>
-      <kbd>OAuth</kbd><br>
-      <sub>claude-fable-5-1<br>claude-opus-5-5<br>claude-sonnet-5<br>claude-haiku-4-5</sub>
-    </td>
-    <td align="center" width="200" valign="top">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="https://assets.byokey.io/icons/providers/codex-dark.svg">
-        <img src="https://assets.byokey.io/icons/providers/codex.svg" width="36" alt="Codex">
-      </picture><br>
-      <b>Codex</b><br>
-      <kbd>OAuth</kbd><br>
-      <sub>gpt-6-astra<br>gpt-6-sol<br>gpt-6-luna</sub>
-    </td>
     <td align="center" width="200" valign="top">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="https://assets.byokey.io/icons/providers/copilot-dark.svg">
@@ -66,52 +50,8 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       </picture><br>
       <b>Copilot</b><br>
       <kbd>Device code</kbd><br>
-      <sub>claude-opus-5.5<br>claude-sonnet-5<br>gpt-5.4<br>gemini-3.8-flash</sub>
+      <sub>claude-fable-5.1<br>claude-opus-5.5<br>claude-sonnet-5<br>…every Claude model on your plan</sub>
     </td>
-  </tr>
-  <tr>
-    <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/gemini.svg" width="36" alt="Gemini"><br>
-      <b>Gemini</b><br>
-      <kbd>OAuth</kbd><br>
-      <sub>gemini-3.1-pro-preview<br>gemini-3.8-flash<br>gemini-3.5-flash-lite</sub>
-    </td>
-    <td align="center" width="200" valign="top">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="https://assets.byokey.io/icons/providers/amazonwebservices-dark.svg">
-        <img src="https://assets.byokey.io/icons/providers/amazonwebservices.svg" width="36" alt="AWS">
-      </picture><br>
-      <b>Kiro</b><br>
-      <kbd>Device code</kbd><br>
-      <sub>kiro-default</sub>
-    </td>
-    <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/gemini.svg" width="36" alt="Antigravity"><br>
-      <b>Antigravity</b><br>
-      <kbd>OAuth</kbd><br>
-      <sub>ag-gemini-pro-agent<br>ag-gemini-3.8-flash-high<br>ag-claude-sonnet-4-6</sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/alibabacloud.svg" width="36" alt="Qwen"><br>
-      <b>Qwen</b><br>
-      <kbd>Device code</kbd><br>
-      <sub>coder-model</sub>
-    </td>
-    <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/kimi.svg" width="36" alt="Kimi"><br>
-      <b>Kimi</b><br>
-      <kbd>Device code</kbd><br>
-      <sub>kimi-for-coding<br>kimi-k3</sub>
-    </td>
-    <td align="center" width="200" valign="top">
-      <b>iFlow</b><br>
-      <kbd>OAuth</kbd><br>
-      <sub>glm-4.5<br>glm-z1-flash<br>kimi-k2</sub>
-    </td>
-  </tr>
-  <tr>
     <td align="center" width="200" valign="top">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="https://assets.byokey.io/icons/providers/cursor-dark.svg">
@@ -119,7 +59,13 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       </picture><br>
       <b>Cursor</b><br>
       <kbd>OAuth · API key</kbd><br>
-      <sub>claude-opus-5-5<br>gpt-5.6-sol<br>composer-2.5<br>…every model on your plan</sub>
+      <sub>claude-opus-5-5<br>claude-opus-5-5-low-fast<br>composer-2.5<br>…every model on your plan</sub>
+    </td>
+    <td align="center" width="200" valign="top">
+      <img src="https://assets.byokey.io/icons/providers/claude.svg" width="36" alt="Claude"><br>
+      <b>Claude</b><br>
+      <kbd>OAuth · API key</kbd><br>
+      <sub>claude-fable-5-1<br>claude-opus-5-5<br>claude-sonnet-5<br>claude-haiku-4-5</sub>
     </td>
   </tr>
 </table>
@@ -159,23 +105,22 @@ cargo install --path .
 ## Quick Start
 
 ```sh
-# 1. Authenticate (opens browser or shows a device code)
-byokey login claude
-byokey login codex
+# 1. Sign in (opens a browser or shows a device code)
 byokey login copilot           # as OpenCode; `--client vscode` to log in as VS Code
+byokey login cursor            # or `byokey add-api-key cursor crsr_…`
 
-# 2. Start the proxy
-byokey serve
+# 2. Start the proxy, and send Claude Code's traffic to Copilot
+byokey serve                   # with `providers.claude.backend: copilot` in the config
 
-# 3. Point your tool at it
-export OPENAI_BASE_URL=http://localhost:8018/v1
-export OPENAI_API_KEY=any          # byokey ignores the key value
+# 3. Run Claude Code on it
+byokey claude start
 ```
 
-**For Claude Code:** `byokey claude start [claude args…]` launches Claude Code
-against BYOKEY; plain `claude` keeps using your own login. To make BYOKEY the
-default instead, run `byokey claude inject`. `byokey claude desktop` does the
-same for Claude Desktop (macOS). `byokey doctor` checks the whole setup.
+`byokey claude start [claude args…]` launches Claude Code against BYOKEY;
+plain `claude` keeps using your own login. To make BYOKEY the default instead,
+run `byokey claude inject`. `byokey claude desktop` does the same for Claude
+Desktop (macOS). `byokey doctor` checks the whole setup. Any other Anthropic
+Messages client works with `ANTHROPIC_BASE_URL=http://127.0.0.1:8018`.
 
 ## CLI Reference
 
@@ -189,7 +134,10 @@ Commands:
   restart       Restart the background proxy server
   reload        Reload the running server's configuration without restarting
   service       Manage OS-level service registration (launchd / systemd / Windows SCM)
-  login         Authenticate with a provider
+  login         Authenticate with a provider (claude, copilot, cursor)
+  add-api-key   Store a static API key as a provider account
+  import-claude-code
+                Import the local Claude Code CLI's login as a Claude account
   logout        Remove stored credentials for a provider
   status        Show authentication status for all providers
   doctor        Check the server, provider logins, Claude Code and Claude Desktop wiring
@@ -197,7 +145,6 @@ Commands:
   accounts      List all accounts for a provider
   switch        Switch the active account for a provider
   claude        Run Claude Code or Claude Desktop against BYOKEY (alias: claude-code)
-  openapi       Export the OpenAPI specification as JSON
   completions   Generate shell completions
   help          Print help
 ```
@@ -229,9 +176,9 @@ the control socket. No process restart, no dropped connections.
 
 **`byokey login <PROVIDER>`**
 
-Runs the appropriate OAuth flow for the given provider.
-Supported names: `claude`, `codex`, `copilot`, `gemini`, `kiro`,
-`antigravity`, `qwen`, `kimi`, `iflow`, `cursor`.
+Runs the appropriate OAuth flow for the given provider: `claude` (PKCE in
+the browser), `copilot` (GitHub device code) or `cursor` (Cursor's browser
+login).
 
 ```
 Options:
@@ -293,17 +240,15 @@ port: 8018
 host: 127.0.0.1
 
 providers:
-  # Use a raw API key (takes precedence over OAuth)
+  # Send every Claude Code / Claude Desktop request to Copilot
+  # (or `cursor`). Without this, unprefixed models go to Anthropic.
   claude:
-    api_key: "sk-ant-..."
+    backend: copilot
+    # Or use Anthropic directly with a raw API key instead of a login
+    # api_key: "sk-ant-..."
 
-  # Disable a provider entirely
-  gemini:
-    enabled: false
-
-  # OAuth-only (no api_key) — use `byokey login codex` first
-  codex:
-    enabled: true
+  copilot:
+    small_model: gpt-5-mini
 
   # A `crsr_…` key from cursor.com/dashboard, or `byokey login cursor`
   cursor:
@@ -311,7 +256,8 @@ providers:
 ```
 
 All fields are optional; unspecified providers are enabled by default and use
-the OAuth token stored in the database.
+the login stored in the database. Providers other than `claude`, `copilot`
+and `cursor` are rejected.
 
 **Copilot** plans that meter premium requests charge one per call, and Claude
 Code makes several tool-less calls around each turn (titles, suggestions,
@@ -320,10 +266,9 @@ a cheaper model; compaction requests keep the model you chose.
 
 **Cursor** serves every model on your Cursor plan, including variants such as
 `claude-opus-5-5-high-fast` or `gpt-5.6-sol-low-fast`. Name them as
-`cursor/<model>`, on `/v1/chat/completions` and `/v1/messages` alike, so
-`byokey claude start --model cursor/claude-opus-5-5-low-fast` runs Claude Code
-on Cursor. Set `providers.claude.backend: cursor` to send all of Claude Code's
-traffic there.
+`cursor/<model>`, so `byokey claude start --model cursor/claude-opus-5-5-low-fast`
+runs Claude Code on Cursor; `copilot/<model>` does the same for Copilot. Set
+`providers.claude.backend: cursor` to send all of Claude Code's traffic there.
 
 ## Contributing
 

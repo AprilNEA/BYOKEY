@@ -174,38 +174,7 @@ pub(crate) fn response_to_stream(resp: wreq::Response) -> ByteStream {
     }))
 }
 
-// ── Parser implementations ──────────────────────────────────────────
-
-pub(crate) struct OpenAIParser {
-    input: u64,
-    output: u64,
-}
-
-impl OpenAIParser {
-    pub(crate) fn new() -> Self {
-        Self {
-            input: 0,
-            output: 0,
-        }
-    }
-}
-
-impl UsageParser for OpenAIParser {
-    fn parse_line(&mut self, ev: &Value) {
-        if let Some(usage) = ev.get("usage") {
-            if let Some(v) = usage.get("prompt_tokens").and_then(Value::as_u64) {
-                self.input = v;
-            }
-            if let Some(v) = usage.get("completion_tokens").and_then(Value::as_u64) {
-                self.output = v;
-            }
-        }
-    }
-    fn finish(self) -> (u64, u64) {
-        (self.input, self.output)
-    }
-}
-
+/// Reads `input_tokens` and `output_tokens` from an Anthropic Messages stream.
 pub(crate) struct AnthropicParser {
     input: u64,
     output: u64,
@@ -237,42 +206,6 @@ impl UsageParser for AnthropicParser {
                 }
             }
             _ => {}
-        }
-    }
-    fn finish(self) -> (u64, u64) {
-        (self.input, self.output)
-    }
-}
-
-pub(crate) struct CodexParser {
-    input: u64,
-    output: u64,
-}
-
-impl CodexParser {
-    pub(crate) fn new() -> Self {
-        Self {
-            input: 0,
-            output: 0,
-        }
-    }
-}
-
-impl UsageParser for CodexParser {
-    fn parse_line(&mut self, ev: &Value) {
-        if ev.get("type").and_then(Value::as_str) == Some("response.completed") {
-            if let Some(v) = ev
-                .pointer("/response/usage/input_tokens")
-                .and_then(Value::as_u64)
-            {
-                self.input = v;
-            }
-            if let Some(v) = ev
-                .pointer("/response/usage/output_tokens")
-                .and_then(Value::as_u64)
-            {
-                self.output = v;
-            }
         }
     }
     fn finish(self) -> (u64, u64) {
@@ -346,23 +279,28 @@ mod tests {
     #[tokio::test]
     async fn tap_usage_stream_parses_final_line_without_newline() {
         let usage = Arc::new(UsageRecorder::new(None));
-        let inner: ByteStream = Box::pin(stream::iter([Ok(Bytes::from_static(
-            br#"data: {"usage":{"prompt_tokens":12,"completion_tokens":7}}"#,
-        ))]));
+        let inner: ByteStream = Box::pin(stream::iter([
+            Ok(Bytes::from_static(
+                b"data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12}}}\n\n",
+            )),
+            Ok(Bytes::from_static(
+                br#"data: {"type":"message_delta","usage":{"output_tokens":7}}"#,
+            )),
+        ]));
 
         let chunks: Vec<_> = tap_usage_stream(
             inner,
             Arc::clone(&usage),
-            "gpt-test".to_owned(),
-            "openai".to_owned(),
+            "claude-test".to_owned(),
+            "claude".to_owned(),
             "default".to_owned(),
-            OpenAIParser::new(),
+            AnthropicParser::new(),
         )
         .collect()
         .await;
 
-        assert_eq!(chunks.len(), 1);
-        assert!(chunks[0].is_ok());
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks.iter().all(Result::is_ok));
         let snapshot = usage.snapshot();
         assert_eq!(snapshot.success_requests, 1);
         assert_eq!(snapshot.input_tokens, 12);

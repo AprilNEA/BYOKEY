@@ -11,10 +11,9 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use byokey_types::{ByokError, OAuthToken, Result};
 use serde::Deserialize;
 use std::time::Duration;
-use tokio::sync::mpsc;
 
 use crate::AuthManager;
-use crate::flow::{LoginProgress, emit, open_browser, save_login_token};
+use crate::flow::{open_browser, save_login_token};
 use crate::pkce;
 
 const WEBSITE: &str = "https://cursor.com";
@@ -106,28 +105,12 @@ pub async fn exchange(http: &wreq::Client, credential: &str) -> Result<OAuthToke
 ///
 /// Returns an error if the user rejects the login, it times out, or the
 /// token cannot be saved.
-pub async fn login(
-    auth: &AuthManager,
-    http: &wreq::Client,
-    account: Option<&str>,
-    events: Option<&mpsc::Sender<LoginProgress>>,
-) -> Result<()> {
-    emit(events, LoginProgress::Started).await;
+pub async fn login(auth: &AuthManager, http: &wreq::Client, account: Option<&str>) -> Result<()> {
     let (verifier, challenge) = pkce::generate_pkce();
     let uuid = uuid::Uuid::new_v4().to_string();
     let url = login_url(&challenge, &uuid);
-    if events.is_none() {
-        println!("Open this URL in your browser: {url}");
-    }
+    println!("Open this URL in your browser: {url}");
     open_browser(&url);
-    emit(
-        events,
-        LoginProgress::OpenedBrowser {
-            url,
-            user_code: None,
-        },
-    )
-    .await;
 
     let deadline = tokio::time::Instant::now() + LOGIN_TIMEOUT;
     let pair = loop {
@@ -152,12 +135,9 @@ pub async fn login(
             }
         }
     };
-    emit(events, LoginProgress::Exchanging).await;
     let token = token_from(pair, None)?;
     save_login_token(auth, &byokey_types::ProviderId::Cursor, token, account).await?;
-    if events.is_none() {
-        println!("cursor login successful");
-    }
+    println!("cursor login successful");
     Ok(())
 }
 

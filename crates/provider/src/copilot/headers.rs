@@ -15,13 +15,17 @@
 
 use super::CopilotCredentials;
 use super::device::{CopilotDevice, uuid_from};
-use crate::versions::ProviderVersions;
 use byokey_types::CopilotClient;
+use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-// Compile-time fallbacks for when `assets.byokey.io/versions/copilot.json`
-// is unreachable. Keep them in step with that file.
+/// Where the current client versions are published, so the identity can
+/// follow upstream releases without a BYOKEY release.
+const VERSIONS_URL: &str = "https://assets.byokey.io/versions/copilot.json";
+
+// Compile-time fallbacks for when `VERSIONS_URL` is unreachable. Keep them
+// in step with that file.
 const DEFAULT_OPENCODE_VERSION: &str = "1.18.32";
 const DEFAULT_OPENCODE_API_VERSION: &str = "2026-06-01";
 const DEFAULT_USER_AGENT: &str = "GitHubCopilotChat/0.67.0";
@@ -43,6 +47,24 @@ const LIBRARY_VERSION: &str = "electron-fetch";
 /// overrides.
 const VSCODE_INTENT: &str = "conversation-agent";
 
+/// The client versions published at `VERSIONS_URL`. Every field is
+/// optional; a missing one falls back to the compile-time default.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CopilotVersions {
+    /// VS Code: `user-agent`.
+    pub user_agent: Option<String>,
+    /// VS Code: `editor-version`.
+    pub editor_version: Option<String>,
+    /// VS Code: `editor-plugin-version`.
+    pub plugin_version: Option<String>,
+    /// VS Code: `x-github-api-version` on chat requests.
+    pub github_api_version: Option<String>,
+    /// `OpenCode`: the release the client claims to be.
+    pub opencode_version: Option<String>,
+    /// `OpenCode`: the API version it pins.
+    pub opencode_api_version: Option<String>,
+}
+
 /// The client versions a Copilot request claims to come from.
 #[derive(Clone, Debug)]
 pub struct CopilotIdentity {
@@ -56,18 +78,42 @@ pub struct CopilotIdentity {
 
 impl Default for CopilotIdentity {
     fn default() -> Self {
-        Self::from_versions(None)
+        Self::from_versions(&CopilotVersions::default())
     }
 }
 
 impl CopilotIdentity {
-    /// Builds the identity from runtime-fetched versions, falling back per
-    /// field to the compile-time defaults.
+    /// The identity for the versions published at `VERSIONS_URL`, or the
+    /// compile-time defaults when they cannot be fetched.
+    pub async fn fetch(http: &wreq::Client) -> Self {
+        let fetched: Result<CopilotVersions, String> = async {
+            let resp = http
+                .get(VERSIONS_URL)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            if !resp.status().is_success() {
+                return Err(format!("HTTP {}", resp.status()));
+            }
+            resp.json().await.map_err(|e| e.to_string())
+        }
+        .await;
+        match fetched {
+            Ok(versions) => Self::from_versions(&versions),
+            Err(e) => {
+                tracing::debug!(error = %e, "Copilot client versions unavailable, using defaults");
+                Self::default()
+            }
+        }
+    }
+
+    /// Builds the identity from published versions, falling back per field
+    /// to the compile-time defaults.
     #[must_use]
-    pub fn from_versions(versions: Option<&ProviderVersions>) -> Self {
-        let pick = |field: fn(&ProviderVersions) -> &Option<String>, default: &str| {
-            versions
-                .and_then(|v| field(v).clone())
+    pub fn from_versions(versions: &CopilotVersions) -> Self {
+        let pick = |field: fn(&CopilotVersions) -> &Option<String>, default: &str| {
+            field(versions)
+                .clone()
                 .unwrap_or_else(|| default.to_owned())
         };
         Self {
@@ -450,13 +496,13 @@ mod tests {
 
     #[test]
     fn runtime_versions_override_defaults_per_field() {
-        let versions: ProviderVersions = serde_json::from_value(json!({
+        let versions: CopilotVersions = serde_json::from_value(json!({
             "user_agent": "GitHubCopilotChat/9.9.9",
             "github_api_version": "2099-01-01",
             "opencode_version": "9.0.0"
         }))
         .unwrap();
-        let id = CopilotIdentity::from_versions(Some(&versions));
+        let id = CopilotIdentity::from_versions(&versions);
         let api = id.request_headers(
             &creds(CopilotClient::VsCode),
             &Conversation::from_messages(&[]),

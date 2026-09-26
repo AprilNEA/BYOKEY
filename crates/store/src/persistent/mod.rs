@@ -4,10 +4,9 @@
 //!
 //! ## Sub-modules
 //!
-//! - [`token`] — [`TokenStore`] implementation.
-//! - [`history`] — [`ChatHistoryStore`] implementation.
+//! - `token` — `TokenStore` implementation.
+//! - `usage` — `UsageStore` implementation.
 
-mod history;
 mod token;
 mod usage;
 

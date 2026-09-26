@@ -21,8 +21,8 @@ use tower_http::request_id::{
 use tower_http::trace::TraceLayer;
 use tracing::{Span, info_span};
 
-use crate::handler::{chat, count_tokens, management, messages, models, responses};
-use crate::{AppState, openapi};
+use crate::AppState;
+use crate::handler::{count_tokens, management, messages, models};
 
 fn common_layers(router: Router) -> Router {
     // Sentry layers are added as the outermost wrapping, so a hub is bound
@@ -81,24 +81,19 @@ fn common_layers(router: Router) -> Router {
 /// Build the unified byokey router.
 ///
 /// Routes served:
-/// - `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/v1/models`
-///   — `OpenAI` / Anthropic compatible REST AI.
-/// - `/openapi.json` — REST `OpenAPI` spec (AI endpoints only).
+/// - `/v1/messages`, `/v1/messages/count_tokens`, `/v1/models` — the
+///   Anthropic Messages API.
 /// - `/byokey.status.StatusService/{Method}`,
 ///   `/byokey.accounts.AccountsService/{Method}` — local byokey management
 ///   over `ConnectRPC` (fallback service).
 pub fn make_router(state: Arc<AppState>) -> Router {
-    // REST AI proxy routes.
     let rest_routes = Router::new()
-        .route("/v1/chat/completions", post(chat::chat_completions))
-        .route("/v1/responses", post(responses::codex_responses))
         .route("/v1/messages", post(messages::anthropic_messages))
         .route(
             "/v1/messages/count_tokens",
             post(count_tokens::count_tokens),
         )
-        .route("/v1/models", get(models::list_models))
-        .route("/openapi.json", get(openapi::openapi_json));
+        .route("/v1/models", get(models::list_models));
 
     // `ConnectRPC` management service (served as the fallback).
     let connect_service = management::build_router(state.clone()).into_axum_service();
@@ -126,7 +121,12 @@ mod tests {
         let config = Arc::new(arc_swap::ArcSwap::from_pointee(
             byokey_config::Config::default(),
         ));
-        AppState::new(config, auth, None, byokey_provider::VersionStore::empty())
+        AppState::new(
+            config,
+            auth,
+            None,
+            byokey_provider::CopilotIdentity::default(),
+        )
     }
 
     async fn body_json(resp: axum::response::Response) -> Value {
@@ -156,16 +156,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_chat_unknown_model_returns_400() {
+    async fn messages_without_a_login_fail_in_the_anthropic_envelope() {
         use serde_json::json;
 
         let app = make_router(make_state());
-        let body = json!({"model": "nonexistent-model-xyz", "messages": []});
+        let body = json!({"model": "claude-sonnet-5", "max_tokens": 1, "messages": []});
         let resp = app
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/v1/chat/completions")
+                    .uri("/v1/messages")
                     .header("content-type", "application/json")
                     .body(Body::from(serde_json::to_vec(&body).unwrap()))
                     .unwrap(),
@@ -173,36 +173,27 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
         let json = body_json(resp).await;
-        assert!(
-            json["error"]["message"]
-                .as_str()
-                .unwrap_or("")
-                .contains("nonexistent-model-xyz")
-        );
+        assert_eq!(json["type"], "error");
+        assert_eq!(json["error"]["type"], "authentication_error");
     }
 
     #[tokio::test]
-    async fn test_chat_missing_model_returns_422() {
-        use serde_json::json;
-
+    async fn chat_completions_is_gone() {
         let app = make_router(make_state());
-        let body = json!({"messages": [{"role": "user", "content": "hi"}]});
         let resp = app
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/v1/chat/completions")
                     .header("content-type", "application/json")
-                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .body(Body::from("{}"))
                     .unwrap(),
             )
             .await
             .unwrap();
-
-        // Missing required `model` field → axum JSON rejection → 422
-        assert_eq!(resp.status(), axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
     }
 
     /// Basic sanity check that the `ConnectRPC` management service is

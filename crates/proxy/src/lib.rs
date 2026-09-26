@@ -2,31 +2,26 @@
 //!
 //! ## Module layout
 //!
-//! - [`handler`]  — HTTP route handlers (API, management).
+//! - [`handler`]  — HTTP route handlers (Anthropic Messages API, management).
 //! - [`router`]   — Axum router construction and route registration.
-//! - [`error`]    — [`ApiError`], rendered in the failing route's error envelope.
-//! - [`openapi`]  — `OpenAPI` specification generation.
+//! - [`error`]    — [`ApiError`], rendered in the Anthropic error envelope.
 //! - [`usage`]    — In-memory request/token usage tracking.
 
 pub mod error;
 pub mod handler;
 pub mod middleware;
-#[allow(clippy::needless_for_each)]
-pub mod openapi;
 pub mod router;
 pub mod usage;
 pub(crate) mod util;
 
-pub use byokey_provider::VersionStore;
 pub use error::ApiError;
-pub use openapi::ApiDoc;
 pub use router::make_router;
 pub use usage::{UsageRecorder, UsageStats};
 
 use arc_swap::ArcSwap;
 use byokey_auth::AuthManager;
-use byokey_provider::DeviceProfileCache;
-use byokey_types::{RateLimitStore, UsageStore};
+use byokey_provider::{CopilotIdentity, DeviceProfileCache};
+use byokey_types::UsageStore;
 use std::sync::Arc;
 
 /// Shared application state passed to all route handlers.
@@ -40,12 +35,10 @@ pub struct AppState {
     pub http: wreq::Client,
     /// In-memory usage statistics with optional persistent backing.
     pub usage: Arc<UsageRecorder>,
-    /// Per-provider, per-account rate limit snapshots from upstream responses.
-    pub ratelimits: Arc<RateLimitStore>,
     /// Per-auth device fingerprint cache for Claude API headers.
     pub device_profiles: Arc<DeviceProfileCache>,
-    /// Remote version/fingerprint info fetched from assets.byokey.io at startup.
-    pub versions: VersionStore,
+    /// The client Copilot requests present themselves as.
+    pub copilot_identity: CopilotIdentity,
 }
 
 impl AppState {
@@ -57,7 +50,7 @@ impl AppState {
         config: Arc<ArcSwap<byokey_config::Config>>,
         auth: Arc<AuthManager>,
         usage_store: Option<Arc<dyn UsageStore>>,
-        versions: VersionStore,
+        copilot_identity: CopilotIdentity,
     ) -> Arc<Self> {
         let snapshot = config.load();
         let http = build_http_client(snapshot.proxy_url.as_deref());
@@ -66,9 +59,8 @@ impl AppState {
             auth,
             http,
             usage: Arc::new(UsageRecorder::new(usage_store)),
-            ratelimits: Arc::new(RateLimitStore::new()),
             device_profiles: Arc::new(DeviceProfileCache::new()),
-            versions,
+            copilot_identity,
         })
     }
 }

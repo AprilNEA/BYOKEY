@@ -1,34 +1,22 @@
-//! GitHub Copilot executor — OpenAI-compatible API.
+//! GitHub Copilot accounts: credentials, quota-aware account selection and
+//! the model catalog.
 //!
 //! Auth: device code flow → GitHub token. `OpenCode` tokens authenticate API
 //! requests directly; VS Code tokens are first exchanged for a short-lived
-//! Copilot API token.
-//! Format: `OpenAI` passthrough via `aigw::openai_compat` for URL/header/request building.
-//!         Streaming: raw byte passthrough (Option P). Non-streaming: aigw response translator.
+//! Copilot API token. The proxy sends the Anthropic Messages requests
+//! themselves, with the headers [`CopilotIdentity`] provides.
 mod device;
 mod headers;
 
 pub use device::CopilotDevice;
-pub use headers::{Conversation, CopilotIdentity};
+pub use headers::{Conversation, CopilotIdentity, CopilotVersions};
 
-use crate::http_util::ProviderHttp;
-use crate::registry;
-use aigw::openai::translate::OpenAIResponseTranslator;
-use aigw::openai::{HttpTransportConfig, OpenAIAuthConfig};
-use aigw::openai_compat::translate::OpenAICompatRequestTranslator;
-use aigw::openai_compat::{OpenAICompatConfig, OpenAICompatProvider, Quirks};
-use aigw_core::translate::{RequestTranslator as _, ResponseTranslator as _};
-use async_trait::async_trait;
 use byokey_auth::AuthManager;
-use byokey_types::{
-    AccountInfo, ByokError, ChatRequest, CopilotClient, OAuthToken, ProviderId, RateLimitStore,
-    traits::{ProviderExecutor, ProviderResponse, Result},
-};
-use secrecy::SecretString;
+use byokey_types::{AccountInfo, ByokError, CopilotClient, OAuthToken, ProviderId, Result};
 use serde_json::Value;
 use std::{
     cmp::Ordering as CmpOrdering,
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
 };
@@ -68,7 +56,7 @@ const REBALANCE_INTERVAL: Duration = Duration::from_secs(5 * 60);
 #[allow(clippy::duration_suboptimal_units)]
 const QUOTA_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 
-/// Default GitHub Copilot Chat Completions API base URL.
+/// Default GitHub Copilot API base URL.
 const DEFAULT_BASE_URL: &str = "https://api.githubcopilot.com";
 
 /// Endpoint to exchange a VS Code GitHub token for a short-lived Copilot API token.
@@ -99,7 +87,7 @@ pub struct CopilotCredentials {
 
 /// VS Code GitHub token → short-lived Copilot API token.
 ///
-/// Process-wide because executors are built per request; an instance-owned
+/// Process-wide because upstreams are built per request; an instance-owned
 /// cache would never be hit and every request would re-run the exchange.
 static TOKEN_CACHE: LazyLock<Mutex<HashMap<String, CachedToken>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -112,7 +100,7 @@ pub struct CopilotModel {
     pub name: String,
     /// Served on Copilot's Anthropic-format `/v1/messages`.
     pub messages: bool,
-    /// Served on `/chat/completions`, which BYOKEY's chat path uses.
+    /// Served on `/chat/completions`.
     pub chat: bool,
     /// Context window in tokens, when the catalog states it.
     pub context_window: Option<u64>,
@@ -126,7 +114,7 @@ pub struct CopilotModel {
 const MODELS_TTL: Duration = Duration::from_secs(5 * 60);
 
 /// Credential → its catalog and when it was fetched. Process-wide because
-/// executors are built per request.
+/// upstreams are built per request.
 type ModelsCache = HashMap<String, (Instant, Vec<CopilotModel>)>;
 
 static MODELS_CACHE: LazyLock<Mutex<ModelsCache>> = LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -142,9 +130,19 @@ fn quota_score(q: Option<&CachedQuota>) -> f64 {
     }
 }
 
-/// Executor for the GitHub Copilot API.
-pub struct CopilotExecutor {
-    ph: ProviderHttp,
+/// Send `builder`, turning a non-success status into [`ByokError::Upstream`].
+async fn send(builder: wreq::RequestBuilder) -> Result<wreq::Response> {
+    let resp = builder.send().await?;
+    if resp.status().is_success() {
+        Ok(resp)
+    } else {
+        Err(ByokError::from_response(resp).await)
+    }
+}
+
+/// The GitHub Copilot accounts BYOKEY can send requests as.
+pub struct CopilotUpstream {
+    http: wreq::Client,
     api_key: Option<String>,
     base_url: Option<String>,
     auth: Arc<AuthManager>,
@@ -152,28 +150,30 @@ pub struct CopilotExecutor {
 }
 
 #[bon::bon]
-impl CopilotExecutor {
-    /// Creates a new Copilot executor.
+impl CopilotUpstream {
+    /// An `api_key` is used as a Copilot API bearer token as is; otherwise
+    /// the stored GitHub logins are used.
     #[builder]
     pub fn new(
         http: wreq::Client,
         auth: Arc<AuthManager>,
         api_key: Option<String>,
         base_url: Option<String>,
-        ratelimit: Option<Arc<RateLimitStore>>,
         identity: Option<CopilotIdentity>,
     ) -> Self {
-        let mut ph = ProviderHttp::new(http);
-        if let Some(store) = ratelimit {
-            ph = ph.with_ratelimit(store, ProviderId::Copilot);
-        }
         Self {
-            ph,
+            http,
             api_key,
             base_url,
             auth,
             identity: identity.unwrap_or_default(),
         }
+    }
+
+    /// The client identity requests present.
+    #[must_use]
+    pub fn identity(&self) -> &CopilotIdentity {
+        &self.identity
     }
 
     /// A GET against `api.github.com` authenticated with `client`'s GitHub token.
@@ -184,8 +184,7 @@ impl CopilotExecutor {
         github_token: &str,
     ) -> wreq::RequestBuilder {
         let mut builder = self
-            .ph
-            .client()
+            .http
             .get(url)
             .header("authorization", format!("token {github_token}"));
         for (name, value) in self.identity.github_headers(client) {
@@ -480,7 +479,7 @@ impl CopilotExecutor {
     }
 
     /// The account's live model catalog (`/models`), cached for
-    /// [`MODELS_TTL`] per credential.
+    /// `MODELS_TTL` per credential.
     ///
     /// # Errors
     ///
@@ -520,8 +519,7 @@ impl CopilotExecutor {
             return Ok(models.clone());
         }
         let mut builder = self
-            .ph
-            .client()
+            .http
             .get(format!("{}/models", creds.endpoint))
             .header("authorization", format!("Bearer {}", creds.token));
         for (name, value) in self
@@ -530,7 +528,7 @@ impl CopilotExecutor {
         {
             builder = builder.header(name, value);
         }
-        let listing: Listing = self.ph.send(builder).await?.json().await?;
+        let listing: Listing = send(builder).await?.json().await?;
         let models: Vec<CopilotModel> = listing
             .data
             .into_iter()
@@ -556,164 +554,21 @@ impl CopilotExecutor {
             .insert(creds.token, (Instant::now(), models.clone()));
         Ok(models)
     }
-
-    /// Builds an [`OpenAICompatProvider`] for a single request as `creds`' account.
-    ///
-    /// Client headers depend on the request, so they are appended after
-    /// translation rather than set as `default_headers`.
-    fn build_provider(creds: &CopilotCredentials) -> Result<OpenAICompatProvider> {
-        let default_headers =
-            BTreeMap::from([("content-type".to_owned(), "application/json".to_owned())]);
-
-        OpenAICompatProvider::new(OpenAICompatConfig {
-            name: "copilot".to_owned(),
-            http: HttpTransportConfig {
-                base_url: creds.endpoint.clone(),
-                timeout_seconds: 600,
-                default_headers,
-            },
-            auth: OpenAIAuthConfig {
-                api_key: SecretString::from(creds.token.clone()),
-                organization: None,
-                project: None,
-            },
-            quirks: Quirks::default(),
-        })
-        .map_err(|e| ByokError::Config(e.to_string()))
-    }
-}
-
-#[async_trait]
-impl ProviderExecutor for CopilotExecutor {
-    async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
-        let stream = request.stream;
-        // Derived from the messages before the request is consumed.
-        let conversation = Conversation::from_messages(&request.messages);
-
-        // Translate: BYOKEY ChatRequest → aigw ChatRequest.
-        let aigw_request: aigw_core::model::ChatRequest =
-            serde_json::from_value(request.into_body())
-                .map_err(|e| ByokError::Translation(e.to_string()))?;
-
-        let accounts = self
-            .auth
-            .list_accounts(&ProviderId::Copilot)
-            .await
-            .unwrap_or_default();
-        let max_attempts = if accounts.len() > 1 {
-            accounts.len().min(3)
-        } else {
-            1
-        };
-
-        let mut last_err = None;
-        for attempt in 0..max_attempts {
-            let creds = match self.credentials().await {
-                Ok(c) => c,
-                Err(e) => {
-                    if max_attempts > 1 {
-                        tracing::warn!(attempt, error = %e, "copilot creds failed, trying next account");
-                        Self::invalidate_current_account();
-                        last_err = Some(e);
-                        continue;
-                    }
-                    return Err(e);
-                }
-            };
-
-            // Build aigw provider + translator for this account.
-            let provider = Self::build_provider(&creds)?;
-            let translator = OpenAICompatRequestTranslator::new(&provider)
-                .map_err(|e| ByokError::Config(e.to_string()))?;
-
-            // Translate the canonical request to a Copilot HTTP request.
-            // aigw handles: URL (`{endpoint}/chat/completions`), static headers,
-            // `Authorization: Bearer <token>`, content-type, and body serialization.
-            let translated = if stream {
-                translator.translate_stream_request(&aigw_request)
-            } else {
-                translator.translate_request(&aigw_request)
-            }
-            .map_err(|e| ByokError::Translation(e.to_string()))?;
-
-            // Build the wreq request from aigw's translated URL and headers.
-            let mut builder = self.ph.client().post(&translated.url);
-            for (name, value) in &translated.headers {
-                if let Ok(v) = value.to_str() {
-                    builder = builder.header(name.as_str(), v);
-                }
-            }
-            for (name, value) in self.identity.request_headers(&creds, &conversation) {
-                builder = builder.header(name, value);
-            }
-            // Attach the translated body (already serialized JSON bytes by aigw).
-            let builder = builder.body(translated.body.to_vec());
-
-            if stream {
-                // Option P: raw byte passthrough — stream Copilot SSE bytes to caller
-                // unchanged. aigw is used only for URL/header/body building.
-                match self.ph.send_passthrough(builder, true).await {
-                    Ok(resp) => return Ok(resp),
-                    Err(e) => {
-                        if !e.is_retryable() || attempt + 1 >= max_attempts {
-                            return Err(e);
-                        }
-                        tracing::warn!(attempt, error = %e, "copilot stream request failed, trying next account");
-                        Self::invalidate_current_account();
-                        last_err = Some(e);
-                    }
-                }
-            } else {
-                // Non-streaming: use aigw's OpenAICompatResponseTranslator.
-                let resp = match self.ph.send(builder).await {
-                    Ok(r) => r,
-                    Err(e) => {
-                        if !e.is_retryable() || attempt + 1 >= max_attempts {
-                            return Err(e);
-                        }
-                        tracing::warn!(attempt, error = %e, "copilot request failed, trying next account");
-                        Self::invalidate_current_account();
-                        last_err = Some(e);
-                        continue;
-                    }
-                };
-                let resp_bytes = resp.bytes().await.map_err(ByokError::from)?;
-                let aigw_response = OpenAIResponseTranslator
-                    .translate_response(http::StatusCode::OK, &resp_bytes)
-                    .map_err(|e: aigw_core::error::TranslateError| {
-                        ByokError::Translation(e.to_string())
-                    })?;
-                let value = serde_json::to_value(aigw_response)
-                    .map_err(|e| ByokError::Translation(e.to_string()))?;
-                return Ok(ProviderResponse::Complete(value));
-            }
-        }
-
-        tracing::error!(
-            attempts = max_attempts,
-            "all copilot accounts exhausted for chat request"
-        );
-        Err(last_err.unwrap_or_else(|| ByokError::Auth("no copilot accounts available".into())))
-    }
-
-    fn supported_models(&self) -> Vec<String> {
-        registry::models_for_provider(&ProviderId::Copilot)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn make_executor() -> CopilotExecutor {
-        let (client, auth) = crate::http_util::test_auth();
-        CopilotExecutor::builder().http(client).auth(auth).build()
-    }
-
-    #[test]
-    fn test_supported_models_non_empty() {
-        let ex = make_executor();
-        assert!(!ex.supported_models().is_empty());
+    fn make_upstream() -> CopilotUpstream {
+        let auth = Arc::new(AuthManager::new(
+            Arc::new(byokey_store::InMemoryTokenStore::new()),
+            wreq::Client::new(),
+        ));
+        CopilotUpstream::builder()
+            .http(wreq::Client::new())
+            .auth(auth)
+            .build()
     }
 
     #[test]
@@ -733,17 +588,17 @@ mod tests {
             client: CopilotClient::VsCode,
             device: CopilotDevice::for_credential(github_token),
         };
-        assert!(CopilotExecutor::forget_token(&creds));
+        assert!(CopilotUpstream::forget_token(&creds));
         assert!(!TOKEN_CACHE.lock().unwrap().contains_key(github_token));
         assert!(
-            !CopilotExecutor::forget_token(&creds),
+            !CopilotUpstream::forget_token(&creds),
             "nothing left to forget"
         );
     }
 
     #[tokio::test]
     async fn token_cache_is_shared_across_executor_instances() {
-        // Executors are built per request, so a token exchanged by one must be
+        // Upstreams are built per request, so a token exchanged by one must be
         // served from cache to the next without another round trip.
         let github_token = "ghu_token_cache_is_shared_across_executor_instances";
         TOKEN_CACHE.lock().unwrap().insert(
@@ -755,7 +610,7 @@ mod tests {
             },
         );
 
-        let creds = make_executor()
+        let creds = make_upstream()
             .exchange_and_cache(github_token)
             .await
             .expect("served from cache, no network");

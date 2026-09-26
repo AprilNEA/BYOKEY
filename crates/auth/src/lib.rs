@@ -1,4 +1,4 @@
-//! OAuth authentication flows for all supported providers.
+//! OAuth authentication flows for Claude, Copilot and Cursor.
 //!
 //! ## Module layout
 //!

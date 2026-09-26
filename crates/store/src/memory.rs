@@ -193,18 +193,18 @@ mod tests {
     #[tokio::test]
     async fn test_load_missing() {
         let store = InMemoryTokenStore::new();
-        assert!(store.load(&ProviderId::Gemini).await.unwrap().is_none());
+        assert!(store.load(&ProviderId::Cursor).await.unwrap().is_none());
     }
 
     #[tokio::test]
     async fn test_remove() {
         let store = InMemoryTokenStore::new();
         store
-            .save(&ProviderId::Codex, &OAuthToken::new("tok"))
+            .save(&ProviderId::Copilot, &OAuthToken::new("tok"))
             .await
             .unwrap();
-        store.remove(&ProviderId::Codex).await.unwrap();
-        assert!(store.load(&ProviderId::Codex).await.unwrap().is_none());
+        store.remove(&ProviderId::Copilot).await.unwrap();
+        assert!(store.load(&ProviderId::Copilot).await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -230,7 +230,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .save(&ProviderId::Gemini, &OAuthToken::new("gemini-tok"))
+            .save(&ProviderId::Cursor, &OAuthToken::new("cursor-tok"))
             .await
             .unwrap();
         assert_eq!(
@@ -244,12 +244,12 @@ mod tests {
         );
         assert_eq!(
             store
-                .load(&ProviderId::Gemini)
+                .load(&ProviderId::Cursor)
                 .await
                 .unwrap()
                 .unwrap()
                 .access_token,
-            "gemini-tok"
+            "cursor-tok"
         );
     }
 
@@ -257,29 +257,29 @@ mod tests {
     async fn save_updates_non_default_active_account() {
         // Regression: save() used to hardcode account_id="default", which
         // stranded refreshes when the active account was named otherwise
-        // (e.g. "codex-cli" from import-codex). Now save() must overwrite
-        // the active row.
+        // (e.g. "claude-code" from import-claude-code). Now save() must
+        // overwrite the active row.
         let store = InMemoryTokenStore::new();
         store
             .save_account(
-                &ProviderId::Codex,
-                "codex-cli",
-                Some("Codex CLI"),
+                &ProviderId::Claude,
+                "claude-code",
+                Some("Claude Code"),
                 &OAuthToken::new("imported"),
             )
             .await
             .unwrap();
         store
-            .save(&ProviderId::Codex, &OAuthToken::new("refreshed"))
+            .save(&ProviderId::Claude, &OAuthToken::new("refreshed"))
             .await
             .unwrap();
-        let accounts = store.list_accounts(&ProviderId::Codex).await.unwrap();
+        let accounts = store.list_accounts(&ProviderId::Claude).await.unwrap();
         assert_eq!(accounts.len(), 1, "save must not create a second account");
-        assert_eq!(accounts[0].account_id, "codex-cli");
+        assert_eq!(accounts[0].account_id, "claude-code");
         assert!(accounts[0].is_active);
         assert_eq!(
             store
-                .load(&ProviderId::Codex)
+                .load(&ProviderId::Claude)
                 .await
                 .unwrap()
                 .unwrap()

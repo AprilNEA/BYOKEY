@@ -1,7 +1,7 @@
 //! In-memory usage statistics for request/token tracking, with optional
 //! persistent backing via [`UsageStore`].
 
-use byokey_types::{DEFAULT_ACCOUNT, UsageRecord, UsageStore};
+use byokey_types::{UsageRecord, UsageStore};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -108,7 +108,6 @@ impl UsageStats {
 /// batches writes to reduce spawn overhead and `SQLite` write contention.
 pub struct UsageRecorder {
     stats: UsageStats,
-    store: Option<Arc<dyn UsageStore>>,
     sender: Option<mpsc::UnboundedSender<UsageRecord>>,
 }
 
@@ -119,15 +118,13 @@ impl UsageRecorder {
     /// records from an mpsc channel in micro-batches (up to 64 at a time).
     #[must_use]
     pub fn new(store: Option<Arc<dyn UsageStore>>) -> Self {
-        let sender = store.as_ref().map(|s| {
+        let sender = store.map(|store| {
             let (tx, rx) = mpsc::unbounded_channel::<UsageRecord>();
-            let flush_store = Arc::clone(s);
-            tokio::spawn(Self::flush_loop(flush_store, rx));
+            tokio::spawn(Self::flush_loop(store, rx));
             tx
         });
         Self {
             stats: UsageStats::new(),
-            store,
             sender,
         }
     }
@@ -156,29 +153,7 @@ impl UsageRecorder {
         }
     }
 
-    /// Record a successful request with token counts.
-    ///
-    /// Uses [`DEFAULT_ACCOUNT`] as the account attribution; call
-    /// [`record_success_for`](Self::record_success_for) when the specific
-    /// OAuth account is known.
-    pub fn record_success(
-        &self,
-        model: &str,
-        provider: &str,
-        input_tokens: u64,
-        output_tokens: u64,
-    ) {
-        self.record_success_for(
-            model,
-            provider,
-            DEFAULT_ACCOUNT,
-            input_tokens,
-            output_tokens,
-        );
-    }
-
-    /// Record a successful request with token counts, attributing it to a
-    /// specific account.
+    /// Record a successful request with token counts, attributed to `account_id`.
     pub fn record_success_for(
         &self,
         model: &str,
@@ -199,12 +174,7 @@ impl UsageRecorder {
         );
     }
 
-    /// Record a failed request.
-    pub fn record_failure(&self, model: &str, provider: &str) {
-        self.record_failure_for(model, provider, DEFAULT_ACCOUNT);
-    }
-
-    /// Record a failed request, attributing it to a specific account.
+    /// Record a failed request, attributed to `account_id`.
     pub fn record_failure_for(&self, model: &str, provider: &str, account_id: &str) {
         self.stats.record_failure(model);
         self.persist(model, provider, account_id, 0, 0, false);
@@ -238,11 +208,6 @@ impl UsageRecorder {
             entry.input_tokens += input_tokens;
             entry.output_tokens += output_tokens;
         }
-    }
-
-    /// Returns a reference to the backing store (if configured).
-    pub fn store(&self) -> Option<&Arc<dyn UsageStore>> {
-        self.store.as_ref()
     }
 
     fn persist(

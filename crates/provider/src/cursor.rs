@@ -1,31 +1,26 @@
-//! Executor for Cursor's agent API (`agent.v1.AgentService/Run`).
+//! Client for Cursor's agent API (`agent.v1.AgentService/Run`).
 //!
-//! A run is a stateful bidirectional stream (see [`session`]). A turn that
+//! A run is a stateful bidirectional stream (see `session`). A turn that
 //! stops on a caller tool call keeps its stream open, parked under the tool
 //! call ids; the request that carries those tool results resumes the same
 //! stream instead of replaying the conversation. That is what keeps Claude
 //! and GPT models on Cursor from mistaking a flattened transcript for prompt
 //! injection.
 //!
-//! Output is canonical [`StreamEvent`]s, rendered as `OpenAI` SSE here and as
-//! Anthropic SSE by the proxy's `/v1/messages` route.
+//! Output is canonical [`StreamEvent`]s, which the proxy's `/v1/messages`
+//! route renders as Anthropic SSE.
 
 mod models;
 mod pb;
 mod session;
 
-use crate::stream_bridge::{FinishReason, SseContext, StreamEvent, Usage, stream_events_to_sse};
 use aigw_core::ForwardCompatible;
 use aigw_core::model::{
-    ChatRequest as CanonicalRequest, ChatResponse, Message, MessageContent, Role, TypedContentPart,
+    ChatRequest as CanonicalRequest, ChatResponse, FinishReason, Message, MessageContent, Role,
+    StreamEvent, TypedContentPart, Usage,
 };
-use async_trait::async_trait;
 use byokey_auth::AuthManager;
-use byokey_types::{
-    ByokError, ChatRequest, ProviderId,
-    traits::{ByteStream, ProviderExecutor, ProviderResponse, Result},
-};
-use bytes::Bytes;
+use byokey_types::{ByokError, ProviderId, Result};
 use futures_util::{Stream, StreamExt as _, stream};
 use serde_json::{Value, json};
 use session::{Event, Run, RunSpec, ToolSpec};
@@ -43,7 +38,7 @@ const CLIENT_VERSION: &str = "cli-2026.08.11-e8db854";
 const PARK_TTL: Duration = Duration::from_secs(600);
 
 /// Runs stopped on tool calls, keyed by their sorted tool call ids, with
-/// when they were parked. Process-wide because executors are built per
+/// when they were parked. Process-wide because upstreams are built per
 /// request.
 type ParkedRuns = HashMap<Vec<String>, (Run, Instant)>;
 
@@ -56,17 +51,17 @@ static EXCHANGED: LazyLock<Mutex<HashMap<String, byokey_types::OAuthToken>>> =
 /// A stream of canonical events for one turn.
 pub type EventStream = Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>;
 
-/// Executor for the Cursor agent API.
-pub struct CursorExecutor {
+/// The Cursor account BYOKEY runs turns as.
+pub struct CursorUpstream {
     http: wreq::Client,
     auth: Arc<AuthManager>,
     api_key: Option<String>,
 }
 
 #[bon::bon]
-impl CursorExecutor {
-    /// Creates a new Cursor executor. An `api_key` (`crsr_…`) is exchanged
-    /// for an access token per request; otherwise the stored login is used.
+impl CursorUpstream {
+    /// An `api_key` (`crsr_…`) is exchanged for an access token per request;
+    /// otherwise the stored login is used.
     #[builder]
     pub fn new(http: wreq::Client, auth: Arc<AuthManager>, api_key: Option<String>) -> Self {
         Self {
@@ -467,30 +462,6 @@ pub async fn collect(mut events: EventStream) -> Result<ChatResponse> {
         "usage": usage,
     }))
     .map_err(|e| ByokError::Translation(e.to_string()))
-}
-
-#[async_trait]
-impl ProviderExecutor for CursorExecutor {
-    async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse> {
-        let stream = request.stream;
-        let canonical: CanonicalRequest = serde_json::from_value(request.into_body())
-            .map_err(|e| ByokError::Translation(e.to_string()))?;
-        let events = self.events(canonical).await?;
-        if !stream {
-            let response = serde_json::to_value(collect(events).await?)
-                .map_err(|e| ByokError::Translation(e.to_string()))?;
-            return Ok(ProviderResponse::Complete(response));
-        }
-        let mut ctx = SseContext::default();
-        let sse: ByteStream = Box::pin(events.map(move |e| {
-            e.map(|event| Bytes::from(stream_events_to_sse(std::slice::from_ref(&event), &mut ctx)))
-        }));
-        Ok(ProviderResponse::Stream(sse))
-    }
-
-    fn supported_models(&self) -> Vec<String> {
-        crate::registry::models_for_provider(&ProviderId::Cursor)
-    }
 }
 
 #[cfg(test)]

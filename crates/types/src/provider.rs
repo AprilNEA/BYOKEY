@@ -1,21 +1,14 @@
-//! Provider identifiers and protocol format definitions.
+//! Provider identifiers and model capability definitions.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Identifies a supported upstream AI provider.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderId {
     Claude,
-    Codex,
-    Gemini,
-    Kiro,
     Copilot,
-    Antigravity,
-    Qwen,
-    Kimi,
-    IFlow,
     Cursor,
 }
 
@@ -23,14 +16,7 @@ impl fmt::Display for ProviderId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Claude => write!(f, "claude"),
-            Self::Codex => write!(f, "codex"),
-            Self::Gemini => write!(f, "gemini"),
-            Self::Kiro => write!(f, "kiro"),
             Self::Copilot => write!(f, "copilot"),
-            Self::Antigravity => write!(f, "antigravity"),
-            Self::Qwen => write!(f, "qwen"),
-            Self::Kimi => write!(f, "kimi"),
-            Self::IFlow => write!(f, "iflow"),
             Self::Cursor => write!(f, "cursor"),
         }
     }
@@ -43,19 +29,12 @@ impl std::str::FromStr for ProviderId {
     ///
     /// # Errors
     ///
-    /// Returns [`ByokError::UnsupportedProvider`] if the string does not match
-    /// any known provider name or alias.
+    /// Returns [`ByokError::UnsupportedProvider`](crate::ByokError::UnsupportedProvider)
+    /// if the string does not match any known provider name or alias.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "claude" | "anthropic" => Ok(Self::Claude),
-            "codex" | "openai" => Ok(Self::Codex),
-            "gemini" | "google" => Ok(Self::Gemini),
-            "kiro" => Ok(Self::Kiro),
             "copilot" | "github" => Ok(Self::Copilot),
-            "antigravity" => Ok(Self::Antigravity),
-            "qwen" | "alibaba" => Ok(Self::Qwen),
-            "kimi" | "moonshot" => Ok(Self::Kimi),
-            "iflow" | "zai" | "glm" => Ok(Self::IFlow),
             "cursor" => Ok(Self::Cursor),
             other => Err(crate::ByokError::UnsupportedProvider(other.to_string())),
         }
@@ -68,14 +47,7 @@ impl ProviderId {
     pub fn display_name(&self) -> &'static str {
         match self {
             Self::Claude => "Claude (Anthropic)",
-            Self::Codex => "Codex (OpenAI)",
-            Self::Gemini => "Gemini (Google)",
-            Self::Kiro => "Kiro (AWS)",
             Self::Copilot => "GitHub Copilot",
-            Self::Antigravity => "Antigravity",
-            Self::Qwen => "Qwen (Alibaba)",
-            Self::Kimi => "Kimi (Moonshot)",
-            Self::IFlow => "iFlow (Z.ai)",
             Self::Cursor => "Cursor",
         }
     }
@@ -83,29 +55,16 @@ impl ProviderId {
     /// Returns all known provider variants.
     #[must_use]
     pub fn all() -> &'static [Self] {
-        &[
-            Self::Claude,
-            Self::Codex,
-            Self::Gemini,
-            Self::Kiro,
-            Self::Copilot,
-            Self::Antigravity,
-            Self::Qwen,
-            Self::Kimi,
-            Self::IFlow,
-            Self::Cursor,
-        ]
+        &[Self::Claude, Self::Copilot, Self::Cursor]
     }
 }
 
-/// Describes a model's thinking format capability.
+/// How a model takes an extended-thinking configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThinkingCapability {
-    /// Numeric budgets only (e.g. Claude legacy, Gemini 2.5).
+    /// A `budget_tokens` value only (Claude Haiku 4.5 and earlier).
     BudgetOnly,
-    /// Discrete effort levels only (e.g. `OpenAI`, iFlow).
-    LevelOnly,
-    /// Both budgets and levels (e.g. Claude 4.6 adaptive).
+    /// Adaptive thinking steered by effort, or a budget (Claude 4.6 and later).
     Hybrid,
 }
 
@@ -117,34 +76,17 @@ mod tests {
     #[test]
     fn test_display() {
         assert_eq!(ProviderId::Claude.to_string(), "claude");
-        assert_eq!(ProviderId::Codex.to_string(), "codex");
-        assert_eq!(ProviderId::Gemini.to_string(), "gemini");
-        assert_eq!(ProviderId::Kiro.to_string(), "kiro");
         assert_eq!(ProviderId::Copilot.to_string(), "copilot");
-        assert_eq!(ProviderId::Antigravity.to_string(), "antigravity");
-        assert_eq!(ProviderId::Qwen.to_string(), "qwen");
-        assert_eq!(ProviderId::Kimi.to_string(), "kimi");
-        assert_eq!(ProviderId::IFlow.to_string(), "iflow");
         assert_eq!(ProviderId::Cursor.to_string(), "cursor");
     }
 
     #[test]
     fn test_from_str_canonical() {
         assert_eq!(ProviderId::from_str("claude").unwrap(), ProviderId::Claude);
-        assert_eq!(ProviderId::from_str("codex").unwrap(), ProviderId::Codex);
-        assert_eq!(ProviderId::from_str("gemini").unwrap(), ProviderId::Gemini);
-        assert_eq!(ProviderId::from_str("kiro").unwrap(), ProviderId::Kiro);
         assert_eq!(
             ProviderId::from_str("copilot").unwrap(),
             ProviderId::Copilot
         );
-        assert_eq!(
-            ProviderId::from_str("antigravity").unwrap(),
-            ProviderId::Antigravity
-        );
-        assert_eq!(ProviderId::from_str("qwen").unwrap(), ProviderId::Qwen);
-        assert_eq!(ProviderId::from_str("kimi").unwrap(), ProviderId::Kimi);
-        assert_eq!(ProviderId::from_str("iflow").unwrap(), ProviderId::IFlow);
         assert_eq!(ProviderId::from_str("cursor").unwrap(), ProviderId::Cursor);
     }
 
@@ -154,20 +96,16 @@ mod tests {
             ProviderId::from_str("anthropic").unwrap(),
             ProviderId::Claude
         );
-        assert_eq!(ProviderId::from_str("openai").unwrap(), ProviderId::Codex);
-        assert_eq!(ProviderId::from_str("google").unwrap(), ProviderId::Gemini);
         assert_eq!(ProviderId::from_str("github").unwrap(), ProviderId::Copilot);
-        assert_eq!(ProviderId::from_str("alibaba").unwrap(), ProviderId::Qwen);
-        assert_eq!(ProviderId::from_str("moonshot").unwrap(), ProviderId::Kimi);
-        assert_eq!(ProviderId::from_str("zai").unwrap(), ProviderId::IFlow);
-        assert_eq!(ProviderId::from_str("glm").unwrap(), ProviderId::IFlow);
     }
 
     #[test]
     fn test_from_str_unknown() {
-        let err = ProviderId::from_str("xyz").unwrap_err();
-        assert!(err.to_string().contains("xyz"));
-        assert!(matches!(err, crate::ByokError::UnsupportedProvider(_)));
+        for name in ["xyz", "codex", "gemini"] {
+            let err = ProviderId::from_str(name).unwrap_err();
+            assert!(err.to_string().contains(name));
+            assert!(matches!(err, crate::ByokError::UnsupportedProvider(_)));
+        }
     }
 
     #[test]

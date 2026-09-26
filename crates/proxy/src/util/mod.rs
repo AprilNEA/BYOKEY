@@ -1,4 +1,4 @@
-//! Shared proxy utilities — response builders, usage extraction, SSE stream tapping.
+//! Shared proxy utilities: response builders, usage extraction, SSE stream tapping.
 
 pub(crate) mod stream;
 
@@ -7,7 +7,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::Response,
 };
-use byokey_types::ByokError;
 use serde_json::Value;
 
 /// Prefixes whose presence in a response header name indicates a third-party
@@ -69,24 +68,6 @@ pub(crate) fn sse_response(
         .header("x-accel-buffering", "no")
         .body(Body::from_stream(stream))
         .expect("valid response")
-}
-
-/// The error for a non-success upstream response: its status, `retry-after`
-/// and body, so the client sees what the upstream said.
-pub(crate) async fn upstream_failure(resp: wreq::Response) -> ByokError {
-    let status = resp.status().as_u16();
-    let retry_after = resp
-        .headers()
-        .get("retry-after")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.trim().parse().ok())
-        .map(std::time::Duration::from_secs);
-    let body = resp.text().await.unwrap_or_default();
-    ByokError::Upstream {
-        status,
-        body,
-        retry_after,
-    }
 }
 
 #[cfg(test)]

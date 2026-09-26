@@ -26,27 +26,26 @@ cargo run -- serve                        # Start proxy (default :8018)
 - Error types: use `ByokError` (`thiserror`) across crate boundaries, `anyhow` within a crate
 - HTTP client is `wreq` (not reqwest) — supports TLS fingerprint impersonation
 - HTTP server is `axum 0.8`
-- `Box<dyn ProviderExecutor>` does not implement `Debug`; don't call `unwrap_err()` on Results, use `is_err()` or pattern match
 
 ## Architecture
 
 ```
-Client request
+Anthropic Messages request  (Claude Code, Claude Desktop, …)
     │
     ▼
 byokey-proxy  (axum HTTP server)
-    │  resolve model → provider
+    │  `copilot/` or `cursor/` prefix, else `providers.claude.backend`, else Anthropic
     ▼
-byokey-provider  (executor per provider)
+byokey-provider  (Copilot credentials + catalog, Cursor agent client, Claude headers)
     │  get OAuth token (or api_key)
     ▼
 byokey-auth  (AuthManager + OAuth flows)
     │
     ▼
-Upstream API  (Anthropic / OpenAI / Google / …)
-    │  translate response → OpenAI format
+Upstream  (api.anthropic.com · api.githubcopilot.com /v1/messages · Cursor agent.v1)
+    │  Anthropic SSE or JSON; Cursor events rendered as Anthropic SSE
     ▼
-Client response  (JSON or SSE stream)
+Client response
 ```
 
 ### Workspace Crates
@@ -59,9 +58,9 @@ Strict layered DAG — no reverse cross-layer dependencies:
 | `byokey-config` | 1 | YAML configuration (figment) + file watching |
 | `byokey-store` | 1 | SQLite token/usage persistence (sea-orm v2 + sea-orm-migration) |
 | `byokey-auth` | 2 | OAuth flows (does not depend on provider / proxy) |
-| `byokey-provider` | 3 | Provider Executor + model registry + `VersionStore`; protocol conversion lives in `aigw` |
+| `byokey-provider` | 3 | Copilot credentials and catalog, Cursor agent client, Anthropic headers and model registry |
 | `byokey-proto` | 3 | ConnectRPC management API schema and generated client/server protocol types |
-| `byokey-proxy` | 4 | axum HTTP server, routing, SSE passthrough, ConnectRPC management fallback |
+| `byokey-proxy` | 4 | axum HTTP server, Messages routing and passthrough, ConnectRPC management fallback |
 | `byokey-tui` | — | ratatui management client using the ConnectRPC API |
 | `byokey-daemon` | — | Process/service management, PID file, Unix control socket (separate from the layered DAG — used by the CLI binary only) |
 
@@ -73,14 +72,14 @@ CLI entry point: `src/main.rs` (package = `byokey`, bin = `byokey`).
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/v1/chat/completions` | OpenAI-compatible chat (streaming supported) |
-| `POST` | `/v1/messages` | Anthropic-compatible messages |
-| `POST` | `/v1/responses` | Codex Responses API passthrough |
-| `GET` | `/v1/models` | List enabled models |
+| `POST` | `/v1/messages` | Anthropic Messages API (streaming supported) |
+| `POST` | `/v1/messages/count_tokens` | Token counting, routed like `/v1/messages` |
+| `GET` | `/v1/models` | The models `/v1/messages` can route |
 | `POST` | `/byokey.*.*Service/{Method}` | ConnectRPC management API (status, accounts, usage) |
-| `GET` | `/openapi.json` | OpenAPI 3.1 spec for the AI endpoints |
 
-The `model` field in the request body determines which provider is used.
+A `copilot/` or `cursor/` prefix on the `model` field picks the provider for
+one request; otherwise `providers.claude.backend` does, and without it the
+request goes to Anthropic.
 
 ### Daemon and control socket
 
@@ -90,16 +89,16 @@ over this socket via tarpc. `start` forks a detached child and monitors its
 PID file. At startup, `serve` adopts an inherited listener fd if one is passed
 in by `systemfd` / `systemd` / `launchd` socket activation; otherwise it binds
 `host:port` fresh. An in-process background loop refreshes OAuth tokens every
-60s with a 5min lead, and a `VersionStore` fetches runtime User-Agent /
-fingerprint strings from `https://assets.byokey.io/versions/{provider}.json`
-at startup (falling back to compile-time defaults on network failure).
+60s with a 5min lead, and the Copilot client identity is fetched from
+`https://assets.byokey.io/versions/copilot.json` at startup (falling back to
+compile-time defaults on network failure).
 
 ## Commit Convention
 
 Use [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```
-feat(auth): add Kiro device code flow
+feat(auth): add the Cursor browser login
 fix(proxy): handle empty SSE chunk
-refactor(translate): simplify gemini response parser
+refactor(provider): split Copilot headers from credentials
 ```

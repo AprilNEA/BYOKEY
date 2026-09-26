@@ -271,17 +271,17 @@ mod tests {
     #[tokio::test]
     async fn test_load_missing() {
         let s = mem().await;
-        assert!(s.load(&ProviderId::Gemini).await.unwrap().is_none());
+        assert!(s.load(&ProviderId::Cursor).await.unwrap().is_none());
     }
 
     #[tokio::test]
     async fn test_remove() {
         let s = mem().await;
-        s.save(&ProviderId::Codex, &OAuthToken::new("tok"))
+        s.save(&ProviderId::Copilot, &OAuthToken::new("tok"))
             .await
             .unwrap();
-        s.remove(&ProviderId::Codex).await.unwrap();
-        assert!(s.load(&ProviderId::Codex).await.unwrap().is_none());
+        s.remove(&ProviderId::Copilot).await.unwrap();
+        assert!(s.load(&ProviderId::Copilot).await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -309,7 +309,7 @@ mod tests {
         s.save(&ProviderId::Claude, &OAuthToken::new("c"))
             .await
             .unwrap();
-        s.save(&ProviderId::Gemini, &OAuthToken::new("g"))
+        s.save(&ProviderId::Cursor, &OAuthToken::new("g"))
             .await
             .unwrap();
         assert_eq!(
@@ -321,7 +321,7 @@ mod tests {
             "c"
         );
         assert_eq!(
-            s.load(&ProviderId::Gemini)
+            s.load(&ProviderId::Cursor)
                 .await
                 .unwrap()
                 .unwrap()
@@ -334,8 +334,8 @@ mod tests {
     async fn test_expiry_persists() {
         let s = mem().await;
         let tok = OAuthToken::new("tok").with_expiry(3600);
-        s.save(&ProviderId::Kiro, &tok).await.unwrap();
-        let loaded = s.load(&ProviderId::Kiro).await.unwrap().unwrap();
+        s.save(&ProviderId::Cursor, &tok).await.unwrap();
+        let loaded = s.load(&ProviderId::Cursor).await.unwrap().unwrap();
         assert!(loaded.expires_at.is_some());
     }
 
@@ -343,25 +343,25 @@ mod tests {
     async fn save_updates_non_default_active_account() {
         // Regression: save() used to hardcode account_id="default", which
         // stranded refreshes when the active account was named otherwise
-        // (e.g. "codex-cli" from import-codex).
+        // (e.g. "claude-code" from import-claude-code).
         let s = mem().await;
         s.save_account(
-            &ProviderId::Codex,
-            "codex-cli",
-            Some("Codex CLI"),
+            &ProviderId::Claude,
+            "claude-code",
+            Some("Claude Code"),
             &OAuthToken::new("imported"),
         )
         .await
         .unwrap();
-        s.save(&ProviderId::Codex, &OAuthToken::new("refreshed"))
+        s.save(&ProviderId::Claude, &OAuthToken::new("refreshed"))
             .await
             .unwrap();
-        let accounts = s.list_accounts(&ProviderId::Codex).await.unwrap();
+        let accounts = s.list_accounts(&ProviderId::Claude).await.unwrap();
         assert_eq!(accounts.len(), 1, "save must not create a second account");
-        assert_eq!(accounts[0].account_id, "codex-cli");
+        assert_eq!(accounts[0].account_id, "claude-code");
         assert!(accounts[0].is_active);
         assert_eq!(
-            s.load(&ProviderId::Codex)
+            s.load(&ProviderId::Claude)
                 .await
                 .unwrap()
                 .unwrap()

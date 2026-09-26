@@ -47,9 +47,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "744f880a6577b17629f4ca83fb161a293a5e54322bc9628d844addcb91785af6"
 dependencies = [
  "aigw-anthropic",
- "aigw-gemini",
- "aigw-openai",
- "aigw-openai-compat",
 ]
 
 [[package]]
@@ -59,7 +56,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4505e97b470173b8c656ae60e33173cb407ceb147c9949a67dcca79c72e7bed1"
 dependencies = [
  "aigw-core",
- "bon 3.9.1",
+ "bon",
  "bytes",
  "eventsource-stream",
  "futures",
@@ -79,70 +76,13 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6afc4f115010dde59476121eb8cdf6dd64c1f564e0cc932f6b48c7ac6a0bc3ae"
 dependencies = [
- "bon 3.9.1",
+ "bon",
  "bytes",
  "http",
  "serde",
  "serde_json",
  "strum 0.28.0",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "aigw-gemini"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8e98cbd7ed44fae7308ee458b3980878edec46760413cdea9aa64707259d8bf"
-dependencies = [
- "aigw-core",
- "bon 3.9.1",
- "bytes",
- "eventsource-stream",
- "futures",
- "http",
- "reqwest 0.12.28",
- "secrecy",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-stream",
-]
-
-[[package]]
-name = "aigw-openai"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aaabaed93d0d8409127f7cdc06d4ad6240f30632495efdce9c28f5eba2b9179d"
-dependencies = [
- "aigw-core",
- "bon 3.9.1",
- "bytes",
- "eventsource-stream",
- "futures-core",
- "futures-util",
- "http",
- "reqwest 0.12.28",
- "secrecy",
- "serde",
- "serde_json",
- "strum 0.28.0",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "aigw-openai-compat"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6994a502c86c006a284522f166cf728e9455dd7d6416016b08c851fb8ee53346"
-dependencies = [
- "aigw-core",
- "aigw-openai",
- "bytes",
- "http",
- "secrecy",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -667,35 +607,12 @@ dependencies = [
 
 [[package]]
 name = "bon"
-version = "2.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97493a391b4b18ee918675fb8663e53646fd09321c58b46afa04e8ce2499c869"
-dependencies = [
- "bon-macros 2.3.0",
- "rustversion",
-]
-
-[[package]]
-name = "bon"
 version = "3.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f47dbe92550676ee653353c310dfb9cf6ba17ee70396e1f7cf0a2020ad49b2fe"
 dependencies = [
- "bon-macros 3.9.1",
+ "bon-macros",
  "rustversion",
-]
-
-[[package]]
-name = "bon-macros"
-version = "2.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a2af3eac944c12cdf4423eab70d310da0a8e5851a18ffb192c0a5e3f7ae1663"
-dependencies = [
- "darling 0.20.11",
- "ident_case",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -857,6 +774,7 @@ dependencies = [
  "byokey-auth",
  "byokey-config",
  "byokey-daemon",
+ "byokey-provider",
  "byokey-proxy",
  "byokey-store",
  "byokey-tui",
@@ -874,7 +792,6 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
- "utoipa",
  "wreq",
 ]
 
@@ -882,20 +799,16 @@ dependencies = [
 name = "byokey-auth"
 version = "2.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "base64",
- "byokey-config",
  "byokey-store",
  "byokey-types",
- "oauth2",
  "open",
  "rand 0.8.8",
  "serde",
  "serde_json",
  "serde_urlencoded",
  "sha2",
- "thiserror 2.0.18",
  "tokio",
  "tracing",
  "uuid",
@@ -906,7 +819,6 @@ dependencies = [
 name = "byokey-config"
 version = "2.1.0"
 dependencies = [
- "anyhow",
  "arc-swap",
  "byokey-types",
  "figment",
@@ -914,7 +826,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -941,7 +852,6 @@ dependencies = [
  "buffa-types",
  "connectrpc",
  "connectrpc-build",
- "futures",
  "http",
  "http-body",
  "serde",
@@ -951,36 +861,22 @@ dependencies = [
 name = "byokey-provider"
 version = "2.1.0"
 dependencies = [
- "aigw",
  "aigw-core",
- "aigw-gemini",
- "aigw-openai",
- "anyhow",
- "async-trait",
- "bon 3.9.1",
+ "bon",
  "byokey-auth",
- "byokey-config",
  "byokey-store",
  "byokey-types",
  "bytes",
- "eventsource-stream",
  "flate2",
- "futures-core",
  "futures-util",
  "hex",
- "hmac",
  "http",
- "loadwise-core",
  "rand 0.8.8",
- "reqwest 0.12.28",
- "secrecy",
  "serde",
  "serde_json",
  "sha2",
- "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
- "tokio-tungstenite",
  "tracing",
  "uuid",
  "wreq",
@@ -991,12 +887,8 @@ name = "byokey-proxy"
 version = "2.1.0"
 dependencies = [
  "aigw",
- "aigw-core",
- "anyhow",
  "arc-swap",
- "async-trait",
  "axum",
- "buffa",
  "byokey-auth",
  "byokey-config",
  "byokey-proto",
@@ -1006,19 +898,15 @@ dependencies = [
  "bytes",
  "connectrpc",
  "futures-util",
+ "http",
  "http-body-util",
- "reqwest 0.12.28",
- "secrecy",
  "sentry",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
  "tokio",
- "tokio-stream",
  "tower",
  "tower-http",
  "tracing",
- "utoipa",
  "uuid",
  "wreq",
 ]
@@ -1027,17 +915,14 @@ dependencies = [
 name = "byokey-store"
 version = "2.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "byokey-types",
  "sea-orm",
  "sea-orm-migration",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -1061,9 +946,7 @@ dependencies = [
  "sea-orm",
  "serde",
  "serde_json",
- "sqlx",
  "thiserror 2.0.18",
- "utoipa",
  "wreq",
 ]
 
@@ -1160,10 +1043,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fac4744fb15ae8337dc853fee7fb3f4e48c0fbaa23d0afe49c447b4fab126118"
 dependencies = [
  "iana-time-zone",
- "js-sys",
  "num-traits",
  "serde",
- "wasm-bindgen",
  "windows-link",
 ]
 
@@ -1544,7 +1425,6 @@ dependencies = [
  "ident_case",
  "proc-macro2",
  "quote",
- "strsim",
  "syn 2.0.117",
 ]
 
@@ -1582,12 +1462,6 @@ dependencies = [
  "quote",
  "syn 2.0.117",
 ]
-
-[[package]]
-name = "data-encoding"
-version = "2.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
 name = "debugid"
@@ -2967,16 +2841,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6373607a59f0be73a39b6fe456b8192fcc3585f602af20751600e974dd455e77"
 
 [[package]]
-name = "loadwise-core"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ccfdf361e30c2460298a79792dc96e596a6b9e14a498e7b790e296f896d359f7"
-dependencies = [
- "bon 2.3.0",
- "rand 0.9.4",
-]
-
-[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3250,26 +3114,6 @@ checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
  "libm",
-]
-
-[[package]]
-name = "oauth2"
-version = "5.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51e219e79014df21a225b1860a479e2dcd7cbd9130f4defd4bd0e191ea31d67d"
-dependencies = [
- "base64",
- "chrono",
- "getrandom 0.2.17",
- "http",
- "rand 0.8.8",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "sha2",
- "thiserror 1.0.69",
- "url",
 ]
 
 [[package]]
@@ -5574,22 +5418,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-tungstenite"
-version = "0.26.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a9daff607c6d2bf6c16fd681ccb7eecc83e4e2cdc1ca067ffaadfca5de7f084"
-dependencies = [
- "futures-util",
- "log",
- "rustls",
- "rustls-pki-types",
- "tokio",
- "tokio-rustls",
- "tungstenite",
- "webpki-roots 0.26.11",
-]
-
-[[package]]
 name = "tokio-util"
 version = "0.7.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5797,25 +5625,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
-name = "tungstenite"
-version = "0.26.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4793cb5e56680ecbb1d843515b23b6de9a75eb04b66643e256a396d43be33c13"
-dependencies = [
- "bytes",
- "data-encoding",
- "http",
- "httparse",
- "log",
- "rand 0.9.4",
- "rustls",
- "rustls-pki-types",
- "sha1",
- "thiserror 2.0.18",
- "utf-8",
-]
-
-[[package]]
 name = "typenum"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5955,12 +5764,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "utf-8"
-version = "0.7.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
-
-[[package]]
 name = "utf8-zero"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5977,29 +5780,6 @@ name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
-
-[[package]]
-name = "utoipa"
-version = "5.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fcc29c80c21c31608227e0912b2d7fddba57ad76b606890627ba8ee7964e993"
-dependencies = [
- "indexmap",
- "serde",
- "serde_json",
- "utoipa-gen",
-]
-
-[[package]]
-name = "utoipa-gen"
-version = "5.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d79d08d92ab8af4c5e8a6da20c47ae3f61a0f1dabc1997cdf2d082b757ca08b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
 
 [[package]]
 name = "uuid"

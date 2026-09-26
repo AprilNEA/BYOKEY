@@ -8,19 +8,17 @@
 //!
 //! The response (streaming SSE or complete JSON) is returned as-is.
 
-use aigw::anthropic::{AuthMode, Transport, TransportConfig};
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use byokey_provider::claude_headers::{ANTHROPIC_BETA, ANTHROPIC_VERSION};
+use byokey_provider::claude::{ANTHROPIC_BETA, ANTHROPIC_VERSION, fingerprint_headers};
 use byokey_provider::cloak::{derive_cc_entrypoint, inject_billing_header};
-use byokey_provider::{Conversation, CopilotCredentials, CopilotExecutor, CopilotIdentity};
+use byokey_provider::{Conversation, CopilotCredentials, CopilotIdentity, CopilotUpstream};
 use byokey_types::{ByokError, ProviderId, ThinkingCapability, traits::ByteStream};
 use bytes::Bytes;
 use futures_util::{StreamExt as _, TryStreamExt as _};
-use secrecy::SecretString;
 use serde_json::Value;
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -28,7 +26,7 @@ use std::sync::Arc;
 use crate::util::stream::{
     AnthropicParser, response_to_stream, tap_usage_stream, terminate_anthropic_stream,
 };
-use crate::util::{extract_usage, sse_response, strip_gateway_headers, upstream_failure};
+use crate::util::{extract_usage, sse_response, strip_gateway_headers};
 use crate::{AppState, UsageRecorder, error::ApiError};
 
 /// Default thinking budget (tokens) for `Auto` mode on legacy Claude models
@@ -199,9 +197,9 @@ fn normalize_temperature_for_thinking(body: &mut Value) {
 /// Returns `true` if a Claude thinking block signature looks valid.
 ///
 /// Valid Anthropic-generated signatures start with `E` or `R` (after
-/// stripping an optional `<prefix>#` cache key). Antigravity / Gemini
-/// thinking blocks use a different format and would be rejected by the
-/// Claude API if forwarded.
+/// stripping an optional `<prefix>#` cache key). Thinking blocks a client
+/// carried over from another vendor's model use a different format and
+/// would be rejected by the Claude API if forwarded.
 fn has_valid_claude_signature(sig: &str) -> bool {
     let sig = sig.trim();
     if sig.is_empty() {
@@ -220,11 +218,6 @@ fn has_valid_claude_signature(sig: &str) -> bool {
 
 /// Strip thinking blocks with non-Anthropic signatures from
 /// `messages[].content[]` so they don't trip the Claude API on the way out.
-///
-/// This handler operates on raw Anthropic-native JSON (no aigw round-trip),
-/// so the structural source-tag check used by aigw-anthropic doesn't apply
-/// here — the signature-prefix heuristic is the right tool for the
-/// passthrough path.
 fn strip_invalid_thinking_signatures(body: &mut Value) {
     let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
         return;
@@ -324,8 +317,6 @@ pub(super) fn build_beta_header(
     betas
 }
 
-use byokey_provider::executor::claude::build_fingerprint_headers;
-
 #[tracing::instrument(skip_all, fields(
     model = %body.0.get("model").and_then(serde_json::Value::as_str).unwrap_or("-"),
     stream = body.0.get("stream").and_then(serde_json::Value::as_bool).unwrap_or(false),
@@ -382,9 +373,9 @@ async fn serve_messages(
             .and_then(|v| v.to_str().ok());
         inject_billing_header(
             &mut body,
-            Some(&profile.device_id),
-            Some(&account_uuid),
-            Some(&profile.session_id),
+            &profile.device_id,
+            &account_uuid,
+            &profile.session_id,
             entrypoint,
             workload,
         );
@@ -392,7 +383,6 @@ async fn serve_messages(
     }
 
     let upstream = AnthropicUpstream::resolve(&state, &config, &profile, &beta).await?;
-    let api_url = format!("{}?beta=true", upstream.transport.url("/v1/messages"));
 
     let accept = if stream {
         "text/event-stream"
@@ -401,7 +391,7 @@ async fn serve_messages(
     };
 
     let builder = upstream
-        .request(&state.http, &api_url)
+        .request(&state.http, "/v1/messages")
         .header("accept", accept)
         .header("connection", "keep-alive")
         .header("accept-encoding", "identity");
@@ -441,9 +431,22 @@ async fn serve_messages(
     .await
 }
 
-/// Credentials and transport for the Anthropic API.
+/// Default Anthropic API base URL.
+const ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
+
+/// How a request authenticates with Anthropic.
+enum Credential {
+    /// A raw API key, sent as `x-api-key`.
+    ApiKey(String),
+    /// An OAuth access token, sent as a bearer token.
+    OAuth(String),
+}
+
+/// Credentials and headers for the Anthropic API.
 pub(super) struct AnthropicUpstream {
-    pub(super) transport: Transport,
+    base_url: String,
+    credential: Credential,
+    headers: http::HeaderMap,
     /// Account the request is attributed to in usage records.
     pub(super) account_id: String,
 }
@@ -457,11 +460,10 @@ impl AnthropicUpstream {
         beta: &str,
     ) -> Result<Self, ApiError> {
         let provider_cfg = config.providers.get(&ProviderId::Claude);
-        let (credential, auth_mode, account_id) =
+        let (credential, account_id) =
             if let Some(key) = provider_cfg.and_then(|pc| pc.api_key.clone()) {
                 (
-                    key,
-                    AuthMode::ApiKey,
+                    Credential::ApiKey(key),
                     byokey_types::DEFAULT_ACCOUNT.to_string(),
                 )
             } else {
@@ -469,33 +471,42 @@ impl AnthropicUpstream {
                     .auth
                     .get_token_with_account(&ProviderId::Claude)
                     .await?;
-                (token.access_token, AuthMode::Bearer, account_id)
+                (Credential::OAuth(token.access_token), account_id)
             };
-        let is_api_key = matches!(auth_mode, AuthMode::ApiKey);
-        let transport = Transport::new(TransportConfig {
-            api_key: SecretString::from(credential),
-            auth_mode,
-            base_url: provider_cfg
-                .and_then(|pc| pc.base_url.clone())
-                .unwrap_or_else(|| "https://api.anthropic.com".to_owned()),
-            beta: Some(beta.to_owned()),
-            extra_headers: build_fingerprint_headers(profile, is_api_key),
-            ..Default::default()
-        })
-        .map_err(|e| ApiError::from(ByokError::Config(e.to_string())))?;
+        let mut headers = fingerprint_headers(profile, matches!(credential, Credential::ApiKey(_)));
+        headers.insert(
+            "anthropic-version",
+            http::HeaderValue::from_static(ANTHROPIC_VERSION),
+        );
+        headers.insert(
+            "anthropic-beta",
+            http::HeaderValue::from_str(beta)
+                .map_err(|e| ApiError::from(ByokError::Config(e.to_string())))?,
+        );
         Ok(Self {
-            transport,
+            base_url: provider_cfg
+                .and_then(|pc| pc.base_url.as_deref())
+                .unwrap_or(ANTHROPIC_BASE_URL)
+                .trim_end_matches('/')
+                .to_owned(),
+            credential,
+            headers,
             account_id,
         })
     }
 
-    /// A POST to `url` carrying the transport's auth, version and beta headers.
-    pub(super) fn request(&self, http: &wreq::Client, url: &str) -> wreq::RequestBuilder {
-        let mut builder = http.post(url);
-        for (name, value) in self.transport.headers() {
-            if let Ok(v) = value.to_str() {
-                builder = builder.header(name.as_str(), v);
-            }
+    /// A POST to `path` on the Anthropic API carrying the auth, version, beta
+    /// and fingerprint headers.
+    pub(super) fn request(&self, http: &wreq::Client, path: &str) -> wreq::RequestBuilder {
+        let mut builder = http
+            .post(format!("{}{path}?beta=true", self.base_url))
+            .header("content-type", "application/json");
+        builder = match &self.credential {
+            Credential::ApiKey(key) => builder.header("x-api-key", key),
+            Credential::OAuth(token) => builder.bearer_auth(token),
+        };
+        for (name, value) in &self.headers {
+            builder = builder.header(name.as_str(), value.as_bytes());
         }
         builder
     }
@@ -536,9 +547,8 @@ impl Backend {
     }
 }
 
-/// The Copilot executor configured for this server, and the client identity
-/// its requests present.
-pub(super) fn copilot_executor(state: &AppState) -> (CopilotExecutor, CopilotIdentity) {
+/// The Copilot accounts configured for this server.
+pub(super) fn copilot_upstream(state: &AppState) -> CopilotUpstream {
     let config = state
         .config
         .load()
@@ -546,16 +556,13 @@ pub(super) fn copilot_executor(state: &AppState) -> (CopilotExecutor, CopilotIde
         .get(&ProviderId::Copilot)
         .cloned()
         .unwrap_or_default();
-    let identity = CopilotIdentity::from_versions(state.versions.get(&ProviderId::Copilot));
-    let executor = CopilotExecutor::builder()
+    CopilotUpstream::builder()
         .http(state.http.clone())
         .auth(state.auth.clone())
         .maybe_api_key(config.api_key)
         .maybe_base_url(config.base_url)
-        .ratelimit(state.ratelimits.clone())
-        .identity(identity.clone())
-        .build();
-    (executor, identity)
+        .identity(state.copilot_identity.clone())
+        .build()
 }
 
 /// A POST of `body` to Copilot's Anthropic-format `path` as `creds`' account.
@@ -679,7 +686,7 @@ async fn copilot_messages(
     beta: &str,
 ) -> Result<Response, ApiError> {
     strip_copilot_unsupported(&mut body);
-    let (executor, identity) = copilot_executor(state);
+    let copilot = copilot_upstream(state);
     let small_model = state
         .config
         .load()
@@ -725,12 +732,12 @@ async fn copilot_messages(
     let mut token_refreshed = false;
     while attempt < max_attempts {
         tracing::Span::current().record("attempt", attempt);
-        let creds = match executor.credentials().await {
+        let creds = match copilot.credentials().await {
             Ok(c) => c,
             Err(e) => {
                 if max_attempts > 1 {
                     tracing::warn!(attempt, error = %e, "copilot token failed, trying next account");
-                    CopilotExecutor::invalidate_current_account();
+                    CopilotUpstream::invalidate_current_account();
                     last_err = Some(ApiError::from(e));
                     attempt += 1;
                     continue;
@@ -750,7 +757,7 @@ async fn copilot_messages(
             "/v1/messages",
             &creds,
             beta,
-            &identity,
+            copilot.identity(),
             &conversation,
             &body,
         )
@@ -760,7 +767,7 @@ async fn copilot_messages(
 
         match resp {
             Ok(r) if r.status().is_success() => {
-                // Copilot does its own account rotation inside CopilotExecutor;
+                // Copilot does its own account rotation inside CopilotUpstream;
                 // the specific account isn't easily exposed here yet, so we
                 // attribute to DEFAULT_ACCOUNT for now.
                 return forward_response(
@@ -775,11 +782,11 @@ async fn copilot_messages(
                 .await;
             }
             Ok(r) => {
-                let err = upstream_failure(r).await;
+                let err = ByokError::from_response(r).await;
                 // The cached token may have been revoked ahead of its expiry.
                 if matches!(err, ByokError::Upstream { status: 401, .. })
                     && !token_refreshed
-                    && CopilotExecutor::forget_token(&creds)
+                    && CopilotUpstream::forget_token(&creds)
                 {
                     token_refreshed = true;
                     tracing::warn!(attempt, "copilot rejected its token, exchanging a new one");
@@ -793,7 +800,7 @@ async fn copilot_messages(
                     error = %err,
                     "copilot messages failed, trying next account"
                 );
-                CopilotExecutor::invalidate_current_account();
+                CopilotUpstream::invalidate_current_account();
                 last_err = Some(ApiError::from(err));
             }
             Err(e) => {
@@ -802,7 +809,7 @@ async fn copilot_messages(
                     return Err(ApiError::from(err));
                 }
                 tracing::warn!(attempt, error = %err, "copilot messages transport error, trying next");
-                CopilotExecutor::invalidate_current_account();
+                CopilotUpstream::invalidate_current_account();
                 last_err = Some(ApiError::from(err));
             }
         }
@@ -832,7 +839,7 @@ async fn forward_response(
 ) -> Result<Response, ApiError> {
     let status = resp.status();
     if !status.is_success() {
-        let err = upstream_failure(resp).await;
+        let err = ByokError::from_response(resp).await;
         tracing::error!(
             status = status.as_u16(),
             "anthropic upstream error (non-retryable)"

@@ -1,7 +1,7 @@
 //! `POST /v1/messages` served by Cursor.
 //!
 //! Anthropic requests are translated to the canonical format, run through
-//! [`CursorExecutor`], and the canonical events rendered back as Anthropic
+//! [`CursorUpstream`], and the canonical events rendered back as Anthropic
 //! SSE or a complete Messages response.
 
 use aigw::anthropic::translate::{
@@ -14,7 +14,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use byokey_provider::CursorExecutor;
+use byokey_provider::CursorUpstream;
 use byokey_types::{ByokError, traits::ByteStream};
 use bytes::Bytes;
 use futures_util::StreamExt as _;
@@ -47,15 +47,15 @@ pub(crate) async fn cursor_messages(
         .providers
         .get(&byokey_types::ProviderId::Cursor)
         .and_then(|c| c.api_key.clone());
-    let executor = CursorExecutor::builder()
+    let cursor = CursorUpstream::builder()
         .http(state.http.clone())
         .auth(state.auth.clone())
         .maybe_api_key(api_key)
         .build();
-    let events = executor.events(canonical).await?;
+    let events = cursor.events(canonical).await?;
 
     if !stream {
-        let response = byokey_provider::executor::cursor::collect(events).await?;
+        let response = byokey_provider::cursor::collect(events).await?;
         let messages = chat_response_to_messages(response)
             .map_err(|e| ByokError::Translation(e.to_string()))?;
         return Ok((StatusCode::OK, Json(messages)).into_response());

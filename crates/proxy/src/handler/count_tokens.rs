@@ -16,10 +16,9 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 use super::messages::{
-    AnthropicUpstream, Backend, CONTEXT_1M_BETA, build_beta_header, copilot_executor,
-    copilot_request, sanitize_system, strip_copilot_unsupported, take_long_context_suffix,
+    AnthropicUpstream, Backend, CONTEXT_1M_BETA, build_beta_header, copilot_request,
+    copilot_upstream, sanitize_system, strip_copilot_unsupported, take_long_context_suffix,
 };
-use crate::util::upstream_failure;
 use crate::{AppState, error::ApiError};
 
 /// Handles `POST /v1/messages/count_tokens`.
@@ -48,15 +47,15 @@ async fn serve_count_tokens(
         }
         Backend::Copilot => {
             strip_copilot_unsupported(&mut body);
-            let (executor, identity) = copilot_executor(state);
-            let creds = executor.credentials().await?;
+            let copilot = copilot_upstream(state);
+            let creds = copilot.credentials().await?;
             let conversation = Conversation::from_messages(&[]);
             copilot_request(
                 &state.http,
                 "/v1/messages/count_tokens",
                 &creds,
                 &beta,
-                &identity,
+                copilot.identity(),
                 &conversation,
                 &body,
             )
@@ -66,17 +65,17 @@ async fn serve_count_tokens(
         Backend::Anthropic => {
             let profile = state.device_profiles.resolve("global");
             let upstream = AnthropicUpstream::resolve(state, &config, &profile, &beta).await?;
-            let url = format!(
-                "{}?beta=true",
-                upstream.transport.url("/v1/messages/count_tokens")
-            );
-            upstream.request(&state.http, &url).json(&body).send().await
+            upstream
+                .request(&state.http, "/v1/messages/count_tokens")
+                .json(&body)
+                .send()
+                .await
         }
     }
     .map_err(|e| ApiError::from(ByokError::from(e)))?;
 
     if !resp.status().is_success() {
-        return Err(ApiError::from(upstream_failure(resp).await));
+        return Err(ApiError::from(ByokError::from_response(resp).await));
     }
     let text = resp
         .text()

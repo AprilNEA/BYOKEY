@@ -14,34 +14,20 @@ workspace = true
 
 [dependencies]
 byokey-types = { workspace = true, features = ["wreq"] }
-byokey-config.workspace = true
 byokey-auth.workspace = true
-loadwise-core.workspace = true
-aigw.workspace = true
 aigw-core.workspace = true
-aigw-openai.workspace = true
-aigw-gemini.workspace = true
-reqwest.workspace = true
-secrecy.workspace = true
 wreq.workspace = true
 rand.workspace = true
-eventsource-stream.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-anyhow.workspace = true
-thiserror.workspace = true
 tokio.workspace = true
-async-trait.workspace = true
 bon.workspace = true
-futures-core.workspace = true
 futures-util.workspace = true
 bytes.workspace = true
 tracing.workspace = true
-hmac = "0.12"
 sha2.workspace = true
 hex = "0.4"
 uuid = { version = "1", features = ["v4", "v5"] }
-tokio-tungstenite.workspace = true
 http.workspace = true
 flate2 = "1.1.10"
 tokio-stream.workspace = true

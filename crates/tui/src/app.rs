@@ -68,7 +68,6 @@ impl ManagementSnapshot {
                     enabled: provider.enabled,
                     auth_state: AuthState::from_proto(provider.auth_status.as_known()),
                     accounts,
-                    models_count: provider.models_count,
                 }
             })
             .collect();
@@ -177,7 +176,6 @@ pub struct ProviderSnapshot {
     pub enabled: bool,
     pub auth_state: AuthState,
     pub accounts: Vec<AccountSnapshot>,
-    pub models_count: u32,
 }
 
 pub struct UsageRow {

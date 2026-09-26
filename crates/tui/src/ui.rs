@@ -88,12 +88,11 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
                 Cell::from(state_label).style(state_style),
                 Cell::from(if p.enabled { "yes" } else { "no" }),
                 Cell::from(p.accounts.len().to_string()).style(Style::default().fg(Color::White)),
-                Cell::from(p.models_count.to_string()),
             ])
         })
         .collect();
 
-    let header = Row::new(vec!["id", "name", "state", "enabled", "accounts", "models"])
+    let header = Row::new(vec!["id", "name", "state", "enabled", "accounts"])
         .style(
             Style::default()
                 .fg(Color::Yellow)
@@ -109,7 +108,6 @@ fn draw_status(f: &mut Frame, area: Rect, app: &App) {
             Constraint::Length(20),
             Constraint::Length(9),
             Constraint::Length(10),
-            Constraint::Length(8),
         ],
     )
     .header(header)

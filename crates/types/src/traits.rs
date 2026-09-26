@@ -4,11 +4,10 @@
 //! only on `byokey-types`, not on each other.
 
 pub use crate::error::Result;
-use crate::{AccountInfo, ByokError, ChatRequest, OAuthToken, ProviderId};
+use crate::{AccountInfo, ByokError, OAuthToken, ProviderId};
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures_core::Stream;
-use serde_json::Value;
 use std::pin::Pin;
 
 /// A pinned, sendable stream of SSE byte chunks.
@@ -20,10 +19,6 @@ pub const DEFAULT_ACCOUNT: &str = "default";
 /// Default account identifier for credentials imported from the local
 /// Claude Code CLI (see `byokey_auth::provider::claude_code`).
 pub const CLAUDE_CODE_ACCOUNT: &str = "claude-code";
-
-/// Default account identifier for credentials imported from the local
-/// `OpenAI` Codex CLI (see `byokey_auth::provider::codex_cli`).
-pub const CODEX_CLI_ACCOUNT: &str = "codex-cli";
 
 /// Maximum byte length accepted by the `AddApiKey` RPC / CLI command.
 /// Real API keys are well under 1KB; rejecting larger values guards against
@@ -106,59 +101,6 @@ pub trait TokenStore: Send + Sync {
     }
 }
 
-/// Summary of a stored conversation.
-#[derive(Debug, Clone)]
-pub struct ConversationSummary {
-    pub id: String,
-    pub title: Option<String>,
-    pub model: String,
-    pub provider: String,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
-
-/// A single message record for persistence.
-#[derive(Debug, Clone)]
-pub struct MessageRecord {
-    pub id: String,
-    pub conversation_id: String,
-    pub role: String,
-    pub content: String,
-    pub input_tokens: Option<u64>,
-    pub output_tokens: Option<u64>,
-    pub model: Option<String>,
-    pub finish_reason: Option<String>,
-    pub duration_ms: Option<u64>,
-    pub extra: Option<Value>,
-    pub created_at: i64,
-}
-
-/// Persistent storage for chat conversation history.
-#[async_trait]
-pub trait ChatHistoryStore: Send + Sync {
-    /// Create a new conversation, returning its ID.
-    async fn create_conversation(
-        &self,
-        id: &str,
-        model: &str,
-        provider: &str,
-        title: Option<&str>,
-    ) -> Result<()>;
-
-    /// Append a message to an existing conversation.
-    async fn append_message(&self, msg: &MessageRecord) -> Result<()>;
-
-    /// List recent conversations, newest first.
-    async fn list_conversations(&self, limit: u64, offset: u64)
-    -> Result<Vec<ConversationSummary>>;
-
-    /// Load all messages for a conversation, ordered by `created_at`.
-    async fn get_messages(&self, conversation_id: &str) -> Result<Vec<MessageRecord>>;
-
-    /// Delete a conversation and its messages.
-    async fn delete_conversation(&self, conversation_id: &str) -> Result<()>;
-}
-
 /// A single request's usage record for persistence.
 #[derive(Debug, Clone)]
 pub struct UsageRecord {
@@ -173,24 +115,11 @@ pub struct UsageRecord {
     pub success: bool,
 }
 
-/// Time-bucketed usage aggregation result.
-#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
+/// Per-model usage totals.
+#[derive(Debug, Clone)]
 pub struct UsageBucket {
-    pub period_start: i64,
     pub model: String,
     pub request_count: u64,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-}
-
-/// Per-(provider, account, model) cumulative usage for a time range.
-#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
-pub struct AccountUsageTotal {
-    pub provider: String,
-    pub account_id: String,
-    pub model: String,
-    pub request_count: u64,
-    pub success_count: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
 }
@@ -201,70 +130,6 @@ pub trait UsageStore: Send + Sync {
     /// Record a single request's usage.
     async fn record(&self, record: &UsageRecord) -> Result<()>;
 
-    /// Query aggregated usage within a time range, optionally filtered by model.
-    /// Results are grouped into time buckets whose size is determined by the range.
-    async fn query(
-        &self,
-        from: i64,
-        to: i64,
-        model: Option<&str>,
-        bucket_secs: i64,
-    ) -> Result<Vec<UsageBucket>>;
-
     /// Get cumulative totals, optionally within a time range.
     async fn totals(&self, from: Option<i64>, to: Option<i64>) -> Result<Vec<UsageBucket>>;
-
-    /// Cumulative usage grouped by (provider, `account_id`, model), optionally
-    /// within a time range.
-    ///
-    /// Returns an empty vector by default; backends that track `account_id`
-    /// override this.
-    async fn totals_by_account(
-        &self,
-        _from: Option<i64>,
-        _to: Option<i64>,
-    ) -> Result<Vec<AccountUsageTotal>> {
-        Ok(Vec::new())
-    }
-}
-
-/// Translates an `OpenAI`-format request into a provider's native format.
-///
-/// Implementations must be pure (no I/O).
-pub trait RequestTranslator: Send + Sync {
-    /// Convert an `OpenAI`-compatible JSON request body to the provider's format.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ByokError::Translation`] if the request cannot be translated.
-    fn translate_request(&self, req: Value) -> Result<Value>;
-}
-
-/// Translates a provider's native response back to `OpenAI` format.
-///
-/// Implementations must be pure (no I/O).
-pub trait ResponseTranslator: Send + Sync {
-    /// Convert a provider-native JSON response body to `OpenAI` format.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ByokError::Translation`] if the response cannot be translated.
-    fn translate_response(&self, res: Value) -> Result<Value>;
-}
-
-/// The response produced by a [`ProviderExecutor`].
-pub enum ProviderResponse {
-    /// A complete, non-streaming JSON response.
-    Complete(Value),
-    /// A streaming SSE byte stream.
-    Stream(ByteStream),
-}
-
-/// Executes chat-completion requests against an upstream provider.
-#[async_trait]
-pub trait ProviderExecutor: Send + Sync {
-    /// Send a chat-completion request and return the response.
-    async fn chat_completion(&self, request: ChatRequest) -> Result<ProviderResponse>;
-    /// List the model identifiers supported by this provider.
-    fn supported_models(&self) -> Vec<String>;
 }

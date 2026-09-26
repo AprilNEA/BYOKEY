@@ -6,9 +6,8 @@
 use async_trait::async_trait;
 use byokey_types::{ByokError, OAuthToken, ProviderId, Result};
 use std::time::Duration;
-use tokio::sync::mpsc;
 
-use super::{LoginProgress, emit, open_browser, save_login_token};
+use super::{open_browser, save_login_token};
 use crate::{AuthManager, credentials::OAuthCredentials, token, token::DeviceCodeResponse};
 
 /// Result of a single token poll attempt.
@@ -69,9 +68,7 @@ pub async fn run<P: DeviceCodeFlow>(
     auth: &AuthManager,
     http: &wreq::Client,
     account: Option<&str>,
-    events: Option<&mpsc::Sender<LoginProgress>>,
 ) -> Result<()> {
-    emit(events, LoginProgress::Started).await;
     let creds = crate::credentials::fetch(provider.provider_name(), http).await?;
     let dc = provider.request_device_code(http, &creds).await?;
     let provider_id = provider.provider_id();
@@ -81,18 +78,8 @@ pub async fn run<P: DeviceCodeFlow>(
         code = %dc.user_code,
         "visit URL and enter verification code"
     );
-    if events.is_none() {
-        println!("{}", device_code_prompt(&dc));
-    }
+    println!("{}", device_code_prompt(&dc));
     open_browser(&dc.verification_uri);
-    emit(
-        events,
-        LoginProgress::OpenedBrowser {
-            url: dc.verification_uri.clone(),
-            user_code: Some(dc.user_code.clone()),
-        },
-    )
-    .await;
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(dc.expires_in);
     let mut interval = dc.interval as f64;
@@ -106,13 +93,8 @@ pub async fn run<P: DeviceCodeFlow>(
 
         match provider.poll_token(http, &creds, &dc.device_code).await? {
             PollResult::Success(tok) => {
-                // Device Code flow has no distinct "exchange" step: the
-                // successful poll *is* the token return. Go straight to
-                // saving and letting DONE be emitted by the handler.
                 save_login_token(auth, &provider_id, tok, account).await?;
-                if events.is_none() {
-                    println!("{provider_id} login successful");
-                }
+                println!("{provider_id} login successful");
                 tracing::info!(provider = %provider_id, "login successful");
                 return Ok(());
             }

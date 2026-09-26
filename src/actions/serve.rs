@@ -114,15 +114,15 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
         std::time::Duration::from_secs(300),
     );
 
-    // Fetch remote version/fingerprint info (falls back to compile-time defaults).
-    let versions = byokey_proxy::VersionStore::fetch(&wreq::Client::new()).await;
+    // The Copilot client versions to present (compile-time defaults offline).
+    let copilot_identity = byokey_provider::CopilotIdentity::fetch(&wreq::Client::new()).await;
 
     let usage_store: Arc<dyn byokey_types::UsageStore> = store;
     let state = AppState::new(
         Arc::clone(&config_arc),
         auth,
         Some(usage_store.clone()),
-        versions,
+        copilot_identity,
     );
 
     // Pre-load cumulative usage from persisted records so the in-memory snapshot

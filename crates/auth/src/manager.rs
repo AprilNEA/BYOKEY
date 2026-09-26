@@ -15,7 +15,7 @@ use std::{
 };
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::{credentials, provider::iflow, token};
+use crate::{credentials, token};
 
 const REFRESH_COOLDOWN: Duration = Duration::from_secs(30);
 
@@ -280,8 +280,8 @@ impl AuthManager {
     /// proactively refreshes tokens approaching expiry.
     ///
     /// The loop runs every `interval` and refreshes any token that would
-    /// expire within `lead_time`. Tokens without a `refresh_token`, or for
-    /// providers that don't support refresh (Copilot, Kiro), are skipped.
+    /// expire within `lead_time`. Tokens without a `refresh_token`, and
+    /// Copilot's non-expiring GitHub tokens, are skipped.
     ///
     /// Returns a [`tokio::task::JoinHandle`] that can be used to abort the loop.
     pub fn spawn_refresh_loop(
@@ -301,8 +301,7 @@ impl AuthManager {
     /// Scans all providers and refreshes tokens expiring within `lead_time`.
     async fn refresh_due_tokens(self: &Arc<Self>, lead_time: Duration) {
         for provider in ProviderId::all() {
-            // Skip providers that don't support refresh.
-            if matches!(provider, ProviderId::Copilot | ProviderId::Kiro) {
+            if *provider == ProviderId::Copilot {
                 continue;
             }
 
@@ -393,17 +392,15 @@ impl AuthManager {
             .as_deref()
             .ok_or_else(|| ByokError::Auth(format!("no refresh_token for {provider}")))?;
 
-        // Copilot tokens don't expire; Kiro login is not yet implemented.
-        if matches!(provider, ProviderId::Copilot | ProviderId::Kiro) {
-            return Err(ByokError::Auth(format!(
-                "token refresh not supported for {provider}; please re-authenticate"
-            )));
-        }
-
-        let refresh_result = if *provider == ProviderId::Cursor {
-            crate::provider::cursor::exchange(&self.http, refresh_token).await
-        } else {
-            self.refresh_oauth(provider, refresh_token).await
+        let refresh_result = match provider {
+            // GitHub tokens do not expire; one that stopped working needs a new login.
+            ProviderId::Copilot => Err(ByokError::Auth(
+                "token refresh not supported for copilot; please re-authenticate".into(),
+            )),
+            ProviderId::Cursor => {
+                crate::provider::cursor::exchange(&self.http, refresh_token).await
+            }
+            ProviderId::Claude => self.refresh_oauth(provider, refresh_token).await,
         };
 
         let new_token = match refresh_result {
@@ -418,8 +415,7 @@ impl AuthManager {
             Err(e) => return Err(e),
         };
 
-        // Preserve the old refresh_token if the response didn't include a new one
-        // (Google OAuth typically does not return a new refresh_token on refresh).
+        // Preserve the old refresh_token if the response didn't include a new one.
         let new_token = if new_token.refresh_token.is_none() {
             OAuthToken {
                 refresh_token: token.refresh_token.clone(),
@@ -448,31 +444,13 @@ impl AuthManager {
             ByokError::Auth(format!("no token_url in credentials for {provider}"))
         })?;
 
-        if *provider == ProviderId::IFlow {
-            self.refresh_iflow(&creds, token_url, refresh_token).await
-        } else {
-            self.refresh_standard(&creds, token_url, refresh_token)
-                .await
-        }
-    }
-
-    /// Standard `OAuth2` refresh: POST form with `grant_type=refresh_token`.
-    async fn refresh_standard(
-        &self,
-        creds: &credentials::OAuthCredentials,
-        token_url: &str,
-        refresh_token: &str,
-    ) -> Result<OAuthToken> {
         let mut params = vec![
             ("grant_type", "refresh_token"),
             ("client_id", creds.client_id.as_str()),
             ("refresh_token", refresh_token),
         ];
-        // Providers with a client_secret (Gemini, Antigravity) include it in the form.
-        let secret_ref;
         if let Some(secret) = &creds.client_secret {
-            secret_ref = secret.clone();
-            params.push(("client_secret", &secret_ref));
+            params.push(("client_secret", secret.as_str()));
         }
 
         let resp = self
@@ -507,68 +485,6 @@ impl AuthManager {
         }
 
         token::parse_token_response(&json)
-    }
-
-    /// iFlow-specific refresh: uses Basic Auth header and exchanges the new
-    /// OAuth `access_token` for an API key via `fetch_api_key`.
-    async fn refresh_iflow(
-        &self,
-        creds: &credentials::OAuthCredentials,
-        token_url: &str,
-        refresh_token: &str,
-    ) -> Result<OAuthToken> {
-        let client_secret = creds
-            .client_secret
-            .as_deref()
-            .ok_or_else(|| ByokError::Auth("iflow credentials missing client_secret".into()))?;
-
-        let params = [
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token),
-        ];
-
-        let resp = self
-            .http
-            .post(token_url)
-            .header(
-                "Authorization",
-                iflow::basic_auth_header(&creds.client_id, client_secret),
-            )
-            .form(&params)
-            .send()
-            .await?;
-
-        let status = resp.status();
-        let json: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| ByokError::Auth(format!("failed to parse refresh response: {e}")))?;
-
-        if !status.is_success() {
-            let error_code = json
-                .get("error")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("");
-            let error_desc = json
-                .get("error_description")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("unknown error");
-            if error_code == "invalid_grant" {
-                return Err(ByokError::Auth(format!("invalid_grant: {error_desc}")));
-            }
-            return Err(ByokError::Auth(format!(
-                "iflow refresh failed ({status}): {error_desc}"
-            )));
-        }
-
-        let tok = token::parse_token_response(&json)?;
-
-        // Exchange the new OAuth access_token for an iFlow API key.
-        let api_key = iflow::fetch_api_key(&tok.access_token, &self.http).await?;
-        Ok(OAuthToken {
-            access_token: api_key,
-            ..tok
-        })
     }
 }
 
@@ -619,34 +535,34 @@ mod tests {
             token_type: None,
             client: None,
         };
-        m.save_token(&ProviderId::Gemini, tok).await.unwrap();
-        let err = m.get_token(&ProviderId::Gemini).await.unwrap_err();
+        m.save_token(&ProviderId::Cursor, tok).await.unwrap();
+        let err = m.get_token(&ProviderId::Cursor).await.unwrap_err();
         assert!(matches!(err, ByokError::TokenExpired(_)));
     }
 
     #[tokio::test]
     async fn test_is_authenticated_false_when_missing() {
         let m = make_manager();
-        assert!(!m.is_authenticated(&ProviderId::Codex).await);
+        assert!(!m.is_authenticated(&ProviderId::Cursor).await);
     }
 
     #[tokio::test]
     async fn test_is_authenticated_true_when_valid() {
         let m = make_manager();
-        m.save_token(&ProviderId::Codex, OAuthToken::new("tok"))
+        m.save_token(&ProviderId::Cursor, OAuthToken::new("tok"))
             .await
             .unwrap();
-        assert!(m.is_authenticated(&ProviderId::Codex).await);
+        assert!(m.is_authenticated(&ProviderId::Cursor).await);
     }
 
     #[tokio::test]
     async fn test_remove_token() {
         let m = make_manager();
-        m.save_token(&ProviderId::Kiro, OAuthToken::new("tok"))
+        m.save_token(&ProviderId::Copilot, OAuthToken::new("tok"))
             .await
             .unwrap();
-        m.remove_token(&ProviderId::Kiro).await.unwrap();
-        assert!(!m.is_authenticated(&ProviderId::Kiro).await);
+        m.remove_token(&ProviderId::Copilot).await.unwrap();
+        assert!(!m.is_authenticated(&ProviderId::Copilot).await);
     }
 
     #[tokio::test]

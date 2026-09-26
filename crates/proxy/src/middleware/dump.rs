@@ -174,7 +174,7 @@ fn bytes_to_json(bytes: &Bytes) -> Value {
     json!({"__binary_length": bytes.len()})
 }
 
-/// Generate a filename like `1712345678901_POST_v1_chat_completions.json`.
+/// Generate a filename like `1712345678901_POST_v1_messages.json`.
 fn make_filename(method: &str, uri: &str) -> String {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -186,7 +186,7 @@ async fn account(
     if pc.is_some_and(|c| !c.enabled) {
         return None;
     }
-    if pc.is_some_and(|c| c.api_key.is_some() || !c.api_keys.is_empty()) {
+    if pc.is_some_and(|c| c.api_key.is_some()) {
         return Some(Outcome::Ok("API key in config".into()));
     }
     let accounts = auth.list_accounts(provider).await.unwrap_or_default();

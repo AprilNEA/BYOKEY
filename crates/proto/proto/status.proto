@@ -8,19 +8,6 @@ service StatusService {
   rpc GetUsage(GetUsageRequest) returns (GetUsageResponse) {
     option idempotency_level = NO_SIDE_EFFECTS;
   }
-  rpc GetUsageHistory(GetUsageHistoryRequest) returns (GetUsageHistoryResponse) {
-    option idempotency_level = NO_SIDE_EFFECTS;
-  }
-  rpc GetUsageByAccount(GetUsageByAccountRequest) returns (GetUsageByAccountResponse) {
-    option idempotency_level = NO_SIDE_EFFECTS;
-  }
-  rpc GetRateLimits(GetRateLimitsRequest) returns (GetRateLimitsResponse) {
-    option idempotency_level = NO_SIDE_EFFECTS;
-  }
-  rpc ListRoutingPolicies(ListRoutingPoliciesRequest) returns (ListRoutingPoliciesResponse) {
-    option idempotency_level = NO_SIDE_EFFECTS;
-  }
-  rpc SetRoutingPolicy(SetRoutingPolicyRequest) returns (SetRoutingPolicyResponse);
 }
 
 message GetStatusRequest {}
@@ -40,7 +27,6 @@ message ProviderStatus {
   string display_name = 2;
   bool enabled = 3;
   AuthStatus auth_status = 4;
-  uint32 models_count = 5;
 }
 
 enum AuthStatus {
@@ -68,102 +54,3 @@ message ModelStats {
   uint64 input_tokens = 4;
   uint64 output_tokens = 5;
 }
-
-message GetUsageHistoryRequest {
-  optional int64 from = 1;
-  optional int64 to = 2;
-  optional string model = 3;
-}
-
-message GetUsageHistoryResponse {
-  int64 from = 1;
-  int64 to = 2;
-  int64 bucket_seconds = 3;
-  repeated UsageBucket buckets = 4;
-  optional string error = 5;
-}
-
-message UsageBucket {
-  int64 period_start = 1;
-  string model = 2;
-  uint64 request_count = 3;
-  uint64 input_tokens = 4;
-  uint64 output_tokens = 5;
-}
-
-message GetUsageByAccountRequest {
-  optional int64 from = 1;
-  optional int64 to = 2;
-}
-
-message GetUsageByAccountResponse {
-  repeated AccountUsageRow rows = 1;
-  optional string error = 2;
-}
-
-message AccountUsageRow {
-  string provider = 1;
-  string account_id = 2;
-  string model = 3;
-  uint64 request_count = 4;
-  uint64 success_count = 5;
-  uint64 input_tokens = 6;
-  uint64 output_tokens = 7;
-}
-
-message GetRateLimitsRequest {}
-
-message GetRateLimitsResponse {
-  repeated ProviderRateLimits providers = 1;
-}
-
-message ProviderRateLimits {
-  string id = 1;
-  string display_name = 2;
-  repeated AccountRateLimit accounts = 3;
-}
-
-message AccountRateLimit {
-  string account_id = 1;
-  RateLimitSnapshot snapshot = 2;
-}
-
-message RateLimitSnapshot {
-  map<string, string> headers = 1;
-  // Unix timestamp (seconds since epoch).
-  uint64 captured_at = 2;
-}
-
-message ListRoutingPoliciesRequest {}
-
-message ListRoutingPoliciesResponse {
-  repeated RoutingPolicy policies = 1;
-}
-
-message RoutingPolicy {
-  string provider = 1;
-  // Empty string means "applies to all families for this provider".
-  string family = 2;
-  RoutingStrategy strategy = 3;
-  // Empty means "use every configured account for the provider".
-  repeated string accounts = 4;
-  // Per-account weights keyed by account_id.
-  map<string, uint32> weights = 5;
-}
-
-enum RoutingStrategy {
-  ROUTING_STRATEGY_UNSPECIFIED = 0;
-  ROUTING_STRATEGY_ROUND_ROBIN = 1;
-  ROUTING_STRATEGY_WEIGHTED_ROUND_ROBIN = 2;
-  ROUTING_STRATEGY_RANDOM = 3;
-  ROUTING_STRATEGY_WEIGHTED_RANDOM = 4;
-  ROUTING_STRATEGY_PRIORITY = 5;
-}
-
-message SetRoutingPolicyRequest {
-  RoutingPolicy policy = 1;
-  // If true, delete the (provider, family) policy instead of upserting.
-  bool remove = 2;
-}
-
-message SetRoutingPolicyResponse {}

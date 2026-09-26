@@ -18,10 +18,6 @@ pub enum ByokError {
     #[error("token expired for provider: {0}")]
     TokenExpired(crate::ProviderId),
 
-    /// The requested provider is not configured or reachable.
-    #[error("provider not available: {0}")]
-    ProviderUnavailable(crate::ProviderId),
-
     /// Request or response format translation failure.
     #[error("translation error: {0}")]
     Translation(String),
@@ -62,8 +58,7 @@ pub enum ByokError {
     Upstream {
         status: u16,
         body: String,
-        /// Server-indicated retry delay parsed from `Retry-After` header
-        /// or response body fields (e.g. Codex `error.resets_in_seconds`).
+        /// Server-indicated retry delay from the `Retry-After` header.
         retry_after: Option<Duration>,
     },
 }
@@ -77,10 +72,24 @@ impl From<wreq::Error> for ByokError {
     }
 }
 
-#[cfg(feature = "sqlx")]
-impl From<sqlx::Error> for ByokError {
-    fn from(e: sqlx::Error) -> Self {
-        Self::Storage(e.to_string())
+#[cfg(feature = "wreq")]
+impl ByokError {
+    /// The error for a non-success upstream response: its status,
+    /// `retry-after` and body, so the client sees what the upstream said.
+    pub async fn from_response(resp: wreq::Response) -> Self {
+        let status = resp.status().as_u16();
+        let retry_after = resp
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.trim().parse().ok())
+            .map(Duration::from_secs);
+        let body = resp.text().await.unwrap_or_default();
+        Self::Upstream {
+            status,
+            body,
+            retry_after,
+        }
     }
 }
 
@@ -99,15 +108,6 @@ impl ByokError {
             Self::Upstream { status, .. } => matches!(status, 408 | 429 | 500 | 502 | 503 | 504),
             Self::Http(_) => true, // transport errors are retryable
             _ => false,
-        }
-    }
-
-    /// Returns the server-indicated retry delay, if available.
-    #[must_use]
-    pub fn retry_after(&self) -> Option<Duration> {
-        match self {
-            Self::Upstream { retry_after, .. } => *retry_after,
-            _ => None,
         }
     }
 }

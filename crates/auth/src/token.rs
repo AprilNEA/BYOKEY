@@ -8,7 +8,7 @@ use byokey_types::{ByokError, OAuthToken, Result};
 
 /// Parsed response from an OAuth 2.0 Device Authorization Grant.
 ///
-/// Shared across device code flows: Copilot, Qwen, Kimi, Kiro.
+/// Used by the Copilot device code flow.
 #[derive(Debug)]
 pub struct DeviceCodeResponse {
     /// Unique device verification code.

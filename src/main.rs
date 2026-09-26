@@ -84,7 +84,7 @@ enum Commands {
     },
     /// Authenticate with a provider.
     Login {
-        /// Provider name.
+        /// Provider name: `claude`, `copilot` or `cursor`.
         provider: ProviderId,
         /// Account identifier (e.g. `work`, `personal`). Defaults to `default`.
         #[arg(long, value_name = "NAME")]
@@ -119,18 +119,6 @@ enum Commands {
         #[arg(long, value_name = "NAME")]
         account: Option<String>,
         /// Human-readable label to show in UIs. Defaults to `Claude Code`.
-        #[arg(long)]
-        label: Option<String>,
-        #[command(flatten)]
-        store: StoreArgs,
-    },
-    /// Import the local OpenAI Codex CLI's OAuth credentials as a Codex
-    /// account. Reads from `~/.codex/auth.json`.
-    ImportCodex {
-        /// Account identifier. Defaults to `codex-cli`.
-        #[arg(long, value_name = "NAME")]
-        account: Option<String>,
-        /// Human-readable label to show in UIs. Defaults to `Codex CLI`.
         #[arg(long)]
         label: Option<String>,
         #[command(flatten)]
@@ -187,8 +175,6 @@ enum Commands {
         #[command(subcommand)]
         action: claude::ClaudeAction,
     },
-    /// Export the OpenAPI specification as JSON.
-    Openapi,
     /// Generate shell completions.
     Completions {
         /// Shell to generate completions for.
@@ -245,16 +231,6 @@ async fn run(command: Commands) -> Result<()> {
                 .import_claude_code(account, label)
                 .await
         }
-        Commands::ImportCodex {
-            account,
-            label,
-            store,
-        } => {
-            auth::AuthCmd::new(store.db)
-                .await?
-                .import_codex(account, label)
-                .await
-        }
         Commands::Logout {
             provider,
             account,
@@ -282,14 +258,6 @@ async fn run(command: Commands) -> Result<()> {
                 .await
         }
         Commands::Claude { action } => claude::cmd_claude(action),
-        Commands::Openapi => {
-            use utoipa::OpenApi as _;
-            let spec = byokey_proxy::ApiDoc::openapi()
-                .to_json()
-                .expect("OpenAPI spec serialization failed");
-            println!("{spec}");
-            Ok(())
-        }
         Commands::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "byokey", &mut std::io::stdout());
             Ok(())

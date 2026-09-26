@@ -25,7 +25,7 @@ pub struct OAuthCredentials {
     pub device_code_url: Option<String>,
 }
 
-/// Fetch credentials for `provider_name` (e.g. `"gemini"`, `"antigravity"`).
+/// Fetch credentials for `provider_name` (e.g. `"claude"`, `"copilot"`).
 ///
 /// # Errors
 ///

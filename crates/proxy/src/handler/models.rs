@@ -1,18 +1,15 @@
-//! `GET /v1/models`: the models a client can actually use.
+//! `GET /v1/models`: the models `/v1/messages` can route.
 //!
-//! One gateway serves two request formats, and a model id routes differently
-//! on each: `/v1/chat/completions` resolves providers through the model
-//! registry, while `/v1/messages` sends unprefixed ids to Anthropic (or the
-//! `claude.backend` override) and only `copilot/` or `cursor/` ids elsewhere.
-//! Anthropic clients (Claude Code, Claude Desktop) send `anthropic-version`;
-//! they get the ids `/v1/messages` routes, in Anthropic's list shape. Every
-//! other client gets the ids `/v1/chat/completions` routes.
+//! Unprefixed ids go to Anthropic, or to `claude.backend` when it is set,
+//! whose catalog then stands in for Anthropic's; `copilot/` and `cursor/`
+//! ids always reach their provider. Copilot and Cursor are listed from
+//! their accounts' live catalogs, Anthropic from the static registry, each
+//! once signed in or given an API key.
 //!
-//! Copilot and Cursor are listed from their accounts' live catalogs; other
-//! providers from the static registry, once signed in or given an API key.
-//!
-//! Claude Desktop reads `supports_1m` from the Anthropic-shaped list and
-//! offers the `<id>[1m]` variant of such models in its picker.
+//! Anthropic clients (Claude Code, Claude Desktop) send `anthropic-version`
+//! and get Anthropic's list shape; everyone else gets the `OpenAI` one.
+//! Claude Desktop reads `supports_1m` and offers the `<id>[1m]` variant of
+//! such models in its picker.
 
 use axum::{
     Json,
@@ -21,24 +18,16 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use byokey_config::Config;
-use byokey_provider::{CopilotModel, CursorExecutor, all_models};
+use byokey_provider::{CopilotModel, CursorUpstream, all_models};
 use byokey_types::ProviderId;
 use serde::Serialize;
 use serde_json::json;
 use std::sync::Arc;
-use utoipa::ToSchema;
 
 use crate::AppState;
 
-/// OpenAI-compatible model list response.
-#[derive(Serialize, ToSchema)]
-pub struct ModelsResponse {
-    pub object: String,
-    pub data: Vec<ModelEntry>,
-}
-
-/// A single model entry.
-#[derive(Serialize, ToSchema)]
+/// A listed model.
+#[derive(Serialize)]
 pub struct ModelEntry {
     pub id: String,
     pub object: String,
@@ -96,22 +85,12 @@ impl From<(String, String)> for LiveModel {
     }
 }
 
-/// Handles `GET /v1/models`.
-///
-/// Anthropic-format clients (with an `anthropic-version` header) get the
-/// models `/v1/messages` can route; others get what `/v1/chat/completions`
-/// can route. See the module documentation.
-#[utoipa::path(
-    get,
-    path = "/v1/models",
-    responses((status = 200, body = ModelsResponse)),
-    tag = "management"
-)]
+/// Handles `GET /v1/models`. See the module documentation.
 pub async fn list_models(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     let config = state.config.load();
     let live = Live::fetch(&state, &config).await;
+    let data = messages_models(&config, &live);
     if headers.contains_key("anthropic-version") {
-        let data = messages_models(&config, &live);
         let first = data.first().map(|m| m.id.clone());
         let last = data.last().map(|m| m.id.clone());
         let data: Vec<_> = data
@@ -129,11 +108,7 @@ pub async fn list_models(State(state): State<Arc<AppState>>, headers: HeaderMap)
         return Json(json!({"data": data, "has_more": false, "first_id": first, "last_id": last}))
             .into_response();
     }
-    Json(ModelsResponse {
-        object: "list".into(),
-        data: chat_models(&config, &live),
-    })
-    .into_response()
+    Json(json!({"object": "list", "data": data})).into_response()
 }
 
 /// Whether `provider` may be listed: enabled, and signed in or keyed.
@@ -142,8 +117,7 @@ async fn usable(state: &AppState, config: &Config, provider: &ProviderId) -> boo
     if pc.is_some_and(|c| !c.enabled) {
         return false;
     }
-    pc.is_some_and(|c| c.api_key.is_some() || !c.api_keys.is_empty())
-        || state.auth.is_authenticated(provider).await
+    pc.is_some_and(|c| c.api_key.is_some()) || state.auth.is_authenticated(provider).await
 }
 
 /// Live catalogs of the providers that publish one, plus which providers
@@ -163,8 +137,7 @@ impl Live {
             }
         }
         let copilot = if usable.contains(&ProviderId::Copilot) {
-            super::messages::copilot_executor(state)
-                .0
+            super::messages::copilot_upstream(state)
                 .models()
                 .await
                 .inspect_err(|e| tracing::warn!(error = %e, "Copilot model listing failed"))
@@ -177,7 +150,7 @@ impl Live {
                 .providers
                 .get(&ProviderId::Cursor)
                 .and_then(|c| c.api_key.clone());
-            CursorExecutor::builder()
+            CursorUpstream::builder()
                 .http(state.http.clone())
                 .auth(state.auth.clone())
                 .maybe_api_key(api_key)
@@ -203,11 +176,11 @@ impl Live {
         self.usable.contains(provider)
     }
 
-    /// Copilot models served on the given endpoint.
-    fn copilot_on(&self, endpoint: fn(&CopilotModel) -> bool) -> Vec<LiveModel> {
+    /// Copilot models served on its Anthropic-format `/v1/messages`.
+    fn copilot_messages(&self) -> Vec<LiveModel> {
         self.copilot
             .iter()
-            .filter(|m| endpoint(m))
+            .filter(|m| m.messages)
             .map(LiveModel::from)
             .collect()
     }
@@ -221,94 +194,42 @@ fn messages_models(config: &Config, live: &Live) -> Vec<ModelEntry> {
         .providers
         .get(&ProviderId::Claude)
         .and_then(|c| c.backend.clone());
-    let copilot = live.copilot_on(|m| m.messages);
+    let copilot = live.copilot_messages();
     let mut out = Vec::new();
     match backend {
-        Some(ProviderId::Copilot) => {
-            push_all(&mut out, config, &ProviderId::Copilot, &copilot, false);
-        }
-        Some(ProviderId::Cursor) => {
-            push_all(&mut out, config, &ProviderId::Cursor, &live.cursor, false);
-        }
+        Some(ProviderId::Copilot) => push_all(&mut out, &ProviderId::Copilot, &copilot, false),
+        Some(ProviderId::Cursor) => push_all(&mut out, &ProviderId::Cursor, &live.cursor, false),
         _ if live.has(&ProviderId::Claude) => {
             for entry in all_models() {
-                if entry.providers.first() == Some(&ProviderId::Claude)
-                    && !config.is_model_excluded(&ProviderId::Claude, entry.id)
-                {
-                    out.push(ModelEntry::new(
-                        entry.id.to_owned(),
-                        &ProviderId::Claude,
-                        None,
-                    ));
-                }
+                out.push(ModelEntry::new(
+                    entry.id.to_owned(),
+                    &ProviderId::Claude,
+                    None,
+                ));
             }
         }
         _ => {}
     }
     // The backend's models are already listed unprefixed.
     if backend != Some(ProviderId::Copilot) {
-        push_all(&mut out, config, &ProviderId::Copilot, &copilot, true);
+        push_all(&mut out, &ProviderId::Copilot, &copilot, true);
     }
     if backend != Some(ProviderId::Cursor) {
-        push_all(&mut out, config, &ProviderId::Cursor, &live.cursor, true);
+        push_all(&mut out, &ProviderId::Cursor, &live.cursor, true);
     }
     out
 }
 
-/// What `/v1/chat/completions` routes: registry models of listed providers
-/// (Copilot and Cursor from their live catalogs instead), unprefixed under
-/// the provider the registry resolves them to, and live models qualified.
-fn chat_models(config: &Config, live: &Live) -> Vec<ModelEntry> {
-    let mut out = Vec::new();
-    for entry in all_models() {
-        let Some(primary) = entry.providers.first() else {
-            continue;
-        };
-        if matches!(primary, ProviderId::Copilot | ProviderId::Cursor)
-            || !live.has(primary)
-            || config.is_model_excluded(primary, entry.id)
-        {
-            continue;
-        }
-        let alias = config
-            .model_alias
-            .get(primary)
-            .and_then(|a| a.iter().find(|ae| ae.name == entry.id));
-        match alias {
-            Some(ae) => {
-                out.push(ModelEntry::new(ae.alias.clone(), primary, None));
-                if ae.fork {
-                    out.push(ModelEntry::new(entry.id.to_owned(), primary, None));
-                }
-            }
-            None => out.push(ModelEntry::new(entry.id.to_owned(), primary, None)),
-        }
-    }
-    push_all(
-        &mut out,
-        config,
-        &ProviderId::Copilot,
-        &live.copilot_on(|m| m.chat),
-        true,
-    );
-    push_all(&mut out, config, &ProviderId::Cursor, &live.cursor, true);
-    out
-}
-
-/// Append `models` of `provider`, skipping excluded ids and ids already
-/// listed. Qualified entries are listed as `provider/<id>` and named after
-/// their provider too, since several providers serve the same models.
+/// Append `models` of `provider`, skipping ids already listed. Qualified
+/// entries are listed as `provider/<id>` and named after their provider too,
+/// since several providers serve the same models.
 fn push_all(
     out: &mut Vec<ModelEntry>,
-    config: &Config,
     provider: &ProviderId,
     models: &[LiveModel],
     qualified: bool,
 ) {
     for m in models {
-        if config.is_model_excluded(provider, &m.id) {
-            continue;
-        }
         let listed = if qualified {
             format!("{provider}/{}", m.id)
         } else {
@@ -381,7 +302,7 @@ mod tests {
     }
 
     #[test]
-    fn messages_list_follows_the_claude_backend() {
+    fn the_list_follows_the_claude_backend() {
         let live = live(&[ProviderId::Claude, ProviderId::Copilot, ProviderId::Cursor]);
         let direct = messages_models(&Config::default(), &live);
         let direct = ids(&direct);
@@ -391,6 +312,10 @@ mod tests {
         );
         assert!(direct.contains(&"copilot/claude-opus-5.5"));
         assert!(direct.contains(&"cursor/claude-opus-5-5"));
+        assert!(
+            !direct.contains(&"copilot/gpt-5.4"),
+            "chat-only Copilot models are not on /v1/messages"
+        );
 
         let redirected = messages_models(&backend(ProviderId::Copilot), &live);
         assert_eq!(
@@ -417,29 +342,16 @@ mod tests {
             !redirected.contains(&"claude-fable-5-1"),
             "would reach Copilot"
         );
-        assert!(
-            !redirected.contains(&"copilot/gpt-5.6-sol"),
-            "not on /v1/messages"
-        );
     }
 
     #[test]
-    fn chat_list_keeps_only_what_chat_completions_reaches() {
-        let live = live(&[ProviderId::Copilot, ProviderId::Codex]);
-        let chat = chat_models(&Config::default(), &live);
-        let chat = ids(&chat);
-        assert!(chat.contains(&"copilot/gpt-5.4"));
-        assert!(
-            !chat.contains(&"copilot/gpt-5.6-sol"),
-            "Responses-only on Copilot"
-        );
-        assert!(
-            !chat.contains(&"claude-fable-5-1"),
-            "Claude is not signed in"
-        );
-        assert!(
-            chat.iter().any(|id| id.starts_with("gpt-")),
-            "Codex registry models"
-        );
+    fn nothing_is_listed_without_a_login() {
+        // `Live::fetch` loads no catalog for a provider that is not usable.
+        let live = Live {
+            usable: Vec::new(),
+            copilot: Vec::new(),
+            cursor: Vec::new(),
+        };
+        assert!(messages_models(&Config::default(), &live).is_empty());
     }
 }

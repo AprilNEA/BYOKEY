@@ -15,14 +15,10 @@ workspace = true
 [dependencies]
 byokey-types = { workspace = true, features = ["wreq"] }
 byokey-store.workspace = true
-byokey-config.workspace = true
-oauth2.workspace = true
 wreq.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
-anyhow.workspace = true
-thiserror.workspace = true
 tokio.workspace = true
 async-trait.workspace = true
 rand.workspace = true

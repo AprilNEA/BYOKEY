@@ -36,6 +36,3 @@ buffa-types.workspace = true
 http.workspace = true
 http-body.workspace = true
 serde.workspace = true
-# Required by generated code: the server-streaming `Login` RPC stub
-# references `::futures::Stream` in its trait signature.
-futures.workspace = true

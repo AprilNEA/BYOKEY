@@ -1,17 +1,10 @@
 pub mod claude_code;
-pub mod model;
-pub mod payload;
 pub mod provider;
 pub mod runtime;
 
 pub use claude_code::ClaudeCodeConfig;
-pub use model::ModelAlias;
-pub use payload::{PayloadFilterRule, PayloadRule, PayloadRules};
-pub use provider::{
-    ApiKeyEntry, ClaudeHeaderDefaults, CloakConfig, CodexHeaderDefaults, KeyRoutingStrategy,
-    PolicyStrategyKind, ProviderConfig, RoutingPolicyEntry,
-};
-pub use runtime::{LogConfig, LogFormat, StreamingConfig, TelemetryConfig};
+pub use provider::ProviderConfig;
+pub use runtime::{LogConfig, LogFormat, TelemetryConfig};
 
 use byokey_types::ProviderId;
 use serde::{Deserialize, Serialize};
@@ -43,24 +36,6 @@ pub struct Config {
     /// All upstream requests will go through this proxy.
     #[serde(default)]
     pub proxy_url: Option<String>,
-    /// Model alias mappings per provider.
-    #[serde(default)]
-    pub model_alias: HashMap<ProviderId, Vec<ModelAlias>>,
-    /// Models to exclude from the /v1/models listing, per provider.
-    /// Supports glob patterns (e.g. "claude-3-*", "*-thinking").
-    #[serde(default)]
-    pub excluded_models: HashMap<ProviderId, Vec<String>>,
-    /// Streaming SSE configuration.
-    #[serde(default)]
-    pub streaming: StreamingConfig,
-    /// Payload rules for modifying request bodies.
-    #[serde(default)]
-    pub payload: PayloadRules,
-    /// Per-(provider, optional family) routing policies for load-balancing
-    /// across multiple accounts. Consumed by `byokey-provider`'s
-    /// `AccountSelector` at request time.
-    #[serde(default)]
-    pub routing_policies: Vec<RoutingPolicyEntry>,
     /// Logging configuration.
     #[serde(default)]
     pub log: LogConfig,
@@ -77,28 +52,9 @@ impl Default for Config {
             providers: HashMap::new(),
             claude_code: ClaudeCodeConfig::default(),
             proxy_url: None,
-            model_alias: HashMap::new(),
-            excluded_models: HashMap::new(),
-            streaming: StreamingConfig::default(),
-            payload: PayloadRules::default(),
-            routing_policies: Vec::new(),
             log: LogConfig::default(),
             telemetry: TelemetryConfig::default(),
         }
-    }
-}
-
-/// Simple glob matching with `*` wildcard support.
-pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
-    if pattern == "*" {
-        return true;
-    }
-    if let Some(suffix) = pattern.strip_prefix('*') {
-        text.ends_with(suffix)
-    } else if let Some(prefix) = pattern.strip_suffix('*') {
-        text.starts_with(prefix)
-    } else {
-        pattern == text
     }
 }
 
@@ -141,33 +97,6 @@ impl Config {
         };
         figment.extract()
     }
-
-    /// Resolves a model alias back to the original model name.
-    /// If the input is not an alias, returns it unchanged.
-    #[must_use]
-    pub fn resolve_alias(&self, model: &str) -> String {
-        for aliases in self.model_alias.values() {
-            for alias in aliases {
-                if alias.alias == model {
-                    return alias.name.clone();
-                }
-            }
-        }
-        model.to_string()
-    }
-
-    /// Returns true if the model matches any excluded pattern for its provider.
-    #[must_use]
-    pub fn is_model_excluded(&self, provider: &ProviderId, model: &str) -> bool {
-        if let Some(patterns) = self.excluded_models.get(provider) {
-            for pattern in patterns {
-                if glob_match(pattern, model) {
-                    return true;
-                }
-            }
-        }
-        false
-    }
 }
 
 #[cfg(test)]
@@ -181,7 +110,7 @@ providers:
   claude:
     api_key: "sk-ant-test"
     enabled: true
-  codex:
+  cursor:
     enabled: false
 "#;
 
@@ -208,13 +137,6 @@ providers:
     }
 
     #[test]
-    fn test_default_config_alias_and_excluded_empty() {
-        let c = Config::default();
-        assert!(c.model_alias.is_empty());
-        assert!(c.excluded_models.is_empty());
-    }
-
-    #[test]
     fn test_default_proxy_url_is_none() {
         let c = Config::default();
         assert!(c.proxy_url.is_none());
@@ -227,91 +149,5 @@ proxy_url: "socks5://user:pass@host:1080"
 "#;
         let c = Config::from_yaml(yaml).unwrap();
         assert_eq!(c.proxy_url.as_deref(), Some("socks5://user:pass@host:1080"));
-    }
-
-    #[test]
-    fn test_from_yaml_model_alias() {
-        let yaml = r#"
-model_alias:
-  claude:
-    - name: "claude-sonnet-4-5-20250929"
-      alias: "cs4.5"
-      fork: true
-    - name: "claude-opus-4-5"
-      alias: "co4.5"
-"#;
-        let c = Config::from_yaml(yaml).unwrap();
-        let aliases = c.model_alias.get(&ProviderId::Claude).unwrap();
-        assert_eq!(aliases.len(), 2);
-        assert_eq!(aliases[0].alias, "cs4.5");
-        assert!(aliases[0].fork);
-        assert_eq!(aliases[1].alias, "co4.5");
-        assert!(!aliases[1].fork);
-    }
-
-    #[test]
-    fn test_from_yaml_excluded_models() {
-        let yaml = r#"
-excluded_models:
-  claude:
-    - "claude-3-*"
-    - "*-thinking"
-"#;
-        let c = Config::from_yaml(yaml).unwrap();
-        let excluded = c.excluded_models.get(&ProviderId::Claude).unwrap();
-        assert_eq!(excluded.len(), 2);
-    }
-
-    #[test]
-    fn test_resolve_alias() {
-        let yaml = r#"
-model_alias:
-  claude:
-    - name: "claude-sonnet-4-5-20250929"
-      alias: "cs4.5"
-"#;
-        let c = Config::from_yaml(yaml).unwrap();
-        assert_eq!(c.resolve_alias("cs4.5"), "claude-sonnet-4-5-20250929");
-        assert_eq!(c.resolve_alias("unknown"), "unknown");
-    }
-
-    #[test]
-    fn test_is_model_excluded() {
-        let yaml = r#"
-excluded_models:
-  claude:
-    - "claude-3-*"
-    - "*-thinking"
-"#;
-        let c = Config::from_yaml(yaml).unwrap();
-        assert!(c.is_model_excluded(&ProviderId::Claude, "claude-3-opus"));
-        assert!(c.is_model_excluded(&ProviderId::Claude, "anything-thinking"));
-        assert!(!c.is_model_excluded(&ProviderId::Claude, "claude-opus-4-5"));
-        assert!(!c.is_model_excluded(&ProviderId::Gemini, "claude-3-opus"));
-    }
-
-    #[test]
-    fn test_glob_match_exact() {
-        assert!(glob_match("claude-3-opus", "claude-3-opus"));
-        assert!(!glob_match("claude-3-opus", "claude-3-sonnet"));
-    }
-
-    #[test]
-    fn test_glob_match_star_prefix() {
-        assert!(glob_match("*-thinking", "claude-thinking"));
-        assert!(glob_match("*-thinking", "model-thinking"));
-        assert!(!glob_match("*-thinking", "thinking-model"));
-    }
-
-    #[test]
-    fn test_glob_match_star_suffix() {
-        assert!(glob_match("claude-3-*", "claude-3-opus"));
-        assert!(glob_match("claude-3-*", "claude-3-"));
-        assert!(!glob_match("claude-3-*", "claude-4-opus"));
-    }
-
-    #[test]
-    fn test_glob_match_star_only() {
-        assert!(glob_match("*", "anything"));
     }
 }

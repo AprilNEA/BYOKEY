@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- BYOKEY is now an Anthropic Messages gateway for Claude Code and Claude Desktop. `/v1/chat/completions`, `/v1/responses` and `/openapi.json` are gone; `/v1/models` lists what `/v1/messages` routes.
+- Only `claude`, `copilot` and `cursor` remain. Codex, Gemini, Kiro, Antigravity, Qwen, Kimi and iFlow, `byokey import-codex` and the `codex/…` model prefix are removed. A config that still has a `providers` entry for one of them fails to load; stored tokens for them are ignored.
+- Config keys `model_alias`, `excluded_models`, `streaming`, `payload` and `routing_policies`, and the provider keys `api_keys`, `routing`, `fallback`, `max_retry_credentials`, `claude_headers`, `codex_headers`, `cloak` and `websocket`, are removed and rejected.
+- The management API keeps `GetStatus`, `GetUsage` and `ListAccounts`, which is what `byokey tui` reads; the other RPCs are removed.
+
 ## [2.1.0](https://github.com/AprilNEA/BYOKEY/compare/v2.0.0...v2.1.0) - 2026-09-24
 
 ### Added

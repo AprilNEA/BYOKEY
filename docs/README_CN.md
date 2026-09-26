@@ -9,8 +9,8 @@
 # BYOKEY
 
 **Bring Your Own Keys**<br>
-将 AI 订阅转换为标准 API 端点。<br>
-以 OpenAI 或 Anthropic 兼容格式暴露任意 Provider — 本地运行或云端部署。
+用你已有的订阅运行 Claude Code 和 Claude Desktop。<br>
+一个本地 Anthropic Messages API，后端是 GitHub Copilot、Cursor 或你自己的 Claude 登录。
 
 [![ci](https://img.shields.io/github/actions/workflow/status/AprilNEA/BYOKEY/ci.yml?style=flat-square&labelColor=000&color=444&label=ci)](https://github.com/AprilNEA/BYOKEY/actions/workflows/ci.yml)
 &nbsp;
@@ -23,42 +23,26 @@
 </div>
 
 ```
-订阅                                              工具
+订阅                                              客户端
 
-Claude Pro  ─┐                              ┌──  Claude Code
-OpenAI Plus ─┼──  byokey serve  ────────────┼──  Cursor · Windsurf
-Copilot     ─┘                              ├──  Factory CLI (Droid)
-                                            └──  任意 OpenAI / Anthropic 客户端
+GitHub Copilot ─┐                            ┌──  Claude Code
+Cursor         ─┼──  byokey serve  ──────────┼──  Claude Desktop
+Claude Pro/Max ─┘                            └──  任意 Anthropic Messages 客户端
 ```
 
 ## 功能特性
 
-- **多格式 API** — 同时兼容 OpenAI 和 Anthropic 端点，只需修改 base URL
-- **OAuth 登录流程** — 自动处理 PKCE、设备码、授权码等流程
-- **Token 持久化** — SQLite 存储于 `~/.byokey/tokens.db`，重启后依然有效
-- **API Key 直通** — 在配置中设置原始 Key，跳过 OAuth
-- **随处部署** — 本地 CLI 运行，或部署为共享 AI 网关
-- **热重载配置** — 基于 YAML，所有选项均有合理默认值
+- **Anthropic Messages API** — `/v1/messages`、`/v1/messages/count_tokens` 和 `/v1/models`，与 Claude Code、Claude Desktop 的预期一致，包括 `[1m]` 长上下文模型
+- **用 Copilot 跑 Claude** — 走 Copilot 的 Anthropic 格式端点，多账号按剩余配额轮换，Claude Code 的附带请求可改走便宜模型，Copilot 不接受的字段自动剔除
+- **用 Cursor 跑 Claude** — 通过 Cursor 的 agent 协议使用套餐内的全部模型
+- **Claude Code / Claude Desktop 接入** — `byokey claude start`、`byokey claude inject`、`byokey claude desktop`，`byokey doctor` 一次检查全部
+- **OAuth 登录与 Token 持久化** — 设备码和 PKCE 流程；SQLite 存储于 `~/.byokey/tokens.db`，后台自动刷新
+- **作为系统服务运行** — 注册到 launchd / systemd / Windows SCM，配置热重载
 
 ## 支持的 Provider
 
 <table>
   <tr>
-    <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/claude.svg" width="36" alt="Claude"><br>
-      <b>Claude</b><br>
-      <kbd>OAuth</kbd><br>
-      <sub>claude-fable-5-1<br>claude-opus-5-5<br>claude-sonnet-5<br>claude-haiku-4-5</sub>
-    </td>
-    <td align="center" width="200" valign="top">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="https://assets.byokey.io/icons/providers/codex-dark.svg">
-        <img src="https://assets.byokey.io/icons/providers/codex.svg" width="36" alt="Codex">
-      </picture><br>
-      <b>Codex</b><br>
-      <kbd>OAuth</kbd><br>
-      <sub>gpt-6-astra<br>gpt-6-sol<br>gpt-6-luna</sub>
-    </td>
     <td align="center" width="200" valign="top">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="https://assets.byokey.io/icons/providers/copilot-dark.svg">
@@ -66,52 +50,8 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       </picture><br>
       <b>Copilot</b><br>
       <kbd>Device code</kbd><br>
-      <sub>claude-opus-5.5<br>claude-sonnet-5<br>gpt-5.4<br>gemini-3.8-flash</sub>
+      <sub>claude-fable-5.1<br>claude-opus-5.5<br>claude-sonnet-5<br>……套餐内的全部 Claude 模型</sub>
     </td>
-  </tr>
-  <tr>
-    <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/gemini.svg" width="36" alt="Gemini"><br>
-      <b>Gemini</b><br>
-      <kbd>OAuth</kbd><br>
-      <sub>gemini-3.1-pro-preview<br>gemini-3.8-flash<br>gemini-3.5-flash-lite</sub>
-    </td>
-    <td align="center" width="200" valign="top">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="https://assets.byokey.io/icons/providers/amazonwebservices-dark.svg">
-        <img src="https://assets.byokey.io/icons/providers/amazonwebservices.svg" width="36" alt="AWS">
-      </picture><br>
-      <b>Kiro</b><br>
-      <kbd>Device code</kbd><br>
-      <sub>kiro-default</sub>
-    </td>
-    <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/gemini.svg" width="36" alt="Antigravity"><br>
-      <b>Antigravity</b><br>
-      <kbd>OAuth</kbd><br>
-      <sub>ag-gemini-pro-agent<br>ag-gemini-3.8-flash-high<br>ag-claude-sonnet-4-6</sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/alibabacloud.svg" width="36" alt="Qwen"><br>
-      <b>Qwen</b><br>
-      <kbd>Device code</kbd><br>
-      <sub>coder-model</sub>
-    </td>
-    <td align="center" width="200" valign="top">
-      <img src="https://assets.byokey.io/icons/providers/kimi.svg" width="36" alt="Kimi"><br>
-      <b>Kimi</b><br>
-      <kbd>Device code</kbd><br>
-      <sub>kimi-for-coding<br>kimi-k3</sub>
-    </td>
-    <td align="center" width="200" valign="top">
-      <b>iFlow</b><br>
-      <kbd>OAuth</kbd><br>
-      <sub>glm-4.5<br>glm-z1-flash<br>kimi-k2</sub>
-    </td>
-  </tr>
-  <tr>
     <td align="center" width="200" valign="top">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="https://assets.byokey.io/icons/providers/cursor-dark.svg">
@@ -119,7 +59,13 @@ Copilot     ─┘                              ├──  Factory CLI (Droid)
       </picture><br>
       <b>Cursor</b><br>
       <kbd>OAuth · API key</kbd><br>
-      <sub>claude-opus-5-5<br>gpt-5.6-sol<br>composer-2.5<br>……套餐内的全部模型</sub>
+      <sub>claude-opus-5-5<br>claude-opus-5-5-low-fast<br>composer-2.5<br>……套餐内的全部模型</sub>
+    </td>
+    <td align="center" width="200" valign="top">
+      <img src="https://assets.byokey.io/icons/providers/claude.svg" width="36" alt="Claude"><br>
+      <b>Claude</b><br>
+      <kbd>OAuth · API key</kbd><br>
+      <sub>claude-fable-5-1<br>claude-opus-5-5<br>claude-sonnet-5<br>claude-haiku-4-5</sub>
     </td>
   </tr>
 </table>
@@ -151,23 +97,21 @@ cargo install --path .
 ## 快速开始
 
 ```sh
-# 1. 认证（会打开浏览器或显示设备码）
-byokey login claude
-byokey login codex
+# 1. 登录（会打开浏览器或显示设备码）
 byokey login copilot           # 以 OpenCode 身份；`--client vscode` 以 VS Code 身份登录
+byokey login cursor            # 或 `byokey add-api-key cursor crsr_…`
 
-# 2. 启动代理
-byokey serve
+# 2. 启动代理，并把 Claude Code 的请求转给 Copilot
+byokey serve                   # 配置里写上 `providers.claude.backend: copilot`
 
-# 3. 将工具指向代理地址
-export OPENAI_BASE_URL=http://localhost:8018/v1
-export OPENAI_API_KEY=any          # byokey 忽略 key 的值
+# 3. 在它上面运行 Claude Code
+byokey claude start
 ```
 
-**对于 Claude Code：** `byokey claude start [claude 参数…]` 以 BYOKEY 启动
-Claude Code；直接运行 `claude` 则照常使用你自己的登录。想让 BYOKEY 成为默认，
-运行 `byokey claude inject`。`byokey claude desktop` 对 Claude Desktop（macOS）做同样的事。
-`byokey doctor` 可以检查整套配置。
+`byokey claude start [claude 参数…]` 以 BYOKEY 启动 Claude Code；直接运行 `claude`
+则照常使用你自己的登录。想让 BYOKEY 成为默认，运行 `byokey claude inject`。
+`byokey claude desktop` 对 Claude Desktop（macOS）做同样的事。`byokey doctor` 可以检查
+整套配置。其他 Anthropic Messages 客户端设置 `ANTHROPIC_BASE_URL=http://127.0.0.1:8018` 即可。
 
 ## CLI 参考
 
@@ -181,7 +125,10 @@ Commands:
   restart       重启后台代理服务器
   reload        热重载运行中服务器的配置，无需重启
   service       管理系统级服务注册（launchd / systemd / Windows SCM）
-  login         向 Provider 认证
+  login         向 Provider 认证（claude、copilot、cursor）
+  add-api-key   把静态 API Key 存为某个 Provider 的账户
+  import-claude-code
+                把本机 Claude Code CLI 的登录导入为 Claude 账户
   logout        删除指定 Provider 的已存储凭据
   status        显示所有 Provider 的认证状态
   doctor        检查服务器、Provider 登录、Claude Code 和 Claude Desktop 的接入状态
@@ -189,7 +136,6 @@ Commands:
   accounts      列出某个 Provider 的所有账户
   switch        切换某个 Provider 的活动账户
   claude        以 BYOKEY 运行 Claude Code 或 Claude Desktop（别名：claude-code）
-  openapi       导出 OpenAPI 规范（JSON 格式）
   completions   生成 Shell 补全脚本
   help          打印帮助信息
 ```
@@ -221,9 +167,8 @@ Options:
 
 **`byokey login <PROVIDER>`**
 
-为指定 Provider 运行相应的 OAuth 流程。
-支持的名称：`claude`、`codex`、`copilot`、`gemini`、`kiro`、
-`antigravity`、`qwen`、`kimi`、`iflow`、`cursor`。
+为指定 Provider 运行相应的 OAuth 流程：`claude`（浏览器 PKCE）、
+`copilot`（GitHub 设备码）或 `cursor`（Cursor 浏览器登录）。
 
 ```
 Options:
@@ -282,24 +227,23 @@ port: 8018
 host: 127.0.0.1
 
 providers:
-  # 使用原始 API Key（优先于 OAuth）
+  # 把 Claude Code / Claude Desktop 的所有请求转给 Copilot（或 `cursor`）。
+  # 不设置时，不带前缀的模型走 Anthropic。
   claude:
-    api_key: "sk-ant-..."
+    backend: copilot
+    # 或者直接用原始 API Key 走 Anthropic，替代登录
+    # api_key: "sk-ant-..."
 
-  # 完全禁用某个 Provider
-  gemini:
-    enabled: false
-
-  # 仅 OAuth（无 api_key）— 先运行 `byokey login codex`
-  codex:
-    enabled: true
+  copilot:
+    small_model: gpt-5-mini
 
   # cursor.com/dashboard 生成的 `crsr_…` Key，或运行 `byokey login cursor`
   cursor:
     api_key: "crsr_..."
 ```
 
-所有字段均可选；未指定的 Provider 默认启用，并使用数据库中存储的 OAuth Token。
+所有字段均可选；未指定的 Provider 默认启用，并使用数据库中存储的登录。
+`claude`、`copilot`、`cursor` 之外的 Provider 会被拒绝。
 
 **Copilot** 按 premium request 计费的套餐每次调用计一次，而 Claude Code 每轮对话
 前后会发出多个不带工具的调用（标题、建议、摘要）。设置
@@ -307,10 +251,10 @@ providers:
 compaction 请求仍使用你选择的模型。
 
 **Cursor** 提供 Cursor 套餐内的全部模型，包括 `claude-opus-5-5-high-fast`、
-`gpt-5.6-sol-low-fast` 这类变体。在 `/v1/chat/completions` 和 `/v1/messages`
-上都以 `cursor/<model>` 指定，例如
+`gpt-5.6-sol-low-fast` 这类变体。以 `cursor/<model>` 指定，例如
 `byokey claude start --model cursor/claude-opus-5-5-low-fast` 就会让 Claude Code
-走 Cursor。设置 `providers.claude.backend: cursor` 可以把 Claude Code 的全部请求都转给 Cursor。
+走 Cursor；`copilot/<model>` 对 Copilot 同理。设置 `providers.claude.backend: cursor`
+可以把 Claude Code 的全部请求都转给 Cursor。
 
 ## 贡献
 

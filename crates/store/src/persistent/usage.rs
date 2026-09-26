@@ -1,7 +1,7 @@
 //! [`UsageStore`] implementation for [`SqliteTokenStore`].
 
 use async_trait::async_trait;
-use byokey_types::{AccountUsageTotal, Result, UsageBucket, UsageRecord, UsageStore};
+use byokey_types::{Result, UsageBucket, UsageRecord, UsageStore};
 use sea_orm::{ConnectionTrait, Statement};
 
 use super::{SqliteTokenStore, now_unix};
@@ -37,78 +37,6 @@ impl UsageStore for SqliteTokenStore {
         Ok(())
     }
 
-    async fn query(
-        &self,
-        from: i64,
-        to: i64,
-        model: Option<&str>,
-        bucket_secs: i64,
-    ) -> Result<Vec<UsageBucket>> {
-        let (sql, values) = if let Some(m) = model {
-            (
-                format!(
-                    "SELECT (created_at / {bucket_secs}) * {bucket_secs} AS period_start,
-                            model,
-                            COUNT(*)      AS request_count,
-                            SUM(input_tokens)  AS input_tokens,
-                            SUM(output_tokens) AS output_tokens
-                     FROM usage_records
-                     WHERE created_at >= ? AND created_at < ? AND model = ?
-                     GROUP BY period_start, model
-                     ORDER BY period_start"
-                ),
-                vec![from.into(), to.into(), m.to_string().into()],
-            )
-        } else {
-            (
-                format!(
-                    "SELECT (created_at / {bucket_secs}) * {bucket_secs} AS period_start,
-                            model,
-                            COUNT(*)      AS request_count,
-                            SUM(input_tokens)  AS input_tokens,
-                            SUM(output_tokens) AS output_tokens
-                     FROM usage_records
-                     WHERE created_at >= ? AND created_at < ?
-                     GROUP BY period_start, model
-                     ORDER BY period_start"
-                ),
-                vec![from.into(), to.into()],
-            )
-        };
-
-        let stmt =
-            Statement::from_sql_and_values(self.connection().get_database_backend(), &sql, values);
-        let rows = self.connection().query_all_raw(stmt).await?;
-
-        let mut buckets = Vec::with_capacity(rows.len());
-        for row in &rows {
-            #[allow(clippy::cast_sign_loss)]
-            buckets.push(UsageBucket {
-                period_start: row.try_get_by_index::<i64>(0).unwrap_or_else(|e| {
-                    tracing::warn!(error = %e, col = 0, "usage query column parse failed");
-                    0
-                }),
-                model: row.try_get_by_index::<String>(1).unwrap_or_else(|e| {
-                    tracing::warn!(error = %e, col = 1, "usage query column parse failed");
-                    String::new()
-                }),
-                request_count: row.try_get_by_index::<i64>(2).unwrap_or_else(|e| {
-                    tracing::warn!(error = %e, col = 2, "usage query column parse failed");
-                    0
-                }) as u64,
-                input_tokens: row.try_get_by_index::<i64>(3).unwrap_or_else(|e| {
-                    tracing::warn!(error = %e, col = 3, "usage query column parse failed");
-                    0
-                }) as u64,
-                output_tokens: row.try_get_by_index::<i64>(4).unwrap_or_else(|e| {
-                    tracing::warn!(error = %e, col = 4, "usage query column parse failed");
-                    0
-                }) as u64,
-            });
-        }
-        Ok(buckets)
-    }
-
     async fn totals(&self, from: Option<i64>, to: Option<i64>) -> Result<Vec<UsageBucket>> {
         let (where_clause, values) = match (from, to) {
             (Some(f), Some(t)) => (
@@ -121,8 +49,7 @@ impl UsageStore for SqliteTokenStore {
         };
 
         let sql = format!(
-            "SELECT 0 AS period_start,
-                    model,
+            "SELECT model,
                     COUNT(*)      AS request_count,
                     SUM(input_tokens)  AS input_tokens,
                     SUM(output_tokens) AS output_tokens
@@ -140,63 +67,13 @@ impl UsageStore for SqliteTokenStore {
         for row in &rows {
             #[allow(clippy::cast_sign_loss)]
             buckets.push(UsageBucket {
-                period_start: 0,
-                model: row.try_get_by_index::<String>(1).unwrap_or_default(),
-                request_count: row.try_get_by_index::<i64>(2).unwrap_or(0) as u64,
-                input_tokens: row.try_get_by_index::<i64>(3).unwrap_or(0) as u64,
-                output_tokens: row.try_get_by_index::<i64>(4).unwrap_or(0) as u64,
+                model: row.try_get_by_index::<String>(0).unwrap_or_default(),
+                request_count: row.try_get_by_index::<i64>(1).unwrap_or(0) as u64,
+                input_tokens: row.try_get_by_index::<i64>(2).unwrap_or(0) as u64,
+                output_tokens: row.try_get_by_index::<i64>(3).unwrap_or(0) as u64,
             });
         }
         Ok(buckets)
-    }
-
-    async fn totals_by_account(
-        &self,
-        from: Option<i64>,
-        to: Option<i64>,
-    ) -> Result<Vec<AccountUsageTotal>> {
-        let (where_clause, values) = match (from, to) {
-            (Some(f), Some(t)) => (
-                "WHERE created_at >= ? AND created_at < ?".to_string(),
-                vec![f.into(), t.into()],
-            ),
-            (Some(f), None) => ("WHERE created_at >= ?".to_string(), vec![f.into()]),
-            (None, Some(t)) => ("WHERE created_at < ?".to_string(), vec![t.into()]),
-            (None, None) => (String::new(), vec![]),
-        };
-
-        let sql = format!(
-            "SELECT provider,
-                    account_id,
-                    model,
-                    COUNT(*)                                          AS request_count,
-                    SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END)      AS success_count,
-                    SUM(input_tokens)                                 AS input_tokens,
-                    SUM(output_tokens)                                AS output_tokens
-             FROM usage_records
-             {where_clause}
-             GROUP BY provider, account_id, model
-             ORDER BY provider, account_id, model"
-        );
-
-        let stmt =
-            Statement::from_sql_and_values(self.connection().get_database_backend(), &sql, values);
-        let rows = self.connection().query_all_raw(stmt).await?;
-
-        let mut totals = Vec::with_capacity(rows.len());
-        for row in &rows {
-            #[allow(clippy::cast_sign_loss)]
-            totals.push(AccountUsageTotal {
-                provider: row.try_get_by_index::<String>(0).unwrap_or_default(),
-                account_id: row.try_get_by_index::<String>(1).unwrap_or_default(),
-                model: row.try_get_by_index::<String>(2).unwrap_or_default(),
-                request_count: row.try_get_by_index::<i64>(3).unwrap_or(0) as u64,
-                success_count: row.try_get_by_index::<i64>(4).unwrap_or(0) as u64,
-                input_tokens: row.try_get_by_index::<i64>(5).unwrap_or(0) as u64,
-                output_tokens: row.try_get_by_index::<i64>(6).unwrap_or(0) as u64,
-            });
-        }
-        Ok(totals)
     }
 }
 
@@ -213,7 +90,7 @@ mod tests {
         let s = mem().await;
         s.record(&UsageRecord {
             model: "gpt-4o".into(),
-            provider: "codex".into(),
+            provider: "copilot".into(),
             account_id: "default".into(),
             input_tokens: 100,
             output_tokens: 50,
@@ -223,7 +100,7 @@ mod tests {
         .unwrap();
         s.record(&UsageRecord {
             model: "gpt-4o".into(),
-            provider: "codex".into(),
+            provider: "copilot".into(),
             account_id: "default".into(),
             input_tokens: 200,
             output_tokens: 100,
@@ -238,88 +115,5 @@ mod tests {
         assert_eq!(totals[0].request_count, 2);
         assert_eq!(totals[0].input_tokens, 300);
         assert_eq!(totals[0].output_tokens, 150);
-    }
-
-    #[tokio::test]
-    async fn test_query_buckets() {
-        let s = mem().await;
-        let now = now_unix();
-        s.record(&UsageRecord {
-            model: "claude-opus-4-5".into(),
-            provider: "claude".into(),
-            account_id: "default".into(),
-            input_tokens: 10,
-            output_tokens: 5,
-            success: true,
-        })
-        .await
-        .unwrap();
-
-        let buckets = s.query(now - 3600, now + 3600, None, 3600).await.unwrap();
-        assert!(!buckets.is_empty());
-        assert_eq!(buckets[0].model, "claude-opus-4-5");
-        assert_eq!(buckets[0].input_tokens, 10);
-    }
-
-    #[tokio::test]
-    async fn test_totals_by_account() {
-        let s = mem().await;
-
-        // alice: 2 successful requests
-        s.record(&UsageRecord {
-            model: "claude-opus-4-5".into(),
-            provider: "anthropic".into(),
-            account_id: "alice".into(),
-            input_tokens: 100,
-            output_tokens: 50,
-            success: true,
-        })
-        .await
-        .unwrap();
-        s.record(&UsageRecord {
-            model: "claude-opus-4-5".into(),
-            provider: "anthropic".into(),
-            account_id: "alice".into(),
-            input_tokens: 200,
-            output_tokens: 80,
-            success: true,
-        })
-        .await
-        .unwrap();
-
-        // bob: 1 successful request
-        s.record(&UsageRecord {
-            model: "claude-opus-4-5".into(),
-            provider: "anthropic".into(),
-            account_id: "bob".into(),
-            input_tokens: 50,
-            output_tokens: 20,
-            success: true,
-        })
-        .await
-        .unwrap();
-
-        let totals = s.totals_by_account(None, None).await.unwrap();
-
-        // Both accounts must appear.
-        assert_eq!(totals.len(), 2, "expected two account rows");
-
-        let alice = totals
-            .iter()
-            .find(|r| r.account_id == "alice")
-            .expect("alice row missing");
-        assert_eq!(alice.provider, "anthropic");
-        assert_eq!(alice.request_count, 2);
-        assert_eq!(alice.success_count, 2);
-        assert_eq!(alice.input_tokens, 300);
-        assert_eq!(alice.output_tokens, 130);
-
-        let bob = totals
-            .iter()
-            .find(|r| r.account_id == "bob")
-            .expect("bob row missing");
-        assert_eq!(bob.request_count, 1);
-        assert_eq!(bob.input_tokens, 50);
-        assert_eq!(bob.output_tokens, 20);
     }
 }
