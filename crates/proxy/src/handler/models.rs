@@ -6,6 +6,11 @@
 //! their accounts' live catalogs, Anthropic from the static registry, each
 //! once signed in or given an API key.
 //!
+//! The live catalogs are fetched side by side. Claude Desktop gives up on
+//! `/v1/models` after 10 s and then reports the gateway unreachable, so a
+//! catalog that fails or misses [`CATALOG_DEADLINE`] is listed as last
+//! fetched; a late fetch still lands for the next listing.
+//!
 //! Anthropic clients (Claude Code, Claude Desktop) send `anthropic-version`
 //! and get Anthropic's list shape; everyone else gets the `OpenAI` one.
 //! Claude Desktop reads `supports_1m` and offers the `<id>[1m]` variant of
@@ -26,13 +31,25 @@ use byokey_config::Config;
 use byokey_provider::{CopilotModel, CursorModel, CursorUpstream, all_models};
 use byokey_types::ProviderId;
 use serde::{Serialize, Serializer};
-use std::sync::Arc;
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use time::{Date, OffsetDateTime};
+use tracing::Instrument;
 
 use crate::AppState;
 
 /// Tokens of context from which a model counts as long-context.
 const LONG_CONTEXT_TOKENS: u64 = 1_000_000;
+
+/// How long a listing waits for a live catalog before it lists the last one.
+const CATALOG_DEADLINE: Duration = Duration::from_secs(5);
+
+/// The live catalogs last fetched. Process-wide because upstreams are built
+/// per request.
+static COPILOT_CATALOG: Mutex<Vec<CopilotModel>> = Mutex::new(Vec::new());
+static CURSOR_CATALOG: Mutex<Vec<CursorModel>> = Mutex::new(Vec::new());
 
 /// A listed model.
 struct ModelEntry {
@@ -238,32 +255,35 @@ impl Live {
                 usable.push(provider);
             }
         }
-        let copilot = if usable.contains(&ProviderId::Copilot) {
-            super::copilot_messages::copilot_upstream(state)
-                .models()
-                .await
-                .inspect_err(|e| tracing::warn!(error = %e, "Copilot model listing failed"))
-                .unwrap_or_default()
-        } else {
-            Vec::new()
+        let copilot = async {
+            if !usable.contains(&ProviderId::Copilot) {
+                return Vec::new();
+            }
+            let upstream = super::copilot_messages::copilot_upstream(state);
+            catalog(ProviderId::Copilot, &COPILOT_CATALOG, async move {
+                upstream.models().await
+            })
+            .await
         };
-        let cursor = if usable.contains(&ProviderId::Cursor) {
+        let cursor = async {
+            if !usable.contains(&ProviderId::Cursor) {
+                return Vec::new();
+            }
             let api_key = config
                 .providers
                 .get(&ProviderId::Cursor)
                 .and_then(|c| c.api_key.clone());
-            CursorUpstream::builder()
+            let upstream = CursorUpstream::builder()
                 .http(state.http.clone())
                 .auth(state.auth.clone())
                 .maybe_api_key(api_key)
-                .build()
-                .models()
-                .await
-                .inspect_err(|e| tracing::warn!(error = %e, "Cursor model listing failed"))
-                .unwrap_or_default()
-        } else {
-            Vec::new()
+                .build();
+            catalog(ProviderId::Cursor, &CURSOR_CATALOG, async move {
+                upstream.models().await
+            })
+            .await
         };
+        let (copilot, cursor) = tokio::join!(copilot, cursor);
         Self::new(usable, copilot, cursor)
     }
 
@@ -282,6 +302,38 @@ impl Live {
     fn has(&self, provider: ProviderId) -> bool {
         self.usable.contains(&provider)
     }
+}
+
+/// The catalog `fetch` returns, or the one `last` holds when `fetch` fails or
+/// misses [`CATALOG_DEADLINE`]. A late `fetch` keeps running and refills
+/// `last` when it lands.
+async fn catalog<T: Clone + Send + 'static>(
+    provider: ProviderId,
+    last: &'static Mutex<Vec<T>>,
+    fetch: impl Future<Output = byokey_types::Result<Vec<T>>> + Send + 'static,
+) -> Vec<T> {
+    let fetch = tokio::spawn(
+        async move {
+            let models = fetch
+                .await
+                .inspect_err(|e| tracing::warn!(%provider, error = %e, "model listing failed"))?;
+            last.lock().expect("catalog lock").clone_from(&models);
+            byokey_types::Result::Ok(models)
+        }
+        .in_current_span(),
+    );
+    let fetched = tokio::time::timeout(CATALOG_DEADLINE, fetch).await;
+    match fetched.map(|joined| joined.expect("catalog fetch panicked")) {
+        Ok(Ok(models)) => return models,
+        // The fetch logged its failure, also when it lands late.
+        Ok(Err(_)) => {}
+        Err(_) => tracing::warn!(
+            %provider,
+            deadline_secs = CATALOG_DEADLINE.as_secs(),
+            "model listing is late"
+        ),
+    }
+    last.lock().expect("catalog lock").clone()
 }
 
 /// What `/v1/messages` routes. Unprefixed ids go to `claude.backend` when set
@@ -435,6 +487,34 @@ mod tests {
         assert!(
             !redirected.contains(&"claude-fable-5-1"),
             "would reach Copilot"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_or_late_catalog_is_listed_as_last_fetched() {
+        static LAST: Mutex<Vec<&str>> = Mutex::new(Vec::new());
+        let provider = ProviderId::Copilot;
+
+        let listed = catalog(provider, &LAST, async { Ok(vec!["a"]) }).await;
+        assert_eq!(listed, ["a"]);
+
+        let failed = catalog(provider, &LAST, async {
+            Err(byokey_types::ByokError::Http("unreachable".into()))
+        })
+        .await;
+        assert_eq!(failed, ["a"], "a failed fetch lists the last catalog");
+
+        let late = catalog(provider, &LAST, async {
+            tokio::time::sleep(CATALOG_DEADLINE * 2).await;
+            Ok(vec!["b"])
+        })
+        .await;
+        assert_eq!(late, ["a"], "a late fetch lists the last catalog");
+        tokio::time::sleep(CATALOG_DEADLINE * 2).await;
+        assert_eq!(
+            *LAST.lock().unwrap(),
+            ["b"],
+            "a late fetch refills the catalog when it lands"
         );
     }
 
