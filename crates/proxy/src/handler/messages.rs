@@ -32,15 +32,18 @@ use crate::{AppState, error::ApiError};
 /// Authenticates with the Claude provider (API key or OAuth), then forwards
 /// the request body verbatim to the Anthropic API and streams the response
 /// back without translation.
-#[tracing::instrument(skip_all, fields(
-    model = %body.0.get("model").and_then(serde_json::Value::as_str).unwrap_or("-"),
-    stream = body.0.get("stream").and_then(serde_json::Value::as_bool).unwrap_or(false),
-))]
 pub async fn anthropic_messages(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     body: axum::extract::Json<Value>,
 ) -> Result<Response, ApiError> {
+    super::record_model(&body.0).record(
+        "stream",
+        body.0
+            .get("stream")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    );
     serve_messages(state, headers, body.0)
         .await
         .map_err(ApiError::anthropic)

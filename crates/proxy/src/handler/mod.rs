@@ -6,6 +6,8 @@
 //!   shapes request bodies; `forward` relays the upstream's answer.
 //! - [`management`] — BYOKEY's `ConnectRPC` management API.
 
+use serde_json::Value;
+
 mod copilot_messages;
 pub(crate) mod count_tokens;
 pub(crate) mod cursor_messages;
@@ -14,3 +16,14 @@ pub mod management;
 pub(crate) mod messages;
 pub(crate) mod models;
 mod normalize;
+
+/// Name the model a Messages-format request asks for on the request's span
+/// (the router's `http` span, which a handler runs in), so every line of
+/// the request carries it. Returns the span for more fields.
+fn record_model(body: &Value) -> tracing::Span {
+    let span = tracing::Span::current();
+    if let Some(model) = body.get("model").and_then(Value::as_str) {
+        span.record("model", model);
+    }
+    span
+}

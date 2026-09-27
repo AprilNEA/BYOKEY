@@ -265,7 +265,7 @@ Copilot 组织可以通过策略关闭 Anthropic 的 `web_search`、`web_fetch` 
 BYOKEY 每向上游发出一个请求，就在这次交互结束时记一行日志：
 
 ```
-INFO http{…}:anthropic_messages{model=claude-opus-5-5 stream=true}:upstream{provider=copilot model=claude-opus-5.5 account=default initiator="user" upstream_request_id="00000-…"}: byokey_proxy::exchange: upstream finished outcome="completed" first_byte_ms=812 duration_ms=14233 input_tokens=9 output_tokens=412 cache_read_tokens=51200 cache_write_tokens=0 stop_reason="end_turn"
+INFO http{… model=claude-opus-5-5 stream=true}:upstream{provider=copilot model=claude-opus-5.5 account=default initiator="user" upstream_request_id="00000-…"}: byokey_proxy::exchange: upstream finished outcome="completed" first_byte_ms=812 duration_ms=14233 input_tokens=9 output_tokens=412 cache_read_tokens=51200 cache_write_tokens=0 stop_reason="end_turn"
 ```
 
 `outcome` 取以下值之一：
@@ -281,7 +281,8 @@ INFO http{…}:anthropic_messages{model=claude-opus-5-5 stream=true}:upstream{pr
 BYOKEY 写出的保活注释数。`upstream_message` 是上游写的文本，只留在本地日志里，
 不会发送到 Sentry。
 
-一个请求的每行日志都以它的 `http{…}` span 开头。`request_id` 是 BYOKEY 给这个请求的
+一个请求的每行日志都以它的 `http{…}` span 开头，其中有客户端请求的模型和是否流式；
+`upstream{…}` span 里是实际发给上游的模型。`request_id` 是 BYOKEY 给这个请求的
 id，客户端也会在响应头 `x-request-id` 里收到它。Claude Code 发送时，`client_request_id`
 和 `session` 分别是它的 `x-client-request-id` 和会话 id：`claude --debug` 会为每个 API
 请求打印前者，因此可以用它在 BYOKEY 的日志里找到 Claude Code 调试日志中的请求。

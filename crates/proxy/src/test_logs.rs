@@ -1,20 +1,22 @@
-//! The log events a test emits, with their fields, for asserting on what
-//! the gateway logs.
+//! The log events a test emits, with their fields and the fields of the
+//! spans they were logged in, for asserting on what the gateway logs.
 //!
-//! One subscriber is installed for the whole test binary and records into a
-//! buffer owned by the capturing thread. Like the server at its default
-//! level, it turns off `debug` and `trace` spans and events. A per-test thread-local subscriber
-//! would race with other tests over `tracing`'s process-wide call-site
-//! cache and miss events.
+//! One subscriber, `tracing-subscriber`'s registry at the server's default
+//! `info` level, is installed for the whole test binary and records into a
+//! buffer owned by the capturing thread. A per-test thread-local subscriber
+//! would race with other tests over `tracing`'s process-wide call-site cache
+//! and miss events.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Once;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
-use tracing::{Event, Level, Metadata, Subscriber};
+use tracing::{Event, Level, Subscriber};
+use tracing_subscriber::filter::LevelFilter;
+use tracing_subscriber::layer::{Context, Layer, SubscriberExt as _};
+use tracing_subscriber::registry::{LookupSpan, Registry};
 
 /// One log event.
 #[derive(Debug, Clone)]
@@ -22,12 +24,20 @@ pub(crate) struct Logged {
     pub(crate) level: Level,
     pub(crate) message: String,
     pub(crate) fields: BTreeMap<String, String>,
+    /// The fields of the spans the event was logged in, the innermost
+    /// span's winning a name they share.
+    pub(crate) span_fields: BTreeMap<String, String>,
 }
 
 impl Logged {
-    /// The value of `field`, as it would be printed.
+    /// The value of the event's `field`, as it would be printed.
     pub(crate) fn field(&self, field: &str) -> Option<&str> {
         self.fields.get(field).map(String::as_str)
+    }
+
+    /// The value of `field` on the spans the event was logged in.
+    pub(crate) fn span_field(&self, field: &str) -> Option<&str> {
+        self.span_fields.get(field).map(String::as_str)
     }
 }
 
@@ -43,7 +53,8 @@ impl Logs {
     pub(crate) fn capture() -> Self {
         static INSTALL: Once = Once::new();
         INSTALL.call_once(|| {
-            tracing::subscriber::set_global_default(Collector::default())
+            let subscriber = Registry::default().with(LevelFilter::INFO).with(Capture);
+            tracing::subscriber::set_global_default(subscriber)
                 .expect("no other global subscriber in tests");
         });
         CAPTURED.with(|c| *c.borrow_mut() = Some(Vec::new()));
@@ -73,12 +84,14 @@ impl Drop for Logs {
     }
 }
 
-#[derive(Default)]
-struct Collector {
-    next_span: AtomicU64,
-}
+/// A span's fields, kept in its registry extensions.
+struct SpanFields(BTreeMap<String, String>);
 
-struct Fields<'a>(&'a mut Logged);
+/// Collects values into a message and a field map.
+struct Fields<'a> {
+    message: Option<&'a mut String>,
+    fields: &'a mut BTreeMap<String, String>,
+}
 
 impl Visit for Fields<'_> {
     fn record_str(&mut self, field: &Field, value: &str) {
@@ -92,42 +105,72 @@ impl Visit for Fields<'_> {
 
 impl Fields<'_> {
     fn record(&mut self, field: &Field, value: String) {
-        if field.name() == "message" {
-            self.0.message = value;
-        } else {
-            self.0.fields.insert(field.name().to_owned(), value);
+        match &mut self.message {
+            Some(message) if field.name() == "message" => **message = value,
+            _ => {
+                self.fields.insert(field.name().to_owned(), value);
+            }
         }
     }
 }
 
-impl Subscriber for Collector {
-    fn enabled(&self, metadata: &Metadata<'_>) -> bool {
-        *metadata.level() <= Level::INFO
+struct Capture;
+
+impl<S> Layer<S> for Capture
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+        let mut fields = BTreeMap::new();
+        attrs.record(&mut Fields {
+            message: None,
+            fields: &mut fields,
+        });
+        if let Some(span) = ctx.span(id) {
+            span.extensions_mut().insert(SpanFields(fields));
+        }
     }
 
-    fn new_span(&self, _: &Attributes<'_>) -> Id {
-        Id::from_u64(self.next_span.fetch_add(1, Ordering::Relaxed) + 1)
+    fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
+        if let Some(span) = ctx.span(id)
+            && let Some(SpanFields(fields)) = span.extensions_mut().get_mut::<SpanFields>()
+        {
+            values.record(&mut Fields {
+                message: None,
+                fields,
+            });
+        }
     }
 
-    fn record(&self, _: &Id, _: &Record<'_>) {}
-
-    fn record_follows_from(&self, _: &Id, _: &Id) {}
-
-    fn event(&self, event: &Event<'_>) {
+    fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
         CAPTURED.with(|c| {
-            if let Some(events) = c.borrow_mut().as_mut() {
-                let mut logged = Logged {
-                    level: *event.metadata().level(),
-                    message: String::new(),
-                    fields: BTreeMap::new(),
-                };
-                event.record(&mut Fields(&mut logged));
-                events.push(logged);
+            let mut captured = c.borrow_mut();
+            let Some(events) = captured.as_mut() else {
+                return;
+            };
+            let mut message = String::new();
+            let mut fields = BTreeMap::new();
+            event.record(&mut Fields {
+                message: Some(&mut message),
+                fields: &mut fields,
+            });
+            let mut span_fields = BTreeMap::new();
+            // From the innermost span outwards.
+            for span in ctx.event_scope(event).into_iter().flatten() {
+                if let Some(SpanFields(own)) = span.extensions().get::<SpanFields>() {
+                    for (name, value) in own {
+                        span_fields
+                            .entry(name.clone())
+                            .or_insert_with(|| value.clone());
+                    }
+                }
             }
+            events.push(Logged {
+                level: *event.metadata().level(),
+                message,
+                fields,
+                span_fields,
+            });
         });
     }
-
-    fn enter(&self, _: &Id) {}
-
-    fn exit(&self, _: &Id) {}
 }

@@ -281,7 +281,7 @@ BYOKEY logs one line for each request it sends upstream, when that exchange
 ends:
 
 ```
-INFO http{…}:anthropic_messages{model=claude-opus-5-5 stream=true}:upstream{provider=copilot model=claude-opus-5.5 account=default initiator="user" upstream_request_id="00000-…"}: byokey_proxy::exchange: upstream finished outcome="completed" first_byte_ms=812 duration_ms=14233 input_tokens=9 output_tokens=412 cache_read_tokens=51200 cache_write_tokens=0 stop_reason="end_turn"
+INFO http{… model=claude-opus-5-5 stream=true}:upstream{provider=copilot model=claude-opus-5.5 account=default initiator="user" upstream_request_id="00000-…"}: byokey_proxy::exchange: upstream finished outcome="completed" first_byte_ms=812 duration_ms=14233 input_tokens=9 output_tokens=412 cache_read_tokens=51200 cache_write_tokens=0 stop_reason="end_turn"
 ```
 
 `outcome` is one of:
@@ -300,9 +300,10 @@ counts the comments BYOKEY wrote while the upstream was silent.
 `upstream_message` is text the upstream wrote, so it stays in the local log
 and is never sent to Sentry.
 
-Every line of a request starts with its `http{…}` span. `request_id` is
-BYOKEY's id for the request, which the client also receives as the
-`x-request-id` header. When Claude Code sends them, `client_request_id` and
+Every line of a request starts with its `http{…}` span, which names the
+model and streaming mode the client asked for; the `upstream{…}` span names
+the model actually sent. `request_id` is BYOKEY's id for the request, which
+the client also receives as the `x-request-id` header. When Claude Code sends them, `client_request_id` and
 `session` are its `x-client-request-id` and session id: `claude --debug`
 prints the former for each API request, so a request in Claude Code's debug
 log can be found in BYOKEY's. Management API calls, which `byokey tui` makes

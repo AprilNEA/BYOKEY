@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The per-request "routing Anthropic messages through Copilot" and "anthropic passthrough" lines are `debug` now, and a Copilot request's conversation keys print as eight hex digits instead of 64 numbers. A stream that fails is logged once, in its exchange line, instead of twice at `error`.
 - Management API calls, which `byokey tui` makes every few seconds, are logged at `debug`, and a request's line shows its path without the query string.
+- The requested model and streaming mode are fields of the request's `http` span instead of a separate `anthropic_messages` span, so every line of a request names them, including "response sent" and a failure rendered after the handler returned. `count_tokens` requests name their model too.
 
 - A failed request is logged once, when its error response is rendered, at a level that says who failed. An upstream's refusal is a `warn` carrying the upstream's status, error type and message, so the log says why Copilot or Anthropic refused (an organisation policy, a context limit) instead of only `status=400`; the message stays out of Sentry because an upstream can quote the request back. A missing login, an unknown model or an unreachable upstream is a `warn`, and only a failure inside BYOKEY is an `error`, so Sentry no longer receives an error event for every upstream 4xx and 5xx.
 

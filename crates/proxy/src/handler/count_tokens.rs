@@ -30,6 +30,7 @@ pub async fn count_tokens(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Response, ApiError> {
+    super::record_model(&body);
     serve_count_tokens(&state, &headers, body)
         .await
         .map_err(ApiError::anthropic)

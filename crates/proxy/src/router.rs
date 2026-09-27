@@ -27,7 +27,8 @@ use crate::handler::{count_tokens, management, messages, models};
 /// The span of one request: its method, path and BYOKEY's request id (also
 /// the `x-request-id` response header), plus the ids Claude Code sends, so a
 /// line in Claude Code's debug log (`x-client-request-id=…`) or one
-/// conversation (`X-Claude-Code-Session-Id`) can be found here. Management
+/// conversation (`X-Claude-Code-Session-Id`) can be found here. The Messages
+/// handlers add the model and streaming mode the request asks for. Management
 /// calls, which the TUI makes every few seconds, get a `debug` span and are
 /// not logged at the default level.
 fn request_span<B>(req: &http::Request<B>) -> Span {
@@ -46,6 +47,8 @@ fn request_span<B>(req: &http::Request<B>) -> Span {
                 request_id,
                 client_request_id = header("x-client-request-id"),
                 session = header("x-claude-code-session-id"),
+                model = tracing::field::Empty,
+                stream = tracing::field::Empty,
             )
         };
     }
@@ -241,6 +244,36 @@ mod tests {
             axum::http::StatusCode::NOT_FOUND,
             "`ConnectRPC` fallback should serve management requests"
         );
+    }
+
+    #[tokio::test]
+    async fn every_line_of_a_request_names_its_model() {
+        let logs = crate::test_logs::Logs::capture();
+        let app = make_router(make_state());
+        let body = serde_json::json!({
+            "model": "claude-sonnet-5", "max_tokens": 1, "stream": true, "messages": []
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/messages")
+                    .header("content-type", "application/json")
+                    .header("x-client-request-id", "client-1")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+        let logged = logs.at_least(tracing::Level::INFO);
+        let messages: Vec<_> = logged.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(messages, ["request failed", "response sent"]);
+        for line in &logged {
+            assert_eq!(line.span_field("model"), Some("claude-sonnet-5"));
+            assert_eq!(line.span_field("stream"), Some("true"));
+            assert_eq!(line.span_field("client_request_id"), Some("client-1"));
+        }
     }
 
     #[tokio::test]
