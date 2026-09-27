@@ -279,13 +279,11 @@ pub(super) async fn copilot_messages(
             "routing Anthropic messages through Copilot"
         );
 
-        // Copilot does its own account rotation inside CopilotUpstream; the
-        // specific account isn't exposed here, so usage goes to DEFAULT_ACCOUNT.
         let exchange = Exchange::start(
             &state.usage,
             ProviderId::Copilot,
             model_name.clone(),
-            byokey_types::DEFAULT_ACCOUNT,
+            creds.account_id.clone(),
         )
         .attempt(attempt)
         .initiator(conversation.initiator());

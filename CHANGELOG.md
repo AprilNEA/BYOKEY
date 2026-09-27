@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A streamed answer that ended in an upstream `error` event was counted as a success in the usage statistics; it is a failure now. Cursor answers requested without streaming are counted now; they were missing.
+- Copilot usage was recorded against the account `default` whichever stored account the request went out as, so with several Copilot accounts the statistics could not tell them apart. Usage and log lines name the account that served the request now.
 - A successful Copilot answer carried Copilot's `x-request-id` to the client instead of BYOKEY's, so the id the client saw matched no BYOKEY log line.
 
 ### Changed

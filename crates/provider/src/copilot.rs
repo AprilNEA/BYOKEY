@@ -17,7 +17,10 @@ pub use device::CopilotDevice;
 pub use headers::{Conversation, CopilotIdentity, CopilotVersions};
 
 use byokey_auth::AuthManager;
-use byokey_types::{AccountInfo, ByokError, CopilotClient, OAuthToken, ProviderId, Result};
+use byokey_types::{
+    AccountInfo, AccountToken, ByokError, CopilotClient, DEFAULT_ACCOUNT, OAuthToken, ProviderId,
+    Result,
+};
 use serde_json::Value;
 use std::{
     cmp::Ordering as CmpOrdering,
@@ -107,6 +110,9 @@ pub struct CopilotCredentials {
     pub client: CopilotClient,
     /// The machine the account appears to be using.
     pub device: CopilotDevice,
+    /// The stored account the requests go out as, which usage is recorded
+    /// against; [`DEFAULT_ACCOUNT`] for a configured key.
+    pub account_id: String,
     /// The credential the account was resolved from (a GitHub token or a
     /// configured key), keying what BYOKEY remembers about the account.
     credential: String,
@@ -299,17 +305,25 @@ impl CopilotUpstream {
             .to_owned()
     }
 
-    /// The credentials for requests as the account holding `token`.
-    async fn credentials_for(&self, token: &OAuthToken) -> Result<CopilotCredentials> {
+    /// The credentials for requests as `account_id`, which holds `token`.
+    async fn credentials_for(
+        &self,
+        token: &OAuthToken,
+        account_id: &str,
+    ) -> Result<CopilotCredentials> {
         match CopilotClient::of(token)? {
             CopilotClient::OpenCode => Ok(CopilotCredentials {
                 token: token.access_token.clone(),
                 endpoint: self.account_endpoint(token).await,
                 client: CopilotClient::OpenCode,
                 device: CopilotDevice::for_credential(&token.access_token),
+                account_id: account_id.to_owned(),
                 credential: token.access_token.clone(),
             }),
-            CopilotClient::VsCode => self.exchange_and_cache(&token.access_token).await,
+            CopilotClient::VsCode => {
+                self.exchange_and_cache(&token.access_token, account_id)
+                    .await
+            }
         }
     }
 
@@ -360,8 +374,13 @@ impl CopilotUpstream {
         resp.json().await.ok()
     }
 
-    /// Exchange a VS Code GitHub token for a Copilot API token and cache the result.
-    async fn exchange_and_cache(&self, github_token: &str) -> Result<CopilotCredentials> {
+    /// Exchange `account_id`'s VS Code GitHub token for a Copilot API token
+    /// and cache the result.
+    async fn exchange_and_cache(
+        &self,
+        github_token: &str,
+        account_id: &str,
+    ) -> Result<CopilotCredentials> {
         // Check cache first
         {
             let cache = TOKEN_CACHE.lock().unwrap();
@@ -373,6 +392,7 @@ impl CopilotUpstream {
                     endpoint: cached.api_endpoint.clone(),
                     client: CopilotClient::VsCode,
                     device: CopilotDevice::for_credential(github_token),
+                    account_id: account_id.to_owned(),
                     credential: github_token.to_owned(),
                 });
             }
@@ -440,6 +460,7 @@ impl CopilotUpstream {
             endpoint: api_endpoint,
             client: CopilotClient::VsCode,
             device: CopilotDevice::for_credential(github_token),
+            account_id: account_id.to_owned(),
             credential: github_token.to_owned(),
         })
     }
@@ -597,20 +618,25 @@ impl CopilotUpstream {
                 endpoint: self.default_endpoint(),
                 client: CopilotClient::default(),
                 device: CopilotDevice::for_credential(key),
+                account_id: DEFAULT_ACCOUNT.to_owned(),
                 credential: key.clone(),
             });
         }
 
         let accounts = self.auth.list_accounts(ProviderId::Copilot).await?;
-        let token = if accounts.len() > 1 {
+        let AccountToken { account_id, token } = if accounts.len() > 1 {
             let account_id = self.select_account(&accounts).await?;
-            self.auth
+            let token = self
+                .auth
                 .get_token_for(ProviderId::Copilot, &account_id)
-                .await?
+                .await?;
+            AccountToken { account_id, token }
         } else {
-            self.auth.get_token(ProviderId::Copilot).await?
+            self.auth
+                .get_token_with_account(ProviderId::Copilot)
+                .await?
         };
-        self.credentials_for(&token).await
+        self.credentials_for(&token, &account_id).await
     }
 
     /// The account's live model catalog (`/models`), cached for
@@ -732,6 +758,7 @@ mod tests {
             endpoint: DEFAULT_BASE_URL.to_owned(),
             client: CopilotClient::VsCode,
             device: CopilotDevice::for_credential(github_token),
+            account_id: DEFAULT_ACCOUNT.to_owned(),
             credential: github_token.to_owned(),
         };
         assert!(CopilotUpstream::forget_token(&creds));
@@ -757,11 +784,12 @@ mod tests {
         );
 
         let creds = make_upstream()
-            .exchange_and_cache(github_token)
+            .exchange_and_cache(github_token, "work")
             .await
             .expect("served from cache, no network");
         assert_eq!(creds.token, "copilot-api-token");
         assert_eq!(creds.endpoint, "https://api.individual.githubcopilot.com");
+        assert_eq!(creds.account_id, "work");
     }
 
     #[tokio::test]
@@ -775,7 +803,7 @@ mod tests {
             ),
         );
         let creds = make_upstream()
-            .credentials_for(&token)
+            .credentials_for(&token, DEFAULT_ACCOUNT)
             .await
             .expect("served from cache, no network");
         assert_eq!(creds.endpoint, "https://api.enterprise.githubcopilot.com");
@@ -791,8 +819,33 @@ mod tests {
             .auth(auth)
             .base_url("https://copilot-api.ghe.example/".to_owned())
             .build();
-        let creds = pinned.credentials_for(&token).await.unwrap();
+        let creds = pinned
+            .credentials_for(&token, DEFAULT_ACCOUNT)
+            .await
+            .unwrap();
         assert_eq!(creds.endpoint, "https://copilot-api.ghe.example");
+    }
+
+    #[tokio::test]
+    async fn credentials_name_the_account_they_were_resolved_from() {
+        let auth = Arc::new(AuthManager::new(
+            Arc::new(byokey_store::InMemoryTokenStore::new()),
+            reqwest::Client::new(),
+        ));
+        let token = OAuthToken::new("gho_credentials_name_the_account").with_client("opencode");
+        auth.save_token_for(ProviderId::Copilot, "work", None, token.clone())
+            .await
+            .unwrap();
+        ENDPOINTS.lock().unwrap().insert(
+            token.access_token.clone(),
+            (Instant::now(), DEFAULT_BASE_URL.to_owned()),
+        );
+        let upstream = CopilotUpstream::builder()
+            .http(reqwest::Client::new())
+            .auth(auth)
+            .build();
+        let creds = upstream.credentials().await.expect("no network needed");
+        assert_eq!(creds.account_id, "work");
     }
 
     #[test]
@@ -802,6 +855,7 @@ mod tests {
             endpoint: DEFAULT_BASE_URL.into(),
             client: CopilotClient::OpenCode,
             device: CopilotDevice::for_credential("gho_a"),
+            account_id: DEFAULT_ACCOUNT.into(),
             credential: "gho_rejected_tools_a".into(),
         };
         let b = CopilotCredentials {

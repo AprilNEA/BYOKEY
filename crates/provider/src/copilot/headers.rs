@@ -337,6 +337,7 @@ mod tests {
             endpoint: "https://api.githubcopilot.com".to_owned(),
             client,
             device: CopilotDevice::for_credential("ghu_test"),
+            account_id: "default".to_owned(),
             credential: "ghu_test".to_owned(),
         }
     }
