@@ -201,9 +201,10 @@ impl TokenStore for SqliteTokenStore {
             .await?;
 
         if target.is_none() {
-            return Err(ByokError::Storage(format!(
-                "account '{account_id}' not found for provider {provider}"
-            )));
+            return Err(ByokError::AccountNotFound {
+                provider,
+                account_id: account_id.to_owned(),
+            });
         }
 
         // Use a transaction to atomically switch the active account.
@@ -433,7 +434,7 @@ mod tests {
     async fn test_set_active_nonexistent() {
         let s = mem().await;
         let err = s.set_active(ProviderId::Claude, "nope").await.unwrap_err();
-        assert!(err.to_string().contains("not found"));
+        assert!(matches!(err, ByokError::AccountNotFound { .. }));
     }
 
     #[tokio::test]

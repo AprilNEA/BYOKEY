@@ -20,6 +20,14 @@ message GetStatusResponse {
 message ServerInfo {
   string host = 1;
   uint32 port = 2;
+  // The server's release, e.g. `3.1.0`.
+  string version = 3;
+  // Bumped on every change to this API a client must know about; clients
+  // declare the range they speak and ask for an update outside it.
+  uint32 api_version = 4;
+  // Absolute path of the running server binary, so a client can tell how it
+  // was installed (e.g. a Homebrew Cellar path).
+  string executable = 5;
 }
 
 message ProviderStatus {

@@ -198,28 +198,124 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
     }
 
-    /// Basic sanity check that the `ConnectRPC` management service is
-    /// reachable at the expected fallback path.
-    #[tokio::test]
-    async fn test_management_get_status_reachable() {
-        let app = make_router(make_state());
+    async fn rpc(app: &Router, path: &str, body: Value) -> (axum::http::StatusCode, Value) {
         let resp = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/byokey.status.StatusService/GetStatus")
+                    .uri(path)
                     .header("content-type", "application/json")
-                    .body(Body::from("{}"))
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
                     .unwrap(),
             )
             .await
             .unwrap();
+        let status = resp.status();
+        (status, body_json(resp).await)
+    }
 
-        // Whatever the service returns, it should be handled — not a 404.
-        assert_ne!(
-            resp.status(),
-            axum::http::StatusCode::NOT_FOUND,
-            "`ConnectRPC` fallback should serve management requests"
+    #[tokio::test]
+    async fn get_status_reports_the_server_build() {
+        let app = make_router(make_state());
+        let (status, json) = rpc(
+            &app,
+            "/byokey.status.StatusService/GetStatus",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(json["server"]["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(json["server"]["apiVersion"], byokey_proto::API_VERSION);
+    }
+
+    #[tokio::test]
+    async fn account_writes_map_failures_to_connect_codes() {
+        use serde_json::json;
+
+        let app = make_router(make_state());
+        let base = "/byokey.accounts.AccountsService";
+
+        let (status, json) = rpc(
+            &app,
+            &format!("{base}/ActivateAccount"),
+            json!({"provider": "openai", "accountId": "x"}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(json["code"], "invalid_argument");
+
+        let (status, json) = rpc(
+            &app,
+            &format!("{base}/ActivateAccount"),
+            json!({"provider": "claude", "accountId": "missing"}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+        assert_eq!(json["code"], "not_found");
+
+        let (status, json) = rpc(
+            &app,
+            &format!("{base}/AddApiKey"),
+            json!({"provider": "claude", "apiKey": "   "}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(json["code"], "invalid_argument");
+    }
+
+    #[tokio::test]
+    async fn an_added_api_key_can_be_activated_and_removed() {
+        use serde_json::json;
+
+        let app = make_router(make_state());
+        let base = "/byokey.accounts.AccountsService";
+
+        let (status, json) = rpc(
+            &app,
+            &format!("{base}/AddApiKey"),
+            json!({"provider": "claude", "apiKey": "sk-ant-test", "accountId": "work"}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(json["accountId"], "work");
+
+        let (status, _) = rpc(
+            &app,
+            &format!("{base}/ActivateAccount"),
+            json!({"provider": "claude", "accountId": "work"}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+
+        let (_, json) = rpc(&app, &format!("{base}/ListAccounts"), json!({})).await;
+        let claude = json["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == "claude")
+            .unwrap();
+        assert_eq!(claude["accounts"][0]["accountId"], "work");
+        assert_eq!(claude["accounts"][0]["isActive"], true);
+
+        let (status, _) = rpc(
+            &app,
+            &format!("{base}/RemoveAccount"),
+            json!({"provider": "claude", "accountId": "work"}),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        let (_, json) = rpc(&app, &format!("{base}/ListAccounts"), json!({})).await;
+        let claude = json["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == "claude")
+            .unwrap();
+        assert!(
+            claude
+                .get("accounts")
+                .is_none_or(|a| a.as_array().unwrap().is_empty())
         );
     }
 }

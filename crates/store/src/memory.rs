@@ -150,9 +150,10 @@ impl TokenStore for InMemoryTokenStore {
         let mut data = self.data.lock().unwrap();
         let target_key = (provider, account_id.to_string());
         if !data.contains_key(&target_key) {
-            return Err(byokey_types::ByokError::Storage(format!(
-                "account '{account_id}' not found for provider {provider}"
-            )));
+            return Err(byokey_types::ByokError::AccountNotFound {
+                provider,
+                account_id: account_id.to_owned(),
+            });
         }
         // Deactivate all, then activate the target.
         for ((p, _), entry) in data.iter_mut() {

@@ -14,6 +14,13 @@ pub enum ByokError {
     #[error("token not found for provider: {0}")]
     TokenNotFound(crate::ProviderId),
 
+    /// No stored account has this id for the provider.
+    #[error("account '{account_id}' not found for provider {provider}")]
+    AccountNotFound {
+        provider: crate::ProviderId,
+        account_id: String,
+    },
+
     /// The stored token has expired and cannot be used.
     #[error("token expired for provider: {0}")]
     TokenExpired(crate::ProviderId),
