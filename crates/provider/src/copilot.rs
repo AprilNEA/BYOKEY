@@ -74,8 +74,12 @@ const DEFAULT_BASE_URL: &str = "https://api.githubcopilot.com";
 )]
 const ENDPOINT_TTL: Duration = Duration::from_secs(6 * 3600);
 
-/// API host per `OpenCode` credential, from `/copilot_internal/user`.
-/// Process-wide because upstreams are built per request.
+/// How long the default host stands in after `/copilot_internal/user`
+/// failed, before GitHub is asked again.
+const ENDPOINT_RETRY: Duration = Duration::from_mins(1);
+
+/// API host per `OpenCode` credential, from `/copilot_internal/user`, and
+/// when to ask again. Process-wide because upstreams are built per request.
 static ENDPOINTS: LazyLock<Mutex<HashMap<String, (Instant, String)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -328,20 +332,21 @@ impl CopilotUpstream {
     }
 
     /// The API host GitHub names for `token`'s account, cached for
-    /// [`ENDPOINT_TTL`]. A configured `base_url` wins; when GitHub cannot be
-    /// asked, the default host, which serves every seat type.
+    /// [`ENDPOINT_TTL`]. A configured `base_url` wins. When GitHub cannot be
+    /// asked, the default host stands in for [`ENDPOINT_RETRY`] only, so a
+    /// network hiccup does not keep the account off the host GitHub names.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn account_endpoint(&self, token: &OAuthToken) -> String {
         if let Some(url) = &self.base_url {
             return url.trim_end_matches('/').to_owned();
         }
-        if let Some((at, endpoint)) = ENDPOINTS.lock().unwrap().get(&token.access_token)
-            && at.elapsed() < ENDPOINT_TTL
+        if let Some((expires, endpoint)) = ENDPOINTS.lock().unwrap().get(&token.access_token)
+            && Instant::now() < *expires
         {
             return endpoint.clone();
         }
         let started = Instant::now();
-        let endpoint = match self.user_info(token).await {
+        let (endpoint, ttl) = match self.user_info(token).await {
             Ok(user) => {
                 let endpoint = user
                     .pointer("/endpoints/api")
@@ -353,20 +358,21 @@ impl CopilotUpstream {
                     duration_ms = millis(started.elapsed()),
                     "looked up the Copilot account's API host"
                 );
-                endpoint
+                (endpoint, ENDPOINT_TTL)
             }
             Err(e) => {
                 tracing::warn!(
                     error = %e,
                     fallback = DEFAULT_BASE_URL,
+                    retry_secs = ENDPOINT_RETRY.as_secs(),
                     "could not look up the Copilot account's API host"
                 );
-                DEFAULT_BASE_URL.to_owned()
+                (DEFAULT_BASE_URL.to_owned(), ENDPOINT_RETRY)
             }
         };
         ENDPOINTS.lock().unwrap().insert(
             token.access_token.clone(),
-            (Instant::now(), endpoint.clone()),
+            (Instant::now() + ttl, endpoint.clone()),
         );
         endpoint
     }
@@ -837,7 +843,7 @@ mod tests {
         ENDPOINTS.lock().unwrap().insert(
             token.access_token.clone(),
             (
-                Instant::now(),
+                Instant::now() + ENDPOINT_TTL,
                 "https://api.enterprise.githubcopilot.com".to_owned(),
             ),
         );
@@ -866,6 +872,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_unanswered_endpoint_lookup_is_retried_soon() {
+        // Through a closed port every request fails at once, as offline.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let offline = reqwest::Client::builder()
+            .proxy(reqwest::Proxy::all(format!("http://{closed}")).unwrap())
+            .build()
+            .unwrap();
+        let upstream = CopilotUpstream::builder()
+            .http(offline)
+            .auth(Arc::new(AuthManager::new(
+                Arc::new(byokey_store::InMemoryTokenStore::new()),
+                reqwest::Client::new(),
+            )))
+            .build();
+        let token = OAuthToken::new("gho_unanswered_endpoint_lookup").with_client("opencode");
+
+        let creds = upstream
+            .credentials_for(&token, DEFAULT_ACCOUNT)
+            .await
+            .unwrap();
+        assert_eq!(creds.endpoint, DEFAULT_BASE_URL);
+        let (expires, _) = ENDPOINTS.lock().unwrap()[&token.access_token].clone();
+        assert!(
+            expires <= Instant::now() + ENDPOINT_RETRY,
+            "the default host stands in briefly, not for ENDPOINT_TTL"
+        );
+    }
+
+    #[tokio::test]
     async fn credentials_name_the_account_they_were_resolved_from() {
         let auth = Arc::new(AuthManager::new(
             Arc::new(byokey_store::InMemoryTokenStore::new()),
@@ -877,7 +915,7 @@ mod tests {
             .unwrap();
         ENDPOINTS.lock().unwrap().insert(
             token.access_token.clone(),
-            (Instant::now(), DEFAULT_BASE_URL.to_owned()),
+            (Instant::now() + ENDPOINT_TTL, DEFAULT_BASE_URL.to_owned()),
         );
         let upstream = CopilotUpstream::builder()
             .http(reqwest::Client::new())
