@@ -77,6 +77,7 @@ rand = { version = "0.8", features = ["std"] }
 uuid = { version = "1", features = ["v4", "v5"] }
 sha2 = "0.10"
 base64 = "0.22"
+# Opening login URLs in the browser
 open = "5"
 # Storage
 sea-orm = { version = "2.0.0-rc.38", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
@@ -184,3 +185,4 @@ tokio-util.workspace = true
 futures-util.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
 tempfile = "3"
+open.workspace = true

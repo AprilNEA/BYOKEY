@@ -1,8 +1,25 @@
 use anyhow::Result;
 use byokey_auth::AuthManager;
+use byokey_auth::flow::LoginStep;
 use byokey_daemon::process::ServerStatus;
-use byokey_types::{OAuthToken, ProviderId};
+use byokey_types::ProviderId;
 use std::{path::PathBuf, sync::Arc};
+
+fn print_step(step: LoginStep) {
+    match step {
+        LoginStep::Visit { url, user_code } => {
+            eprintln!("If your browser does not open, visit:\n  {url}");
+            if let Some(code) = user_code {
+                eprintln!("and enter the code: {code}");
+            }
+            if let Err(e) = open::that(&url) {
+                tracing::warn!(error = %e, "failed to open browser");
+            }
+            eprintln!("[login] waiting for approval...");
+        }
+        LoginStep::Exchanging => eprintln!("[login] exchanging for token..."),
+    }
+}
 
 pub struct AuthCmd {
     auth: AuthManager,
@@ -28,9 +45,10 @@ impl AuthCmd {
             account: account.as_deref(),
             client: client.as_deref(),
         };
-        byokey_auth::flow::login(provider, &self.auth, options)
+        byokey_auth::flow::login(provider, &self.auth, options, &print_step)
             .await
             .map_err(|e| anyhow::anyhow!("login failed: {e}"))?;
+        println!("{provider} login successful");
         Ok(())
     }
 
@@ -42,28 +60,9 @@ impl AuthCmd {
         account: Option<String>,
         label: Option<String>,
     ) -> Result<()> {
-        if api_key.trim().is_empty() {
-            anyhow::bail!("api_key cannot be empty");
-        }
-        if api_key.len() > byokey_types::MAX_API_KEY_BYTES {
-            anyhow::bail!(
-                "api_key exceeds maximum length of {} bytes",
-                byokey_types::MAX_API_KEY_BYTES
-            );
-        }
-        let account_id = account
-            .as_deref()
-            .unwrap_or(byokey_types::DEFAULT_ACCOUNT)
-            .to_string();
-        let token = OAuthToken {
-            access_token: api_key.trim().to_string(),
-            refresh_token: None,
-            expires_at: None,
-            token_type: Some("api-key".to_string()),
-            client: None,
-        };
-        self.auth
-            .save_token_for(provider, &account_id, label.as_deref(), token)
+        let account_id = self
+            .auth
+            .add_api_key(provider, &api_key, account.as_deref(), label.as_deref())
             .await
             .map_err(|e| anyhow::anyhow!("add-api-key failed: {e}"))?;
         println!("{provider}: API key saved to account '{account_id}'");
@@ -78,25 +77,12 @@ impl AuthCmd {
         account: Option<String>,
         label: Option<String>,
     ) -> Result<()> {
-        let token = byokey_auth::provider::claude_code::load_token()
+        let account_id = self
+            .auth
+            .import_claude_code(account.as_deref(), label.as_deref())
             .await
-            .map_err(|e| anyhow::anyhow!("read Claude Code credentials: {e}"))?
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "no Claude Code credentials found — is Claude Code logged in on this machine?"
-                )
-            })?;
-        let provider = ProviderId::Claude;
-        let account_id = account
-            .as_deref()
-            .unwrap_or(byokey_types::CLAUDE_CODE_ACCOUNT)
-            .to_string();
-        let label = label.unwrap_or_else(|| "Claude Code".to_string());
-        self.auth
-            .save_token_for(provider, &account_id, Some(label.as_str()), token)
-            .await
-            .map_err(|e| anyhow::anyhow!("save Claude Code token: {e}"))?;
-        println!("{provider}: imported Claude Code credentials to account '{account_id}'");
+            .map_err(|e| anyhow::anyhow!("import Claude Code credentials: {e}"))?;
+        println!("claude: imported Claude Code credentials to account '{account_id}'");
         Ok(())
     }
 

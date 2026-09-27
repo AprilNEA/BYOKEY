@@ -13,7 +13,7 @@ use serde::Deserialize;
 use std::time::Duration;
 
 use crate::AuthManager;
-use crate::flow::{open_browser, save_login_token};
+use crate::flow::{LoginStep, OnStep, save_login_token};
 use crate::pkce;
 
 const WEBSITE: &str = "https://cursor.com";
@@ -109,12 +109,14 @@ pub async fn login(
     auth: &AuthManager,
     http: &reqwest::Client,
     account: Option<&str>,
+    on_step: OnStep<'_>,
 ) -> Result<()> {
     let pkce = pkce::Pkce::generate();
     let uuid = uuid::Uuid::new_v4().to_string();
-    let url = login_url(&pkce.challenge, &uuid);
-    println!("Open this URL in your browser: {url}");
-    open_browser(&url);
+    on_step(LoginStep::Visit {
+        url: login_url(&pkce.challenge, &uuid),
+        user_code: None,
+    });
 
     let deadline = tokio::time::Instant::now() + LOGIN_TIMEOUT;
     let pair = loop {
@@ -144,7 +146,6 @@ pub async fn login(
     };
     let token = token_from(pair, None)?;
     save_login_token(auth, byokey_types::ProviderId::Cursor, token, account).await?;
-    println!("cursor login successful");
     Ok(())
 }
 

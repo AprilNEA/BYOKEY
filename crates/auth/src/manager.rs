@@ -6,7 +6,8 @@
 //! - Cooldown duration to prevent excessive refresh attempts (30 s).
 //! - Multi-account support: save, switch, and list accounts per provider.
 use byokey_types::{
-    AccountInfo, AccountToken, ByokError, OAuthToken, ProviderId, Result, TokenState, TokenStore,
+    AccountInfo, AccountToken, ByokError, CLAUDE_CODE_ACCOUNT, DEFAULT_ACCOUNT, MAX_API_KEY_BYTES,
+    OAuthToken, ProviderId, Result, TokenState, TokenStore,
 };
 use std::{
     collections::HashMap,
@@ -299,6 +300,71 @@ impl AuthManager {
     /// Returns an error if the store fails.
     pub async fn get_all_tokens(&self, provider: ProviderId) -> Result<Vec<AccountToken>> {
         self.store.load_all_tokens(provider).await
+    }
+
+    /// Store `api_key` as a non-expiring token under `account_id` (default
+    /// [`DEFAULT_ACCOUNT`]) and return the account it went to.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ByokError::Auth`] if the key is blank or longer than
+    /// [`MAX_API_KEY_BYTES`], or a store error.
+    pub async fn add_api_key(
+        &self,
+        provider: ProviderId,
+        api_key: &str,
+        account_id: Option<&str>,
+        label: Option<&str>,
+    ) -> Result<String> {
+        let api_key = api_key.trim();
+        if api_key.is_empty() {
+            return Err(ByokError::Auth("API key cannot be empty".into()));
+        }
+        if api_key.len() > MAX_API_KEY_BYTES {
+            return Err(ByokError::Auth(format!(
+                "API key exceeds the maximum length of {MAX_API_KEY_BYTES} bytes"
+            )));
+        }
+        let account_id = account_id.unwrap_or(DEFAULT_ACCOUNT);
+        let token = OAuthToken {
+            token_type: Some("api-key".to_string()),
+            ..OAuthToken::new(api_key)
+        };
+        self.save_token_for(provider, account_id, label, token)
+            .await?;
+        Ok(account_id.to_owned())
+    }
+
+    /// Copy the local Claude Code login into a Claude account (default
+    /// [`CLAUDE_CODE_ACCOUNT`], labelled "Claude Code") and return the account
+    /// it went to.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ByokError::Auth`] if Claude Code is not logged in on this
+    /// machine or its credentials cannot be read, or a store error.
+    pub async fn import_claude_code(
+        &self,
+        account_id: Option<&str>,
+        label: Option<&str>,
+    ) -> Result<String> {
+        let token = crate::provider::claude_code::load_token()
+            .await?
+            .ok_or_else(|| {
+                ByokError::Auth(
+                    "no Claude Code credentials found; is Claude Code logged in on this machine?"
+                        .into(),
+                )
+            })?;
+        let account_id = account_id.unwrap_or(CLAUDE_CODE_ACCOUNT);
+        self.save_token_for(
+            ProviderId::Claude,
+            account_id,
+            Some(label.unwrap_or("Claude Code")),
+            token,
+        )
+        .await?;
+        Ok(account_id.to_owned())
     }
 
     // ── Background refresh ────────────────────────────────────────────────

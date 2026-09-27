@@ -12,6 +12,25 @@ use byokey_types::{ByokError, CopilotClient, OAuthToken, ProviderId, Result};
 use crate::AuthManager;
 use crate::provider::{claude, copilot, cursor};
 
+/// A login step the user has to act on or wait through.
+///
+/// The flow reports these instead of printing or opening a browser itself, so
+/// the CLI and the management API each present them their own way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoginStep {
+    /// Open `url` in a browser. Device-code flows also carry the `user_code`
+    /// to enter there.
+    Visit {
+        url: String,
+        user_code: Option<String>,
+    },
+    /// The browser half is done and the grant is being traded for a token.
+    Exchanging,
+}
+
+/// Receives each [`LoginStep`] as the flow reaches it.
+pub type OnStep<'a> = &'a (dyn Fn(LoginStep) + Send + Sync);
+
 /// What to log in as.
 #[derive(Debug, Clone, Default)]
 pub struct LoginOptions<'a> {
@@ -33,6 +52,7 @@ pub async fn login(
     provider: ProviderId,
     auth: &AuthManager,
     options: LoginOptions<'_>,
+    on_step: OnStep<'_>,
 ) -> Result<()> {
     let http = reqwest::Client::new();
     let account = options.account;
@@ -44,14 +64,14 @@ pub async fn login(
         )));
     }
     match provider {
-        ProviderId::Claude => auth_code::run(&claude::Claude, auth, &http, account).await,
+        ProviderId::Claude => auth_code::run(&claude::Claude, auth, &http, account, on_step).await,
         ProviderId::Copilot => {
             let client = options
                 .client
                 .map_or(Ok(CopilotClient::default()), str::parse)?;
-            device_code::run(&copilot::Copilot { client }, auth, &http, account).await
+            device_code::run(&copilot::Copilot { client }, auth, &http, account, on_step).await
         }
-        ProviderId::Cursor => cursor::login(auth, &http, account).await,
+        ProviderId::Cursor => cursor::login(auth, &http, account, on_step).await,
     }
 }
 
@@ -71,13 +91,6 @@ pub(crate) async fn save_login_token(
     }
 }
 
-pub(crate) fn open_browser(url: &str) {
-    tracing::info!(url = %url, "opening browser for OAuth login");
-    if let Err(e) = open::that(url) {
-        tracing::warn!(error = %e, url = %url, "failed to open browser, open URL manually");
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,7 +107,11 @@ mod tests {
             client: Some("vscode"),
             ..LoginOptions::default()
         };
-        assert!(login(ProviderId::Claude, &auth(), options).await.is_err());
+        assert!(
+            login(ProviderId::Claude, &auth(), options, &|_| {})
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -103,6 +120,10 @@ mod tests {
             client: Some("jetbrains"),
             ..LoginOptions::default()
         };
-        assert!(login(ProviderId::Copilot, &auth(), options).await.is_err());
+        assert!(
+            login(ProviderId::Copilot, &auth(), options, &|_| {})
+                .await
+                .is_err()
+        );
     }
 }

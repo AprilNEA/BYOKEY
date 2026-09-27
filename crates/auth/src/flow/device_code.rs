@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use byokey_types::{ByokError, OAuthToken, ProviderId, Result};
 use std::time::Duration;
 
-use super::{open_browser, save_login_token};
+use super::{LoginStep, OnStep, save_login_token};
 use crate::{AuthManager, credentials::OAuthCredentials, token, token::DeviceCodeResponse};
 
 /// Result of a single token poll attempt.
@@ -18,13 +18,6 @@ pub enum PollResult {
     Pending,
     /// Server asked to slow down — increase interval.
     SlowDown,
-}
-
-fn device_code_prompt(dc: &DeviceCodeResponse) -> String {
-    format!(
-        "Open this URL in your browser: {}\nEnter this code: {}",
-        dc.verification_uri, dc.user_code
-    )
 }
 
 /// Provider-specific behavior for the Device Authorization Grant flow.
@@ -68,18 +61,17 @@ pub async fn run<P: DeviceCodeFlow>(
     auth: &AuthManager,
     http: &reqwest::Client,
     account: Option<&str>,
+    on_step: OnStep<'_>,
 ) -> Result<()> {
     let creds = crate::credentials::fetch(provider.provider_name(), http).await?;
     let dc = provider.request_device_code(http, &creds).await?;
     let provider_id = provider.provider_id();
 
-    tracing::info!(
-        uri = %dc.verification_uri,
-        code = %dc.user_code,
-        "visit URL and enter verification code"
-    );
-    println!("{}", device_code_prompt(&dc));
-    open_browser(&dc.verification_uri);
+    tracing::info!(uri = %dc.verification_uri, "waiting for device code approval");
+    on_step(LoginStep::Visit {
+        url: dc.verification_uri.clone(),
+        user_code: Some(dc.user_code.clone()),
+    });
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(dc.expires_in);
     let mut interval = dc.interval as f64;
@@ -94,7 +86,6 @@ pub async fn run<P: DeviceCodeFlow>(
         match provider.poll_token(http, &creds, &dc.device_code).await? {
             PollResult::Success(tok) => {
                 save_login_token(auth, provider_id, tok, account).await?;
-                println!("{provider_id} login successful");
                 tracing::info!(provider = %provider_id, "login successful");
                 return Ok(());
             }
@@ -122,25 +113,5 @@ pub fn parse_poll_response(json: &serde_json::Value) -> Result<PollResult> {
             let tok = token::parse_token_response(json)?;
             Ok(PollResult::Success(tok))
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_device_code_prompt_includes_url_and_code() {
-        let dc = DeviceCodeResponse {
-            device_code: "device-code".into(),
-            user_code: "ABCD-1234".into(),
-            verification_uri: "https://github.com/login/device".into(),
-            expires_in: 900,
-            interval: 5,
-        };
-
-        let prompt = device_code_prompt(&dc);
-        assert!(prompt.contains("https://github.com/login/device"));
-        assert!(prompt.contains("ABCD-1234"));
     }
 }

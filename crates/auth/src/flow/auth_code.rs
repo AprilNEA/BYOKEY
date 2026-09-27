@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use byokey_types::{ByokError, OAuthToken, ProviderId, Result};
 use serde_json::Value;
 
-use super::{open_browser, save_login_token};
+use super::{LoginStep, OnStep, save_login_token};
 use crate::{AuthManager, callback, credentials::OAuthCredentials, pkce, token};
 
 /// Provider-specific behavior for the Authorization Code + PKCE OAuth flow.
@@ -51,12 +51,9 @@ pub async fn run<P: AuthCodeFlow>(
     auth: &AuthManager,
     http: &reqwest::Client,
     account: Option<&str>,
+    on_step: OnStep<'_>,
 ) -> Result<()> {
     tracing::info!(provider = %provider.provider_name(), "starting OAuth login");
-    eprintln!(
-        "[login] fetching credentials for {}...",
-        provider.provider_name()
-    );
     let creds = crate::credentials::fetch(provider.provider_name(), http).await?;
 
     let pkce = pkce::Pkce::generate();
@@ -64,27 +61,21 @@ pub async fn run<P: AuthCodeFlow>(
     let auth_url = provider.build_auth_url(&creds.client_id, &pkce.challenge, &state);
 
     let listeners = callback::bind_callback(provider.callback_port()).await?;
-    eprintln!(
-        "[login] opening browser for {}...",
-        provider.provider_name()
+    tracing::info!(
+        provider = %provider.provider_name(),
+        port = provider.callback_port(),
+        "waiting for OAuth callback"
     );
-    eprintln!();
-    eprintln!("If your browser does not open, copy and paste this URL:");
-    eprintln!("  {auth_url}");
-    eprintln!();
-    eprintln!(
-        "Listening for the OAuth callback on http://localhost:{}/...",
-        provider.callback_port()
-    );
-    open_browser(&auth_url);
-    tracing::info!(provider = %provider.provider_name(), "waiting for OAuth callback");
-    eprintln!("[login] waiting for OAuth callback...");
+    on_step(LoginStep::Visit {
+        url: auth_url,
+        user_code: None,
+    });
     let params = callback::accept_callback(listeners).await?;
 
     verify_state(&params, &state)?;
     let code = extract_code(&params)?;
     tracing::info!(provider = %provider.provider_name(), "received OAuth code, exchanging");
-    eprintln!("[login] received OAuth code, exchanging for token...");
+    on_step(LoginStep::Exchanging);
     let tok = provider
         .exchange_code(http, &creds, code, &pkce.verifier, &state)
         .await?;
