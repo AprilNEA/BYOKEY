@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0](https://github.com/AprilNEA/BYOKEY/compare/v2.1.0...v3.0.0) - 2026-09-27
+
+### Added
+
+- *(proxy)* list models in lineup order with their release dates
+- *(provider)* refresh the model registry to current upstream ids
+- *(cli)* log the OS service by default and check Claude Desktop in doctor
+- *(proxy)* cheaper Claude Code turns on Copilot
+- *(cli)* open Claude Desktop against BYOKEY next to the official one
+- *(cli)* add `byokey claude desktop`
+- *(cli)* add `byokey doctor`
+- Claude Code gateway model discovery
+- *(proxy)* announce 1M-context models on /v1/models
+- *(proxy)* list the models each endpoint can route
+- *(proxy)* pass upstream errors through and accept [1m] model ids
+- *(proxy)* serve /v1/messages/count_tokens
+
+### Fixed
+
+- *(provider,proxy)* learn which server tools a Copilot account's policy rejects
+- *(proxy)* drop the server tools Copilot rejects
+- *(proxy)* keep Claude Code's stream alive while the upstream is silent
+- *(proxy)* end truncated Messages streams and re-exchange rejected Copilot tokens
+- *(proxy)* let cursor/<model> override claude.backend on /v1/messages
+
+### Other
+
+- *(daemon)* one ServeOptions for background and service starts
+- *(cli)* type Claude Desktop's deployment mode
+- *(cli)* name the resolved target and the doctor report
+- *(deps)* replace wreq with reqwest
+- [**breaking**] make ProviderId Copy and pass it by value
+- [**breaking**] keep only the Anthropic Messages gateway for Claude Code and Claude Desktop
+- document claude desktop, doctor and model discovery
+- [**breaking**] return stored tokens as AccountToken
+- convert management API types with From
+- *(proxy)* record usage through a typed Attribution
+- *(auth)* name the PKCE pair and the refresh cooldown
+- *(provider)* point REJECTED_TOOLS at the method that records it
+- *(provider)* type Cursor's model parameters
+- type the model catalogs and /v1/models responses
+- *(proxy)* order models by a derived Ord key
+- Revert "refactor(proxy): route /v1/messages like /v1/chat/completions"
+- *(proxy)* route /v1/messages like /v1/chat/completions
+
 ### Breaking
 
 - BYOKEY is now an Anthropic Messages gateway for Claude Code and Claude Desktop. `/v1/chat/completions`, `/v1/responses` and `/openapi.json` are gone; `/v1/models` lists what `/v1/messages` routes.
