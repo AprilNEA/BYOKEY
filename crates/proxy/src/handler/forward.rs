@@ -80,7 +80,6 @@ pub(super) async fn forward_response(
     let status = resp.status();
     if !status.is_success() {
         let err = ByokError::from_response(resp).await;
-        tracing::error!(status = status.as_u16(), "upstream error");
         attribution.failure();
         return Err(ApiError::from(err));
     }

@@ -11,10 +11,12 @@
 //! - `ByokError::Upstream`'s `Display` impl omits the response body, so
 //!   `tracing::error!("{err}")` never forwards a potentially-sensitive
 //!   body into Sentry.
+//! - Log fields in [`LOCAL_ONLY_FIELDS`] (text an upstream wrote) are
+//!   removed from events and breadcrumbs; they stay in the local log.
 
 use byokey_config::TelemetryConfig;
 use sentry::ClientInitGuard;
-use sentry::protocol::{Breadcrumb, Event, Request};
+use sentry::protocol::{Breadcrumb, Context, Event, Request};
 use std::sync::Arc;
 
 /// Provider-specific auth headers that aren't in Sentry's default
@@ -27,6 +29,10 @@ const EXTRA_SENSITIVE_HEADERS: &[&str] = &[
     "openai-project",
     "x-session-id",
 ];
+
+/// Log fields that stay in the local log: `upstream_message` is text an
+/// upstream wrote, which can quote the request it rejected.
+const LOCAL_ONLY_FIELDS: &[&str] = &["upstream_message"];
 
 /// Maximum length for event `message` / exception `value` fields. Longer
 /// strings (often serialized upstream error bodies) are truncated.
@@ -102,10 +108,21 @@ fn scrub_event(event: &mut Event<'static>) {
     for exc in &mut event.exception.values {
         truncate(&mut exc.value, MAX_MESSAGE_LEN);
     }
+    // sentry-tracing puts an event's fields in an `Other` context.
+    for context in event.contexts.values_mut() {
+        if let Context::Other(fields) = context {
+            for field in LOCAL_ONLY_FIELDS {
+                fields.remove(*field);
+            }
+        }
+    }
 }
 
 fn scrub_breadcrumb(crumb: &mut Breadcrumb) {
     truncate(&mut crumb.message, MAX_MESSAGE_LEN);
+    for field in LOCAL_ONLY_FIELDS {
+        crumb.data.remove(*field);
+    }
     // Strip URL query strings from HTTP breadcrumbs.
     if let Some(url) = crumb.data.get_mut("url")
         && let Some(s) = url.as_str()
@@ -217,6 +234,34 @@ mod tests {
         scrub_request(&mut req);
         assert!(req.data.is_none());
         assert!(req.cookies.is_none());
+    }
+
+    #[test]
+    fn upstream_messages_stay_out_of_sentry() {
+        let fields = || {
+            let mut map = sentry::protocol::Map::new();
+            map.insert("upstream_message".into(), "echoed prompt".into());
+            map.insert("status".into(), 400.into());
+            map
+        };
+        let mut crumb = Breadcrumb {
+            data: fields(),
+            ..Default::default()
+        };
+        scrub_breadcrumb(&mut crumb);
+        assert!(!crumb.data.contains_key("upstream_message"));
+        assert!(crumb.data.contains_key("status"));
+
+        let mut event = Event::default();
+        event
+            .contexts
+            .insert("Rust Tracing Fields".into(), Context::Other(fields()));
+        scrub_event(&mut event);
+        let Some(Context::Other(kept)) = event.contexts.get("Rust Tracing Fields") else {
+            panic!("the fields context stays");
+        };
+        assert!(!kept.contains_key("upstream_message"));
+        assert!(kept.contains_key("status"));
     }
 
     #[test]

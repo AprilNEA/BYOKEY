@@ -13,6 +13,8 @@ pub mod handler;
 pub mod http;
 pub mod middleware;
 pub mod router;
+#[cfg(test)]
+mod test_logs;
 pub mod usage;
 pub(crate) mod util;
 

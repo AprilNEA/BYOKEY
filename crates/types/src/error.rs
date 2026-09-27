@@ -49,11 +49,12 @@ pub enum ByokError {
     /// The upstream provider returned a non-success status.
     ///
     /// The `body` field is deliberately omitted from `Display` output because
-    /// it can contain echoes of user-supplied prompts or other sensitive data.
-    /// Callers that need to forward the body to the original HTTP client must
-    /// read the field directly (see `ApiError::into_response` in
-    /// `byokey-proxy`). Anything that feeds logs, `tracing::error!`, or error
-    /// reporters (Sentry) must avoid that path.
+    /// it can contain echoes of user-supplied prompts or other sensitive data,
+    /// and an error's text can reach an error reporter (Sentry). Callers that
+    /// need to forward the body to the original HTTP client read the field
+    /// directly (see `ApiError::into_response` in `byokey-proxy`). The proxy
+    /// logs the upstream's error message locally as `upstream_message`, a
+    /// field BYOKEY's Sentry setup strips.
     #[error("upstream error: status={status}")]
     Upstream {
         status: u16,

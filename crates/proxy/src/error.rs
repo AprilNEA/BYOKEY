@@ -6,6 +6,8 @@
 //! raised by the gateway itself are rendered in the wire format of the route
 //! that failed: the Anthropic Messages envelope on `/v1/messages`, the
 //! `OpenAI` one elsewhere.
+//!
+//! Rendering an error logs it.
 
 use axum::{
     Json,
@@ -51,6 +53,28 @@ impl ApiError {
         Self {
             wire: Wire::Anthropic,
             ..self
+        }
+    }
+
+    /// Log the error: an upstream's refusal with the upstream's own message,
+    /// a failure inside the gateway at `error`, anything else (a missing
+    /// login, an unknown model, an unreachable upstream) at `warn`.
+    fn log(&self) {
+        if let ByokError::Upstream { status, body, .. } = &self.error {
+            let upstream = UpstreamMessage::of(body);
+            tracing::warn!(
+                status,
+                error_type = upstream.error_type.as_deref(),
+                upstream_message = %upstream.message,
+                "the upstream refused the request"
+            );
+            return;
+        }
+        let (status, ..) = self.classify();
+        if status == StatusCode::INTERNAL_SERVER_ERROR {
+            tracing::error!(status = status.as_u16(), error = %self.error, "request failed");
+        } else {
+            tracing::warn!(status = status.as_u16(), error = %self.error, "request failed");
         }
     }
 
@@ -104,6 +128,41 @@ impl ApiError {
     }
 }
 
+/// How much of an upstream's error message goes into the log.
+const LOGGED_MESSAGE_CHARS: usize = 300;
+
+/// What an upstream's error body says, for the log: the error type
+/// (Anthropic's `error.type`, or `error.code` as Copilot sends it) and the
+/// message, cut to [`LOGGED_MESSAGE_CHARS`]. A body that is not an error
+/// envelope is its own message.
+///
+/// The message is logged as `upstream_message`, which stays out of Sentry:
+/// an upstream can quote the request it rejects.
+pub(crate) struct UpstreamMessage {
+    pub(crate) error_type: Option<String>,
+    pub(crate) message: String,
+}
+
+impl UpstreamMessage {
+    pub(crate) fn of(body: &str) -> Self {
+        let envelope = serde_json::from_str::<Value>(body).ok();
+        let error = envelope.as_ref().and_then(|v| v.get("error"));
+        let text = |key: &str| error.and_then(|e| e.get(key)).and_then(Value::as_str);
+        Self {
+            error_type: text("type").or_else(|| text("code")).map(str::to_owned),
+            message: cut(text("message").unwrap_or(body)),
+        }
+    }
+}
+
+/// `text` cut to [`LOGGED_MESSAGE_CHARS`] characters.
+fn cut(text: &str) -> String {
+    match text.char_indices().nth(LOGGED_MESSAGE_CHARS) {
+        Some((end, _)) => format!("{}…", &text[..end]),
+        None => text.to_owned(),
+    }
+}
+
 /// The Anthropic error envelope.
 pub(crate) fn anthropic_envelope(error_type: &str, message: &str) -> Value {
     json!({
@@ -127,6 +186,7 @@ pub(crate) fn describe_status(status: StatusCode) -> (&'static str, &'static str
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        self.log();
         if let ByokError::Upstream {
             status,
             body,
@@ -236,8 +296,8 @@ mod tests {
         let anthropic = r#"{"type":"error","error":{"type":"invalid_request_error","message":"messages: at least one message is required"},"request_id":"req_1"}"#;
         for wire in [Wire::OpenAi, Wire::Anthropic] {
             let err = ApiError {
-                error: upstream(400, anthropic),
                 wire,
+                ..ApiError::new(upstream(400, anthropic))
             };
             let (status, _, body) = render(err).await;
             assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -296,6 +356,59 @@ mod tests {
 
         let (_, headers, _) = render(ApiError::new(upstream(429, "slow down"))).await;
         assert!(!headers.contains_key(RETRY_AFTER));
+    }
+
+    #[tokio::test]
+    async fn each_error_is_logged_at_a_level_that_says_who_failed() {
+        use crate::test_logs::Logs;
+        use tracing::Level;
+
+        let logs = Logs::capture();
+        render(ApiError::new(upstream(
+            400,
+            r#"{"error":{"message":"The use of the web search tool is not supported.","code":"unsupported_value"}}"#,
+        )))
+        .await;
+        render(ApiError::new(ByokError::TokenNotFound(ProviderId::Copilot)).anthropic()).await;
+        render(ApiError::new(ByokError::Http("connection refused".into()))).await;
+        render(ApiError::new(ByokError::Storage("disk full".into()))).await;
+
+        let logged = logs.at_least(Level::WARN);
+        let summary: Vec<_> = logged
+            .iter()
+            .map(|e| (e.level, e.field("status").unwrap_or("-")))
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                (Level::WARN, "400"),
+                (Level::WARN, "401"),
+                (Level::WARN, "502"),
+                (Level::ERROR, "500"),
+            ]
+        );
+        assert_eq!(logged[0].field("error_type"), Some("unsupported_value"));
+        assert_eq!(
+            logged[0].field("upstream_message"),
+            Some("The use of the web search tool is not supported.")
+        );
+    }
+
+    #[test]
+    fn upstream_messages_are_read_from_either_envelope_and_cut() {
+        let anthropic = UpstreamMessage::of(
+            r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
+        );
+        assert_eq!(anthropic.error_type.as_deref(), Some("overloaded_error"));
+        assert_eq!(anthropic.message, "Overloaded");
+
+        let text = UpstreamMessage::of("<html>bad gateway</html>");
+        assert_eq!(text.error_type, None);
+        assert_eq!(text.message, "<html>bad gateway</html>");
+
+        let long = UpstreamMessage::of(&"é".repeat(LOGGED_MESSAGE_CHARS + 5));
+        assert_eq!(long.message.chars().count(), LOGGED_MESSAGE_CHARS + 1);
+        assert!(long.message.ends_with('…'));
     }
 
     #[tokio::test]

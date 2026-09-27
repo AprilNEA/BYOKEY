@@ -353,7 +353,7 @@ pub(super) async fn copilot_messages(
         attempt += 1;
     }
 
-    tracing::error!(
+    tracing::warn!(
         attempts = max_attempts,
         "all copilot accounts exhausted for messages request"
     );

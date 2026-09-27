@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A failed request is logged once, when its error response is rendered, at a level that says who failed. An upstream's refusal is a `warn` carrying the upstream's status, error type and message, so the log says why Copilot or Anthropic refused (an organisation policy, a context limit) instead of only `status=400`; the message stays out of Sentry because an upstream can quote the request back. A missing login, an unknown model or an unreachable upstream is a `warn`, and only a failure inside BYOKEY is an `error`, so Sentry no longer receives an error event for every upstream 4xx and 5xx.
+
 ## [3.0.0](https://github.com/AprilNEA/BYOKEY/compare/v2.1.0...v3.0.0) - 2026-09-27
 
 ### Added

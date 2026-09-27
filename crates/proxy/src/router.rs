@@ -57,13 +57,11 @@ fn common_layers(router: Router) -> Router {
                         tracing::info!(status = resp.status().as_u16(), ?latency, "response sent");
                     },
                 )
+                // `ApiError` logs each failure with its cause, at the level
+                // that says who failed; this only notes the classification.
                 .on_failure(
                     |err: ServerErrorsFailureClass, latency: Duration, _span: &Span| {
-                        tracing::error!(
-                            error = %err,
-                            ?latency,
-                            "request failed"
-                        );
+                        tracing::debug!(error = %err, ?latency, "response classified as a failure");
                     },
                 ),
         )
