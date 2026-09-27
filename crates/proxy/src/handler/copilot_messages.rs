@@ -28,7 +28,7 @@ pub(super) fn copilot_upstream(state: &AppState) -> CopilotUpstream {
         .auth(state.auth.clone())
         .maybe_api_key(config.api_key)
         .maybe_base_url(config.base_url)
-        .identity(state.copilot_identity.clone())
+        .identity(CopilotIdentity::clone(&state.copilot_identity.load()))
         .build()
 }
 

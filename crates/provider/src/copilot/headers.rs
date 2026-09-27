@@ -15,7 +15,7 @@
 
 use super::CopilotCredentials;
 use super::device::{CopilotDevice, uuid_from};
-use byokey_types::CopilotClient;
+use byokey_types::{CopilotClient, Result};
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -83,39 +83,22 @@ impl Default for CopilotIdentity {
 }
 
 impl CopilotIdentity {
-    /// The identity for the versions published at `VERSIONS_URL`, or the
-    /// compile-time defaults when they cannot be fetched.
-    pub async fn fetch(http: &reqwest::Client) -> Self {
-        let fetched: Result<CopilotVersions, String> = async {
-            let resp = http
-                .get(VERSIONS_URL)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
-            if !resp.status().is_success() {
-                return Err(format!("HTTP {}", resp.status()));
-            }
-            resp.json().await.map_err(|e| e.to_string())
-        }
-        .await;
-        match fetched {
-            Ok(versions) => {
-                let identity = Self::from_versions(&versions);
-                tracing::info!(
-                    editor = %identity.editor_version,
-                    plugin = %identity.plugin_version,
-                    "fetched Copilot client versions"
-                );
-                identity
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "Copilot client versions unavailable, using the built-in ones"
-                );
-                Self::default()
-            }
-        }
+    /// The identity for the versions published at `VERSIONS_URL`. Until
+    /// they arrive, [`CopilotIdentity::default`] presents the compile-time
+    /// ones.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the versions cannot be fetched or parsed.
+    pub async fn fetch(http: &reqwest::Client) -> Result<Self> {
+        let versions: CopilotVersions = super::send(http.get(VERSIONS_URL)).await?.json().await?;
+        let identity = Self::from_versions(&versions);
+        tracing::info!(
+            editor = %identity.editor_version,
+            plugin = %identity.plugin_version,
+            "fetched Copilot client versions"
+        );
+        Ok(identity)
     }
 
     /// Builds the identity from published versions, falling back per field

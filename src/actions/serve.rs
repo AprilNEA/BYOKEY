@@ -196,17 +196,14 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
         std::time::Duration::from_secs(300),
     );
 
-    // The Copilot client versions to present (compile-time defaults offline).
-    let copilot_identity = byokey_provider::CopilotIdentity::fetch(&http).await;
-
     let usage_store: Arc<dyn byokey_types::UsageStore> = store;
     let state = AppState::new(
         Arc::clone(&config_arc),
         auth,
         http,
         Some(usage_store.clone()),
-        copilot_identity,
     );
+    let _identity_handle = state.spawn_copilot_identity_fetch();
 
     // Pre-load cumulative usage from persisted records so the in-memory snapshot
     // reflects historical totals even after a restart.

@@ -145,13 +145,7 @@ mod tests {
         let config = Arc::new(arc_swap::ArcSwap::from_pointee(
             byokey_config::Config::default(),
         ));
-        AppState::new(
-            config,
-            auth,
-            http,
-            None,
-            byokey_provider::CopilotIdentity::default(),
-        )
+        AppState::new(config, auth, http, None)
     }
 
     async fn body_json(resp: axum::response::Response) -> Value {

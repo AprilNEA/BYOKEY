@@ -29,7 +29,7 @@ use arc_swap::ArcSwap;
 use byokey_auth::AuthManager;
 use byokey_provider::{CopilotIdentity, DeviceProfileCache};
 use byokey_types::UsageStore;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 /// Shared application state passed to all route handlers.
 pub struct AppState {
@@ -44,9 +44,15 @@ pub struct AppState {
     pub usage: Arc<UsageRecorder>,
     /// Per-auth device fingerprint cache for Claude API headers.
     pub device_profiles: Arc<DeviceProfileCache>,
-    /// The client Copilot requests present themselves as.
-    pub copilot_identity: CopilotIdentity,
+    /// The client Copilot requests present themselves as: the compile-time
+    /// versions until the published ones arrive (see
+    /// [`AppState::spawn_copilot_identity_fetch`]).
+    pub copilot_identity: ArcSwap<CopilotIdentity>,
 }
+
+/// How long to wait before asking for the Copilot client versions again
+/// after a failed fetch.
+const COPILOT_VERSIONS_RETRY: Duration = Duration::from_mins(5);
 
 impl AppState {
     /// Creates a new shared application state wrapped in an `Arc`.
@@ -58,7 +64,6 @@ impl AppState {
         auth: Arc<AuthManager>,
         http: reqwest::Client,
         usage_store: Option<Arc<dyn UsageStore>>,
-        copilot_identity: CopilotIdentity,
     ) -> Arc<Self> {
         Arc::new(Self {
             config,
@@ -66,7 +71,31 @@ impl AppState {
             http,
             usage: Arc::new(UsageRecorder::new(usage_store)),
             device_profiles: Arc::new(DeviceProfileCache::new()),
-            copilot_identity,
+            copilot_identity: ArcSwap::from_pointee(CopilotIdentity::default()),
+        })
+    }
+
+    /// Fetch the published Copilot client versions in the background and
+    /// present them once they arrive, retrying every
+    /// [`COPILOT_VERSIONS_RETRY`] until then, so serving never waits on the
+    /// network for them.
+    pub fn spawn_copilot_identity_fetch(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let state = Arc::clone(self);
+        tokio::spawn(async move {
+            loop {
+                match CopilotIdentity::fetch(&state.http).await {
+                    Ok(identity) => {
+                        state.copilot_identity.store(Arc::new(identity));
+                        return;
+                    }
+                    Err(e) => tracing::warn!(
+                        error = %e,
+                        retry_secs = COPILOT_VERSIONS_RETRY.as_secs(),
+                        "Copilot client versions unavailable, using the built-in ones"
+                    ),
+                }
+                tokio::time::sleep(COPILOT_VERSIONS_RETRY).await;
+            }
         })
     }
 }
