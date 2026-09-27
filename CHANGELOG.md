@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Each request BYOKEY sends upstream is logged once, when it ends, with its outcome (`completed`, `rejected`, `failed` or `abandoned`), the time to the upstream's first byte and in total, the input, output and cache token counts, the stop reason, the keepalives written while the upstream was silent, the upstream's request id and, on Copilot, whether the request was user- or agent-initiated. A stream the client abandons, such as Esc in Claude Code, is now visible; it left no trace before. See the new Logs section of the README.
+
+### Fixed
+
+- A streamed answer that ended in an upstream `error` event was counted as a success in the usage statistics; it is a failure now. Cursor answers requested without streaming are counted now; they were missing.
+
 ### Changed
+
+- The per-request "routing Anthropic messages through Copilot" and "anthropic passthrough" lines are `debug` now, and a Copilot request's conversation keys print as eight hex digits instead of 64 numbers. A stream that fails is logged once, in its exchange line, instead of twice at `error`.
 
 - A failed request is logged once, when its error response is rendered, at a level that says who failed. An upstream's refusal is a `warn` carrying the upstream's status, error type and message, so the log says why Copilot or Anthropic refused (an organisation policy, a context limit) instead of only `status=400`; the message stays out of Sentry because an upstream can quote the request back. A missing login, an unknown model or an unreachable upstream is a `warn`, and only a failure inside BYOKEY is an `error`, so Sentry no longer receives an error event for every upstream 4xx and 5xx.
 

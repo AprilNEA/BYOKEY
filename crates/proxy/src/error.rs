@@ -7,7 +7,8 @@
 //! that failed: the Anthropic Messages envelope on `/v1/messages`, the
 //! `OpenAI` one elsewhere.
 //!
-//! Rendering an error logs it.
+//! Rendering an error logs it, unless an upstream exchange already logged
+//! it where it happened.
 
 use axum::{
     Json,
@@ -35,6 +36,8 @@ pub struct ApiError {
     pub error: ByokError,
     /// How to render it.
     pub wire: Wire,
+    /// Whether the failure was logged where it happened.
+    logged: bool,
 }
 
 impl ApiError {
@@ -44,6 +47,7 @@ impl ApiError {
         Self {
             error,
             wire: Wire::OpenAi,
+            logged: false,
         }
     }
 
@@ -52,6 +56,16 @@ impl ApiError {
     pub fn anthropic(self) -> Self {
         Self {
             wire: Wire::Anthropic,
+            ..self
+        }
+    }
+
+    /// The same error, already logged where it happened (an upstream
+    /// exchange logs how it ended), so rendering it does not log it again.
+    #[must_use]
+    pub(crate) fn logged(self) -> Self {
+        Self {
+            logged: true,
             ..self
         }
     }
@@ -145,13 +159,24 @@ pub(crate) struct UpstreamMessage {
 
 impl UpstreamMessage {
     pub(crate) fn of(body: &str) -> Self {
-        let envelope = serde_json::from_str::<Value>(body).ok();
-        let error = envelope.as_ref().and_then(|v| v.get("error"));
-        let text = |key: &str| error.and_then(|e| e.get(key)).and_then(Value::as_str);
-        Self {
+        serde_json::from_str::<Value>(body)
+            .ok()
+            .and_then(|envelope| Self::of_envelope(&envelope))
+            .unwrap_or_else(|| Self {
+                error_type: None,
+                message: cut(body),
+            })
+    }
+
+    /// The error in an envelope (`{"error": {...}}`), if it is one. An
+    /// error without a message is described by its JSON.
+    pub(crate) fn of_envelope(envelope: &Value) -> Option<Self> {
+        let error = envelope.get("error").filter(|e| e.is_object())?;
+        let text = |key: &str| error.get(key).and_then(Value::as_str);
+        Some(Self {
             error_type: text("type").or_else(|| text("code")).map(str::to_owned),
-            message: cut(text("message").unwrap_or(body)),
-        }
+            message: text("message").map_or_else(|| cut(&error.to_string()), cut),
+        })
     }
 }
 
@@ -186,7 +211,9 @@ pub(crate) fn describe_status(status: StatusCode) -> (&'static str, &'static str
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        self.log();
+        if !self.logged {
+            self.log();
+        }
         if let ByokError::Upstream {
             status,
             body,
@@ -372,6 +399,7 @@ mod tests {
         render(ApiError::new(ByokError::TokenNotFound(ProviderId::Copilot)).anthropic()).await;
         render(ApiError::new(ByokError::Http("connection refused".into()))).await;
         render(ApiError::new(ByokError::Storage("disk full".into()))).await;
+        render(ApiError::new(upstream(429, "slow down")).logged()).await;
 
         let logged = logs.at_least(Level::WARN);
         let summary: Vec<_> = logged
@@ -385,7 +413,8 @@ mod tests {
                 (Level::WARN, "401"),
                 (Level::WARN, "502"),
                 (Level::ERROR, "500"),
-            ]
+            ],
+            "an error logged where it happened is not logged again"
         );
         assert_eq!(logged[0].field("error_type"), Some("unsupported_value"));
         assert_eq!(
@@ -401,6 +430,10 @@ mod tests {
         );
         assert_eq!(anthropic.error_type.as_deref(), Some("overloaded_error"));
         assert_eq!(anthropic.message, "Overloaded");
+
+        let bare = UpstreamMessage::of(r#"{"error":{"code":"quota_exceeded"}}"#);
+        assert_eq!(bare.error_type.as_deref(), Some("quota_exceeded"));
+        assert_eq!(bare.message, r#"{"code":"quota_exceeded"}"#);
 
         let text = UpstreamMessage::of("<html>bad gateway</html>");
         assert_eq!(text.error_type, None);

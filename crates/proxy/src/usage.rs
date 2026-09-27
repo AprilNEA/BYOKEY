@@ -1,9 +1,8 @@
 //! In-memory usage statistics for request/token tracking, with optional
 //! persistent backing via [`UsageStore`].
 
-use byokey_types::{ProviderId, Usage, UsageRecord, UsageStore};
+use byokey_types::{Usage, UsageRecord, UsageStore};
 use serde::Serialize;
-use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -155,16 +154,17 @@ impl UsageRecorder {
         }
     }
 
-    /// Record a successful request.
-    fn record_success(&self, request: &Attribution, usage: Usage) {
-        self.stats.record_success(&request.model, usage);
-        self.persist(request, usage, true);
-    }
-
-    /// Record a failed request.
-    fn record_failure(&self, request: &Attribution) {
-        self.stats.record_failure(&request.model);
-        self.persist(request, Usage::default(), false);
+    /// Count `record` in the statistics and persist it.
+    pub(crate) fn record(&self, record: UsageRecord) {
+        if record.success {
+            self.stats.record_success(&record.model, record.usage);
+        } else {
+            self.stats.record_failure(&record.model);
+        }
+        if let Some(sender) = &self.sender {
+            // The flush loop owns the receiver for the life of the process.
+            let _ = sender.send(record);
+        }
     }
 
     /// Take a snapshot of in-memory stats.
@@ -195,100 +195,6 @@ impl UsageRecorder {
             entry.input_tokens += input_tokens;
             entry.output_tokens += output_tokens;
         }
-    }
-
-    fn persist(&self, request: &Attribution, usage: Usage, success: bool) {
-        if let Some(sender) = &self.sender {
-            let _ = sender.send(UsageRecord {
-                model: request.model.clone(),
-                provider: request.provider,
-                account_id: request.account_id.clone(),
-                usage,
-                success,
-            });
-        }
-    }
-}
-
-/// Token counts as Anthropic's Messages API reports them.
-pub(crate) trait AnthropicUsage {
-    /// The `usage` of a complete (non-streaming) response.
-    fn from_response(response: &Value) -> Self;
-    /// Take the counts a stream event carries: input tokens on
-    /// `message_start`, the running output total on `message_delta`.
-    fn read_event(&mut self, event: &Value);
-}
-
-impl AnthropicUsage for Usage {
-    fn from_response(response: &Value) -> Self {
-        let count = |key: &str| {
-            response
-                .pointer(&format!("/usage/{key}"))
-                .and_then(Value::as_u64)
-                .unwrap_or(0)
-        };
-        Self {
-            input_tokens: count("input_tokens"),
-            output_tokens: count("output_tokens"),
-        }
-    }
-
-    fn read_event(&mut self, event: &Value) {
-        match event.get("type").and_then(Value::as_str) {
-            Some("message_start") => {
-                if let Some(n) = event
-                    .pointer("/message/usage/input_tokens")
-                    .and_then(Value::as_u64)
-                {
-                    self.input_tokens = n;
-                }
-            }
-            Some("message_delta") => {
-                if let Some(n) = event
-                    .pointer("/usage/output_tokens")
-                    .and_then(Value::as_u64)
-                {
-                    self.output_tokens = n;
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-/// Who a request's usage is recorded against: its model, the provider that
-/// served it, and the account it went out on.
-#[derive(Clone)]
-pub(crate) struct Attribution {
-    recorder: Arc<UsageRecorder>,
-    pub(crate) model: String,
-    pub(crate) provider: ProviderId,
-    pub(crate) account_id: String,
-}
-
-impl Attribution {
-    pub(crate) fn new(
-        recorder: Arc<UsageRecorder>,
-        model: impl Into<String>,
-        provider: ProviderId,
-        account_id: impl Into<String>,
-    ) -> Self {
-        Self {
-            recorder,
-            model: model.into(),
-            provider,
-            account_id: account_id.into(),
-        }
-    }
-
-    /// Record the request as served, with its token counts.
-    pub(crate) fn success(&self, usage: Usage) {
-        self.recorder.record_success(self, usage);
-    }
-
-    /// Record the request as failed.
-    pub(crate) fn failure(&self) {
-        self.recorder.record_failure(self);
     }
 }
 
@@ -347,38 +253,5 @@ mod tests {
         let snap = stats.snapshot();
         assert_eq!(snap.total_requests, 0);
         assert!(snap.models.is_empty());
-    }
-
-    #[test]
-    fn anthropic_usage_is_read_from_responses_and_stream_events() {
-        let response = serde_json::json!({"usage": {"input_tokens": 12, "output_tokens": 7}});
-        assert_eq!(Usage::from_response(&response), usage(12, 7));
-        assert_eq!(
-            Usage::from_response(&serde_json::json!({})),
-            Usage::default()
-        );
-
-        let mut streamed = Usage::default();
-        for event in [
-            serde_json::json!({"type": "message_start", "message": {"usage": {"input_tokens": 12}}}),
-            serde_json::json!({"type": "content_block_delta"}),
-            // `message_delta` carries the running total, not an increment.
-            serde_json::json!({"type": "message_delta", "usage": {"output_tokens": 3}}),
-            serde_json::json!({"type": "message_delta", "usage": {"output_tokens": 7}}),
-        ] {
-            streamed.read_event(&event);
-        }
-        assert_eq!(streamed, usage(12, 7));
-    }
-
-    #[test]
-    fn attribution_records_against_its_request() {
-        let recorder = Arc::new(UsageRecorder::new(None));
-        let request = Attribution::new(Arc::clone(&recorder), "m", ProviderId::Copilot, "a");
-        request.success(usage(5, 2));
-        request.failure();
-        let snap = recorder.snapshot();
-        assert_eq!((snap.success_requests, snap.failure_requests), (1, 1));
-        assert_eq!((snap.models["m"].input_tokens, snap.output_tokens), (5, 2));
     }
 }

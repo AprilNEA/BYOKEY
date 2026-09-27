@@ -5,10 +5,12 @@
 //! - [`handler`]  — HTTP route handlers (Anthropic Messages API, management).
 //! - [`router`]   — Axum router construction and route registration.
 //! - [`error`]    — [`ApiError`], rendered in the Anthropic error envelope.
+//! - `exchange`   — One upstream exchange, logged once when it ends.
 //! - [`http`]     — The upstream HTTP client and its connection probing.
 //! - [`usage`]    — In-memory request/token usage tracking.
 
 pub mod error;
+pub(crate) mod exchange;
 pub mod handler;
 pub mod http;
 pub mod middleware;

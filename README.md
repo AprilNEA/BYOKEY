@@ -275,6 +275,31 @@ silently do nothing there instead of failing the turn.
 runs Claude Code on Cursor; `copilot/<model>` does the same for Copilot. Set
 `providers.claude.backend: cursor` to send all of Claude Code's traffic there.
 
+## Logs
+
+BYOKEY logs one line for each request it sends upstream, when that exchange
+ends:
+
+```
+INFO http{…}:anthropic_messages{model=claude-opus-5-5 stream=true}:upstream{provider=copilot model=claude-opus-5.5 account=default initiator="user" upstream_request_id="00000-…"}: byokey_proxy::exchange: upstream finished outcome="completed" first_byte_ms=812 duration_ms=14233 input_tokens=9 output_tokens=412 cache_read_tokens=51200 cache_write_tokens=0 stop_reason="end_turn"
+```
+
+`outcome` is one of:
+
+- `completed`: the upstream finished its answer.
+- `rejected`: the upstream answered with an error status. The line carries
+  its `status`, `error_type` and `upstream_message`, such as an organisation
+  policy or a context limit.
+- `failed`: the connection failed, the stream carried an error, or it stopped
+  or went silent before the end.
+- `abandoned`: the client went away first, for example Esc in Claude Code.
+
+On Copilot, `initiator` is `user` for a prompt you typed and `agent` for a
+tool-loop step, which is how Copilot counts premium requests. `keepalives`
+counts the comments BYOKEY wrote while the upstream was silent.
+`upstream_message` is text the upstream wrote, so it stays in the local log
+and is never sent to Sentry.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for build commands, architecture details, and coding guidelines.

@@ -1,11 +1,11 @@
 //! Forwarding an upstream's answer to the client: status and headers kept,
-//! usage recorded, and streams kept alive and properly terminated.
+//! the exchange accounted for, and streams kept alive and properly ended.
 
 use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use byokey_types::{ByokError, Usage, traits::ByteStream};
+use byokey_types::{ByokError, traits::ByteStream};
 use bytes::Bytes;
 use futures_util::{Future, StreamExt as _, TryStreamExt as _};
 use serde_json::Value;
@@ -13,9 +13,9 @@ use std::fmt::Write as _;
 use std::time::Duration;
 
 use crate::error::ApiError;
-use crate::usage::{AnthropicUsage as _, Attribution};
+use crate::exchange::Exchange;
 use crate::util::stream::{
-    deferred_stream, keep_alive, response_to_stream, tap_usage_stream, terminate_anthropic_stream,
+    deferred_stream, deliver_anthropic_stream, keep_alive, response_to_stream,
 };
 use crate::util::{sse_response, strip_gateway_headers};
 
@@ -31,6 +31,13 @@ const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
 /// thinks, so a longer silence means the connection is gone.
 const SILENCE_LIMIT: Duration = Duration::from_secs(120);
 
+/// `err` ends `exchange`, which logs it; the client then gets it without a
+/// second log line.
+pub(super) fn end_with(exchange: Exchange, err: ByokError) -> ApiError {
+    exchange.fail(&err);
+    ApiError::new(err).logged()
+}
+
 /// Forward the response to `pending` back to the client.
 ///
 /// A streaming client is answered as soon as [`FIRST_BYTE_GRACE`] passes
@@ -41,47 +48,47 @@ const SILENCE_LIMIT: Duration = Duration::from_secs(120);
 pub(super) async fn forward(
     pending: impl Future<Output = reqwest::Result<reqwest::Response>> + Send + 'static,
     stream: bool,
-    attribution: Attribution,
+    exchange: Exchange,
     reverse_remap_tools: bool,
 ) -> Result<Response, ApiError> {
     if !stream {
-        let resp = pending
-            .await
-            .map_err(|e| ApiError::from(ByokError::from(e)))?;
-        return forward_response(resp, false, attribution, reverse_remap_tools).await;
+        return match pending.await {
+            Ok(resp) => forward_response(resp, false, exchange, reverse_remap_tools).await,
+            Err(e) => Err(end_with(exchange, e.into())),
+        };
     }
     let mut pending = Box::pin(pending);
     match tokio::time::timeout(FIRST_BYTE_GRACE, &mut pending).await {
-        Ok(Ok(resp)) => forward_response(resp, true, attribution, reverse_remap_tools).await,
-        Ok(Err(e)) => Err(ApiError::from(ByokError::from(e))),
+        Ok(Ok(resp)) => forward_response(resp, true, exchange, reverse_remap_tools).await,
+        Ok(Err(e)) => Err(end_with(exchange, e.into())),
         Err(_elapsed) => {
-            tracing::info!(
-                grace_secs = FIRST_BYTE_GRACE.as_secs(),
-                "upstream headers are late; streaming keepalives to the client"
-            );
+            exchange.span().in_scope(|| {
+                tracing::info!(
+                    grace_secs = FIRST_BYTE_GRACE.as_secs(),
+                    "upstream headers are late; streaming keepalives to the client"
+                );
+            });
             Ok(stream_response(
                 StatusCode::OK,
                 &HeaderMap::new(),
                 deferred_stream(pending),
-                attribution,
+                exchange,
                 reverse_remap_tools,
             ))
         }
     }
 }
 
-/// Forward an upstream response back to the client, recording token usage.
+/// Forward an upstream response back to the client; its end ends `exchange`.
 pub(super) async fn forward_response(
     resp: reqwest::Response,
     stream: bool,
-    attribution: Attribution,
+    exchange: Exchange,
     reverse_remap_tools: bool,
 ) -> Result<Response, ApiError> {
     let status = resp.status();
     if !status.is_success() {
-        let err = ByokError::from_response(resp).await;
-        attribution.failure();
-        return Err(ApiError::from(err));
+        return Err(end_with(exchange, ByokError::from_response(resp).await));
     }
 
     let upstream_status = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK);
@@ -112,18 +119,18 @@ pub(super) async fn forward_response(
             upstream_status,
             &upstream_headers,
             response_to_stream(resp),
-            attribution,
+            exchange,
             reverse_remap_tools,
         ));
     }
-    let mut json: Value = resp
-        .json()
-        .await
-        .map_err(|e| ApiError::from(ByokError::from(e)))?;
+    let mut json: Value = match resp.json().await {
+        Ok(json) => json,
+        Err(e) => return Err(end_with(exchange, e.into())),
+    };
     if reverse_remap_tools {
         byokey_provider::cloak::reverse_remap_tool_names_response(&mut json);
     }
-    attribution.success(Usage::from_response(&json));
+    exchange.complete_with(&json);
     let mut response = (upstream_status, axum::Json(json)).into_response();
     // Merge upstream headers (gateway-stripped) into the JSON response.
     for (name, value) in &upstream_headers {
@@ -136,13 +143,13 @@ pub(super) async fn forward_response(
 }
 
 /// The SSE response for an upstream byte stream: tool names mapped back for
-/// OAuth, usage recorded, keepalives while the upstream is silent, and a
-/// guaranteed terminal event.
+/// OAuth, keepalives while the upstream is silent, a guaranteed terminal
+/// event, and the exchange accounted for.
 fn stream_response(
     status: StatusCode,
     upstream_headers: &HeaderMap,
     raw: ByteStream,
-    attribution: Attribution,
+    exchange: Exchange,
     reverse_remap_tools: bool,
 ) -> Response {
     let remapped: ByteStream = if reverse_remap_tools {
@@ -165,11 +172,10 @@ fn stream_response(
     } else {
         raw
     };
-    let tapped = tap_usage_stream(remapped, attribution);
-    let alive = keep_alive(tapped, KEEPALIVE_INTERVAL, SILENCE_LIMIT);
-    let mapped =
-        terminate_anthropic_stream(alive).map_err(|e| std::io::Error::other(e.to_string()));
-    let mut sse = sse_response(status, mapped);
+    let alive = keep_alive(remapped, KEEPALIVE_INTERVAL, SILENCE_LIMIT);
+    let delivered =
+        deliver_anthropic_stream(alive, exchange).map_err(|e| std::io::Error::other(e.to_string()));
+    let mut sse = sse_response(status, delivered);
     // Merge upstream headers (gateway-stripped) into the SSE response,
     // without overwriting the SSE-specific ones sse_response set.
     for (name, value) in upstream_headers {
@@ -201,13 +207,13 @@ mod tests {
             .unwrap()
             .into();
 
-        let attribution = Attribution::new(
-            Arc::new(crate::UsageRecorder::new(None)),
-            "m",
+        let exchange = Exchange::start(
+            &Arc::new(crate::UsageRecorder::new(None)),
             ProviderId::Copilot,
+            "m",
             "a",
         );
-        let Ok(response) = forward_response(upstream, false, attribution, false).await else {
+        let Ok(response) = forward_response(upstream, false, exchange, false).await else {
             panic!("a 200 upstream response must forward");
         };
 

@@ -151,11 +151,7 @@ impl CopilotIdentity {
         creds: &CopilotCredentials,
         conversation: &Conversation,
     ) -> Vec<(&'static str, String)> {
-        let initiator = if conversation.user_initiated {
-            "user"
-        } else {
-            "agent"
-        };
+        let initiator = conversation.initiator();
         let mut headers = match creds.client {
             CopilotClient::OpenCode => vec![
                 ("user-agent", self.opencode_user_agent.clone()),
@@ -207,7 +203,6 @@ impl CopilotIdentity {
 /// What a request's messages say about the turn it belongs to.
 ///
 /// Accepts `messages` in either `OpenAI` chat or Anthropic Messages shape.
-#[derive(Debug)]
 pub struct Conversation {
     user_initiated: bool,
     vision: bool,
@@ -218,6 +213,14 @@ pub struct Conversation {
 }
 
 impl Conversation {
+    /// Who started the request, as Copilot's `x-initiator` says: `user` for
+    /// a prompt the user typed, `agent` for a tool-loop iteration. Copilot
+    /// bills premium requests by it.
+    #[must_use]
+    pub fn initiator(&self) -> &'static str {
+        if self.user_initiated { "user" } else { "agent" }
+    }
+
     #[must_use]
     pub fn from_messages(messages: &[Value]) -> Self {
         Self {
@@ -228,6 +231,25 @@ impl Conversation {
             turn: anchor(messages, messages.iter().rposition(is_user_prompt)),
             session: anchor(messages, (!messages.is_empty()).then_some(0)),
         }
+    }
+}
+
+/// The turn and session keys as their first four bytes in hex: enough to
+/// tell conversations apart in a log line.
+impl std::fmt::Debug for Conversation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let short = |anchor: &[u8; 32]| {
+            format!(
+                "{:08x}",
+                u32::from_be_bytes([anchor[0], anchor[1], anchor[2], anchor[3]])
+            )
+        };
+        f.debug_struct("Conversation")
+            .field("user_initiated", &self.user_initiated)
+            .field("vision", &self.vision)
+            .field("turn", &short(&self.turn))
+            .field("session", &short(&self.session))
+            .finish()
     }
 }
 

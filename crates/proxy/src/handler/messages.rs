@@ -24,7 +24,7 @@ use super::normalize::{
     CONTEXT_1M_BETA, build_beta_header, sanitize_system, sanitize_thinking,
     strip_invalid_thinking_signatures, take_long_context_suffix,
 };
-use crate::usage::Attribution;
+use crate::exchange::Exchange;
 use crate::{AppState, error::ApiError};
 
 /// Handles `POST /v1/messages` — Anthropic native format passthrough.
@@ -117,7 +117,7 @@ async fn serve_messages(
         .as_object()
         .map(|o| o.keys().map(String::as_str).collect())
         .unwrap_or_default();
-    tracing::info!(
+    tracing::debug!(
         %model, ?keys, auth = if is_oauth { "oauth" } else { "api_key" },
         beta = %beta, "anthropic passthrough"
     );
@@ -128,13 +128,14 @@ async fn serve_messages(
         .unwrap_or("unknown")
         .to_string();
 
-    let attribution = Attribution::new(
-        state.usage.clone(),
-        model_name,
+    let exchange = Exchange::start(
+        &state.usage,
         ProviderId::Claude,
+        model_name,
         upstream.account_id,
     );
-    forward(builder.json(&body).send(), stream, attribution, is_oauth).await
+    let pending = exchange.track(builder.json(&body).send());
+    forward(pending, stream, exchange, is_oauth).await
 }
 
 /// Default Anthropic API base URL.

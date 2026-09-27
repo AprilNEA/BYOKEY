@@ -21,9 +21,10 @@ use futures_util::StreamExt as _;
 use serde_json::Value;
 use std::sync::Arc;
 
-use crate::usage::Attribution;
+use super::forward::end_with;
+use crate::exchange::Exchange;
 use crate::util::sse_response;
-use crate::util::stream::{keep_alive, tap_usage_stream, terminate_anthropic_stream};
+use crate::util::stream::{deliver_anthropic_stream, keep_alive};
 use std::time::Duration;
 
 /// See `forward::KEEPALIVE_INTERVAL`; a Cursor run parked on a tool call
@@ -58,12 +59,30 @@ pub(crate) async fn cursor_messages(
         .auth(state.auth.clone())
         .maybe_api_key(api_key)
         .build();
-    let events = cursor.events(canonical).await?;
+    let exchange = Exchange::start(
+        &state.usage,
+        ProviderId::Cursor,
+        model,
+        byokey_types::DEFAULT_ACCOUNT,
+    );
+    let events = match cursor.events(canonical).await {
+        Ok(events) => events,
+        Err(e) => return Err(end_with(exchange, e)),
+    };
 
     if !stream {
-        let response = byokey_provider::cursor::collect(events).await?;
-        let messages = chat_response_to_messages(response)
-            .map_err(|e| ByokError::Translation(e.to_string()))?;
+        let messages = match byokey_provider::cursor::collect(events)
+            .await
+            .and_then(|response| {
+                chat_response_to_messages(response)
+                    .map_err(|e| ByokError::Translation(e.to_string()))
+            })
+            .and_then(|messages| serde_json::to_value(messages).map_err(ByokError::from))
+        {
+            Ok(messages) => messages,
+            Err(e) => return Err(end_with(exchange, e)),
+        };
+        exchange.complete_with(&messages);
         return Ok((StatusCode::OK, Json(messages)).into_response());
     }
 
@@ -79,17 +98,10 @@ pub(crate) async fn cursor_messages(
             )
         })
     }));
-    let attribution = Attribution::new(
-        state.usage.clone(),
-        model,
-        ProviderId::Cursor,
-        byokey_types::DEFAULT_ACCOUNT,
-    );
-    let tapped = tap_usage_stream(sse, attribution);
-    let alive = keep_alive(tapped, KEEPALIVE_INTERVAL, Duration::MAX);
+    let alive = keep_alive(sse, KEEPALIVE_INTERVAL, Duration::MAX);
     Ok(sse_response(
         StatusCode::OK,
-        terminate_anthropic_stream(alive).map(|r| r.map_err(std::io::Error::other)),
+        deliver_anthropic_stream(alive, exchange).map(|r| r.map_err(std::io::Error::other)),
     ))
 }
 

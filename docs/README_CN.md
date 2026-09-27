@@ -260,6 +260,27 @@ Copilot 组织可以通过策略关闭 Anthropic 的 `web_search`、`web_fetch` 
 走 Cursor；`copilot/<model>` 对 Copilot 同理。设置 `providers.claude.backend: cursor`
 可以把 Claude Code 的全部请求都转给 Cursor。
 
+## 日志
+
+BYOKEY 每向上游发出一个请求，就在这次交互结束时记一行日志：
+
+```
+INFO http{…}:anthropic_messages{model=claude-opus-5-5 stream=true}:upstream{provider=copilot model=claude-opus-5.5 account=default initiator="user" upstream_request_id="00000-…"}: byokey_proxy::exchange: upstream finished outcome="completed" first_byte_ms=812 duration_ms=14233 input_tokens=9 output_tokens=412 cache_read_tokens=51200 cache_write_tokens=0 stop_reason="end_turn"
+```
+
+`outcome` 取以下值之一：
+
+- `completed`：上游完整给出了回答。
+- `rejected`：上游返回了错误状态码。这一行带有它的 `status`、`error_type` 和
+  `upstream_message`，例如组织策略或上下文长度限制。
+- `failed`：连接失败、流中出现错误，或者流在结束前中断或长时间无响应。
+- `abandoned`：客户端先离开了，例如在 Claude Code 里按了 Esc。
+
+在 Copilot 上，`initiator` 为 `user` 表示你输入的提示词，为 `agent` 表示工具循环中的
+一步，Copilot 按这个区分 premium request 的计数。`keepalives` 是上游沉默期间
+BYOKEY 写出的保活注释数。`upstream_message` 是上游写的文本，只留在本地日志里，
+不会发送到 Sentry。
+
 ## 贡献
 
 请参阅 [CONTRIBUTING.md](../CONTRIBUTING.md) 了解构建命令、架构细节和编码规范。

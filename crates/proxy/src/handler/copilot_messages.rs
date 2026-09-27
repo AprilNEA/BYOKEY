@@ -5,13 +5,13 @@
 use axum::response::Response;
 use byokey_provider::claude::ANTHROPIC_VERSION;
 use byokey_provider::{Conversation, CopilotCredentials, CopilotIdentity, CopilotUpstream};
-use byokey_types::{ByokError, ProviderId};
+use byokey_types::{ByokError, ProviderId, Usage, UsageRecord};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use super::forward::{forward, forward_response};
-use crate::usage::Attribution;
+use super::forward::{end_with, forward, forward_response};
+use crate::exchange::Exchange;
 use crate::{AppState, error::ApiError};
 
 /// The Copilot accounts configured for this server.
@@ -199,11 +199,6 @@ pub(super) fn is_incidental(body: &Value) -> bool {
 /// exchanged again once. With multiple Copilot accounts, transient failures
 /// are retried with quota-aware rotation.
 #[allow(clippy::too_many_lines)]
-#[tracing::instrument(skip_all, fields(
-    model = %body.get("model").and_then(serde_json::Value::as_str).unwrap_or("-"),
-    stream,
-    attempt = tracing::field::Empty,
-))]
 pub(super) async fn copilot_messages(
     state: &Arc<AppState>,
     mut body: Value,
@@ -260,7 +255,6 @@ pub(super) async fn copilot_messages(
     let mut attempt = 0;
     let mut token_refreshed = false;
     while attempt < max_attempts {
-        tracing::Span::current().record("attempt", attempt);
         let creds = match copilot.credentials().await {
             Ok(c) => c,
             Err(e) => {
@@ -279,43 +273,45 @@ pub(super) async fn copilot_messages(
         if has_server_tools && strip_server_tools(&mut body, &creds.rejected_tools()) {
             tracing::info!("leaving out server tools this Copilot account's policy rejects");
         }
-        tracing::info!(
+        tracing::debug!(
             endpoint = %creds.endpoint,
-            model = %body.get("model").and_then(|v| v.as_str()).unwrap_or("unknown"),
-            stream, ?conversation, attempt,
+            ?conversation,
             "routing Anthropic messages through Copilot"
         );
 
-        let pending = copilot_request(
-            &state.http,
-            "/v1/messages",
-            &creds,
-            beta,
-            copilot.identity(),
-            &conversation,
-            &body,
-        )
-        .header("accept", accept)
-        .send();
-
         // Copilot does its own account rotation inside CopilotUpstream; the
         // specific account isn't exposed here, so usage goes to DEFAULT_ACCOUNT.
-        let attribution = Attribution::new(
-            state.usage.clone(),
-            model_name.clone(),
+        let exchange = Exchange::start(
+            &state.usage,
             ProviderId::Copilot,
+            model_name.clone(),
             byokey_types::DEFAULT_ACCOUNT,
+        )
+        .attempt(attempt)
+        .initiator(conversation.initiator());
+        let pending = exchange.track(
+            copilot_request(
+                &state.http,
+                "/v1/messages",
+                &creds,
+                beta,
+                copilot.identity(),
+                &conversation,
+                &body,
+            )
+            .header("accept", accept)
+            .send(),
         );
         // Only the last attempt may hand the client a response before the
         // upstream answered: an earlier one still needs the status to decide
         // whether to try the next account.
         let last_attempt = attempt + 1 >= max_attempts;
         let outcome = if last_attempt {
-            forward(pending, stream, attribution, false).await
+            forward(pending, stream, exchange, false).await
         } else {
             match pending.await {
-                Ok(resp) => forward_response(resp, stream, attribution, false).await,
-                Err(e) => Err(ApiError::from(ByokError::from(e))),
+                Ok(resp) => forward_response(resp, stream, exchange, false).await,
+                Err(e) => Err(end_with(exchange, e.into())),
             }
         };
         let err = match outcome {
@@ -357,13 +353,13 @@ pub(super) async fn copilot_messages(
         attempts = max_attempts,
         "all copilot accounts exhausted for messages request"
     );
-    Attribution::new(
-        state.usage.clone(),
-        model_name,
-        ProviderId::Copilot,
-        byokey_types::DEFAULT_ACCOUNT,
-    )
-    .failure();
+    state.usage.record(UsageRecord {
+        model: model_name,
+        provider: ProviderId::Copilot,
+        account_id: byokey_types::DEFAULT_ACCOUNT.to_owned(),
+        usage: Usage::default(),
+        success: false,
+    });
     Err(last_err
         .unwrap_or_else(|| ApiError::from(ByokError::Auth("no copilot accounts available".into()))))
 }

@@ -1,65 +1,113 @@
-//! SSE stream adapters: token usage tapping, keepalives while the upstream
-//! is silent, and Anthropic stream termination.
+//! SSE stream adapters: keepalives while the upstream is silent, and the
+//! delivery of an Anthropic stream that accounts for it and always ends it
+//! properly.
 
 use std::time::Duration;
 
 use axum::http::StatusCode;
+use byokey_types::ByokError;
 use byokey_types::traits::ByteStream;
-use byokey_types::{ByokError, Usage};
 use bytes::Bytes;
 use futures_util::{Future, StreamExt as _, TryStreamExt as _, stream, stream::try_unfold};
 use serde_json::Value;
 
 use crate::error::{anthropic_envelope, describe_status};
-use crate::usage::{AnthropicUsage as _, Attribution};
+use crate::exchange::Exchange;
 
-/// Wraps an Anthropic Messages [`ByteStream`], reading token usage from its
-/// `message_start` and `message_delta` events and recording it against
-/// `attribution` when the stream ends. All bytes are forwarded unchanged.
-pub(crate) fn tap_usage_stream(inner: ByteStream, attribution: Attribution) -> ByteStream {
+/// Deliver an upstream's Anthropic SSE stream to the client, accounting
+/// for it in `exchange`.
+///
+/// Bytes pass through unchanged, and the events in them tell `exchange`
+/// the token usage, the stop reason and how the stream ended:
+/// `message_stop` completes it, an `error` event fails it. Anthropic
+/// clients read a stream until one of those two, so a stream whose upstream
+/// fails or closes before either gets an `error` event appended, which
+/// fails the exchange too. A client that goes away first drops the
+/// exchange unfinished, which records it as abandoned.
+pub(crate) fn deliver_anthropic_stream(inner: ByteStream, exchange: Exchange) -> ByteStream {
     struct State {
         inner: ByteStream,
         buf: Vec<u8>,
-        attribution: Attribution,
-        usage: Usage,
+        /// `None` once the exchange has ended.
+        exchange: Option<Exchange>,
+        /// An `error` event was appended; nothing follows it.
+        closed: bool,
+    }
+
+    impl State {
+        /// Read one SSE line; a terminal event ends the exchange.
+        fn read_line(&mut self, line: &[u8]) {
+            let (Some(exchange), Some(event)) = (self.exchange.as_mut(), sse_event(line)) else {
+                return;
+            };
+            match event.get("type").and_then(Value::as_str) {
+                Some("message_stop") => {
+                    if let Some(exchange) = self.exchange.take() {
+                        exchange.complete();
+                    }
+                }
+                Some("error") => {
+                    if let Some(exchange) = self.exchange.take() {
+                        exchange.fail_with_event(&event);
+                    }
+                }
+                _ => exchange.read_event(&event),
+            }
+        }
+
+        /// The `error` event that ends the stream with `err`, which also
+        /// ends the exchange.
+        fn close_with(&mut self, err: &ByokError) -> Bytes {
+            self.closed = true;
+            if let Some(exchange) = self.exchange.take() {
+                exchange.fail(err);
+            }
+            anthropic_error_event(err)
+        }
     }
 
     Box::pin(try_unfold(
         State {
             inner,
             buf: Vec::new(),
-            attribution,
-            usage: Usage::default(),
+            exchange: Some(exchange),
+            closed: false,
         },
         |mut s| async move {
+            if s.closed {
+                return Ok(None);
+            }
             match s.inner.next().await {
                 Some(Ok(bytes)) => {
-                    split_lines(&mut s.buf, &bytes, |line| {
-                        if let Some(ev) = sse_event(line) {
-                            s.usage.read_event(&ev);
+                    if let Some(exchange) = s.exchange.as_mut() {
+                        if bytes.as_ref() == KEEPALIVE {
+                            exchange.kept_alive();
+                        } else {
+                            exchange.received();
+                            let mut buf = std::mem::take(&mut s.buf);
+                            split_lines(&mut buf, &bytes, |line| s.read_line(line));
+                            s.buf = buf;
                         }
-                    });
+                    }
                     Ok(Some((bytes, s)))
                 }
                 Some(Err(e)) => {
-                    tracing::error!(
-                        model = %s.attribution.model,
-                        provider = %s.attribution.provider,
-                        account_id = %s.attribution.account_id,
-                        error = %e,
-                        "upstream SSE stream failed"
-                    );
-                    s.attribution.failure();
-                    Err(e)
+                    let event = s.close_with(&e);
+                    Ok(Some((event, s)))
                 }
                 None => {
-                    if !s.buf.is_empty()
-                        && let Some(ev) = sse_event(&std::mem::take(&mut s.buf))
-                    {
-                        s.usage.read_event(&ev);
+                    // A last line without its newline still counts.
+                    let rest = std::mem::take(&mut s.buf);
+                    if !rest.is_empty() {
+                        s.read_line(&rest);
                     }
-                    s.attribution.success(s.usage);
-                    Ok(None)
+                    if s.exchange.is_none() {
+                        return Ok(None);
+                    }
+                    let event = s.close_with(&ByokError::Http(
+                        "the upstream closed the stream before it finished".into(),
+                    ));
+                    Ok(Some((event, s)))
                 }
             }
         },
@@ -162,7 +210,7 @@ pub(crate) fn keep_alive(inner: ByteStream, interval: Duration, limit: Duration)
 ///
 /// The response headers go to the client before the upstream's arrive, so
 /// an upstream failure is reported inside the stream as an `error` event
-/// (see [`terminate_anthropic_stream`]) rather than as an HTTP status.
+/// (see [`deliver_anthropic_stream`]) rather than as an HTTP status.
 pub(crate) fn deferred_stream(
     pending: impl Future<Output = reqwest::Result<reqwest::Response>> + Send + 'static,
 ) -> ByteStream {
@@ -180,74 +228,16 @@ pub(crate) fn deferred_stream(
     )
 }
 
-/// Anthropic clients read a stream until `message_stop` or `error`. An
-/// upstream that closes the connection before either, or fails midway,
-/// would leave them waiting; this ends such a stream with an `error` event.
-pub(crate) fn terminate_anthropic_stream(inner: ByteStream) -> ByteStream {
-    struct State {
-        inner: ByteStream,
-        buf: Vec<u8>,
-        terminated: bool,
-        closed: bool,
-    }
-
-    Box::pin(try_unfold(
-        State {
-            inner,
-            buf: Vec::new(),
-            terminated: false,
-            closed: false,
-        },
-        |mut s| async move {
-            if s.closed {
-                return Ok(None);
-            }
-            match s.inner.next().await {
-                Some(Ok(bytes)) => {
-                    split_lines(&mut s.buf, &bytes, |line| {
-                        if let Some(ev) = sse_event(line)
-                            && matches!(
-                                ev.get("type").and_then(Value::as_str),
-                                Some("message_stop" | "error")
-                            )
-                        {
-                            s.terminated = true;
-                        }
-                    });
-                    Ok(Some((bytes, s)))
-                }
-                Some(Err(e)) => {
-                    s.closed = true;
-                    Ok(Some((anthropic_error_event(&e), s)))
-                }
-                None if s.terminated => Ok(None),
-                None => {
-                    s.closed = true;
-                    tracing::warn!("upstream closed the stream before message_stop");
-                    Ok(Some((
-                        anthropic_error_event(&ByokError::Http(
-                            "the upstream closed the stream before it finished".into(),
-                        )),
-                        s,
-                    )))
-                }
-            }
-        },
-    ))
-}
-
 /// Converts a [`reqwest::Response`] into a [`ByteStream`].
 ///
-/// A body error is logged with its full source chain: the top-level text
-/// ("error decoding response body") does not say whether the connection was
-/// reset, the peer sent GOAWAY, or a frame was malformed.
+/// A body error carries its full source chain: the top-level text ("error
+/// decoding response body") does not say whether the connection was reset,
+/// the peer sent GOAWAY, or a frame was malformed.
 pub(crate) fn response_to_stream(resp: reqwest::Response) -> ByteStream {
-    Box::pin(resp.bytes_stream().map(|r| {
-        r.map_err(|e| {
-            tracing::error!(error = %e, causes = %error_chain(&e), "upstream byte stream error");
-            ByokError::Http(format!("{e}: {}", error_chain(&e)))
-        })
-    }))
+    Box::pin(
+        resp.bytes_stream()
+            .map_err(|e| ByokError::Http(format!("{e}: {}", error_chain(&e)))),
+    )
 }
 
 /// The `source()` chain of `err`, innermost last, joined with `: `.
@@ -269,34 +259,88 @@ pub(crate) fn error_chain(err: &(dyn std::error::Error + 'static)) -> String {
 mod tests {
     use super::*;
     use crate::UsageRecorder;
+    use crate::test_logs::{Logged, Logs};
     use byokey_types::ProviderId;
     use futures_util::stream;
     use std::sync::Arc;
+    use tracing::Level;
 
-    async fn terminated(chunks: Vec<Result<&'static str, ByokError>>) -> String {
-        let inner: ByteStream = Box::pin(stream::iter(
+    fn chunks(chunks: Vec<Result<&'static str, ByokError>>) -> ByteStream {
+        Box::pin(stream::iter(
             chunks
                 .into_iter()
                 .map(|c| c.map(|s| Bytes::from_static(s.as_bytes()))),
-        ));
-        let out: Vec<_> = terminate_anthropic_stream(inner).collect().await;
-        out.into_iter()
-            .map(|c| String::from_utf8(c.unwrap().to_vec()).unwrap())
+        ))
+    }
+
+    fn exchange() -> Exchange {
+        Exchange::start(
+            &Arc::new(UsageRecorder::new(None)),
+            ProviderId::Copilot,
+            "m",
+            "a",
+        )
+    }
+
+    /// The single line an exchange logged when it ended.
+    fn ended(logs: &Logs) -> Logged {
+        let mut logged = logs.at_least(Level::INFO);
+        assert_eq!(logged.len(), 1, "one line per exchange: {logged:?}");
+        logged.remove(0)
+    }
+
+    /// What the client receives for `chunks`, and how the exchange ended.
+    async fn delivered(chunks_in: Vec<Result<&'static str, ByokError>>) -> (String, Logged) {
+        let logs = Logs::capture();
+        let out: Vec<_> = deliver_anthropic_stream(chunks(chunks_in), exchange())
             .collect()
+            .await;
+        let text = out
+            .into_iter()
+            .map(|c| String::from_utf8(c.unwrap().to_vec()).unwrap())
+            .collect();
+        (text, ended(&logs))
     }
 
     #[tokio::test]
     async fn a_finished_anthropic_stream_is_passed_through_untouched() {
-        let body = "event: message_start\ndata: {\"type\":\"message_start\"}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
-        assert_eq!(terminated(vec![Ok(body)]).await, body);
-        let body = "event: error\ndata: {\"type\":\"error\",\"error\":{}}\n\n";
-        assert_eq!(terminated(vec![Ok(body)]).await, body);
+        let body = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12}}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+        let (out, ended) = delivered(vec![Ok(body)]).await;
+        assert_eq!(out, body);
+        assert_eq!(ended.field("outcome"), Some("completed"));
+        assert_eq!(ended.field("input_tokens"), Some("12"));
+
+        let body = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n";
+        let (out, ended) = delivered(vec![Ok(body)]).await;
+        assert_eq!(out, body, "an upstream error event is terminal too");
+        assert_eq!(ended.field("outcome"), Some("failed"));
+        assert_eq!(ended.field("upstream_message"), Some("Overloaded"));
+    }
+
+    #[tokio::test]
+    async fn a_client_that_leaves_early_abandons_the_exchange() {
+        let logs = Logs::capture();
+        let mut out = deliver_anthropic_stream(
+            chunks(vec![
+                Ok(": keepalive\n\n"),
+                Ok("data: {\"type\":\"message_start\"}\n\n"),
+                Ok("data: {\"type\":\"message_stop\"}\n\n"),
+            ]),
+            exchange(),
+        );
+        out.next().await.unwrap().unwrap();
+        out.next().await.unwrap().unwrap();
+        drop(out);
+        let ended = ended(&logs);
+        assert_eq!(ended.field("outcome"), Some("abandoned"));
+        assert_eq!(ended.field("keepalives"), Some("1"));
+        assert!(ended.field("first_byte_ms").is_some());
     }
 
     #[tokio::test]
     async fn a_truncated_anthropic_stream_ends_with_an_error_event() {
         // The terminal event split across chunks still counts.
-        let out = terminated(vec![
+        let (out, ended) = delivered(vec![
             Ok("event: message_start\ndata: {\"type\":\"message_st"),
             Ok("art\"}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\"}\n\n"),
         ])
@@ -307,12 +351,18 @@ mod tests {
         let ev: Value = serde_json::from_str(tail.split_once("data: ").unwrap().1).unwrap();
         assert_eq!(ev["type"], "error");
         assert_eq!(ev["error"]["type"], "api_error");
+        assert_eq!(ended.field("outcome"), Some("failed"));
+        assert_eq!(
+            ended.field("error"),
+            Some("http error: the upstream closed the stream before it finished")
+        );
 
         // Only the terminal event's type counts, not any earlier event.
-        let out = terminated(vec![Ok(
+        let (out, ended) = delivered(vec![Ok(
             "data: {\"type\":\"message_stop\"}\n\ndata: {\"type\":\"ping\"}\n\n",
         )])
         .await;
+        assert_eq!(ended.field("outcome"), Some("completed"));
         assert!(
             !out.contains("event: error"),
             "message_stop seen earlier is enough"
@@ -321,7 +371,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_failing_anthropic_stream_ends_cleanly_with_the_failure() {
-        let out = terminated(vec![
+        let (out, ended) = delivered(vec![
             Ok("data: {\"type\":\"message_start\"}\n\n"),
             Err(ByokError::Http("connection reset".into())),
         ])
@@ -329,12 +379,14 @@ mod tests {
         assert!(out.ends_with("\n\n"));
         assert!(out.contains("event: error"));
         assert!(out.contains("connection reset"));
+        assert_eq!(ended.field("outcome"), Some("failed"));
+        assert_eq!(ended.field("error"), Some("http error: connection reset"));
     }
 
     #[tokio::test]
     async fn an_upstream_error_envelope_is_forwarded_inside_the_stream() {
         let body = r#"{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}"#;
-        let out = terminated(vec![Err(ByokError::Upstream {
+        let (out, ended) = delivered(vec![Err(ByokError::Upstream {
             status: 429,
             body: body.into(),
             retry_after: None,
@@ -343,9 +395,12 @@ mod tests {
         let ev: Value = serde_json::from_str(out.split_once("data: ").unwrap().1.trim()).unwrap();
         assert_eq!(ev["error"]["type"], "rate_limit_error");
         assert_eq!(ev["error"]["message"], "slow down");
+        assert_eq!(ended.field("outcome"), Some("rejected"));
+        assert_eq!(ended.field("status"), Some("429"));
+        assert_eq!(ended.field("upstream_message"), Some("slow down"));
 
         // A non-JSON body is described from its status.
-        let out = terminated(vec![Err(ByokError::Upstream {
+        let (out, _) = delivered(vec![Err(ByokError::Upstream {
             status: 503,
             body: "<html>busy</html>".into(),
             retry_after: None,
@@ -438,30 +493,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tap_usage_stream_parses_final_line_without_newline() {
-        let usage = Arc::new(UsageRecorder::new(None));
-        let inner: ByteStream = Box::pin(stream::iter([
-            Ok(Bytes::from_static(
-                b"data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12}}}\n\n",
-            )),
-            Ok(Bytes::from_static(
-                br#"data: {"type":"message_delta","usage":{"output_tokens":7}}"#,
-            )),
-        ]));
+    async fn a_last_line_without_its_newline_still_counts() {
+        let (_, ended) = delivered(vec![
+            Ok("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12}}}\n\n"),
+            Ok(r#"data: {"type":"message_delta","usage":{"output_tokens":7}}"#),
+        ])
+        .await;
+        assert_eq!(ended.field("output_tokens"), Some("7"));
 
-        let attribution = Attribution::new(
-            Arc::clone(&usage),
-            "claude-test",
-            ProviderId::Claude,
-            "default",
-        );
-        let chunks: Vec<_> = tap_usage_stream(inner, attribution).collect().await;
-
-        assert_eq!(chunks.len(), 2);
-        assert!(chunks.iter().all(Result::is_ok));
-        let snapshot = usage.snapshot();
-        assert_eq!(snapshot.success_requests, 1);
-        assert_eq!(snapshot.input_tokens, 12);
-        assert_eq!(snapshot.output_tokens, 7);
+        let (out, ended) = delivered(vec![Ok(r#"data: {"type":"message_stop"}"#)]).await;
+        assert_eq!(ended.field("outcome"), Some("completed"));
+        assert!(!out.contains("event: error"));
     }
 }
