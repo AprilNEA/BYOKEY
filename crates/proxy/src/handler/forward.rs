@@ -104,6 +104,9 @@ pub(super) async fn forward_response(
         }
     }
     strip_gateway_headers(&mut upstream_headers);
+    // The client gets BYOKEY's own request id, the one its logs are keyed by;
+    // the upstream's is on the exchange's span.
+    upstream_headers.remove("x-request-id");
     // Both branches re-encode the body, so the upstream framing no longer
     // describes it. A stale content-length makes hyper panic mid-response.
     for framing in [
@@ -195,7 +198,7 @@ mod tests {
     // ── forward_response: re-encoded bodies ────────────────────────────
 
     #[tokio::test]
-    async fn non_stream_response_does_not_forward_upstream_content_length() {
+    async fn non_stream_responses_drop_upstream_framing_and_request_id() {
         // The body is parsed and re-serialized, so its length can change; the
         // upstream content-length then disagrees with it and hyper panics.
         let upstream_body = r#"{"id": "msg_1", "type": "message", "content": []}"#;
@@ -203,6 +206,7 @@ mod tests {
             .header("content-type", "application/json")
             .header("content-length", upstream_body.len())
             .header("x-upstream-marker", "kept")
+            .header("x-request-id", "00000-upstream")
             .body(upstream_body)
             .unwrap()
             .into();
@@ -218,6 +222,10 @@ mod tests {
         };
 
         assert_eq!(response.headers()["x-upstream-marker"], "kept");
+        assert!(
+            !response.headers().contains_key("x-request-id"),
+            "the router sets BYOKEY's own id"
+        );
         let declared = response
             .headers()
             .get(axum::http::header::CONTENT_LENGTH)

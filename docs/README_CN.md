@@ -281,6 +281,12 @@ INFO http{…}:anthropic_messages{model=claude-opus-5-5 stream=true}:upstream{pr
 BYOKEY 写出的保活注释数。`upstream_message` 是上游写的文本，只留在本地日志里，
 不会发送到 Sentry。
 
+一个请求的每行日志都以它的 `http{…}` span 开头。`request_id` 是 BYOKEY 给这个请求的
+id，客户端也会在响应头 `x-request-id` 里收到它。Claude Code 发送时，`client_request_id`
+和 `session` 分别是它的 `x-client-request-id` 和会话 id：`claude --debug` 会为每个 API
+请求打印前者，因此可以用它在 BYOKEY 的日志里找到 Claude Code 调试日志中的请求。
+`byokey tui` 每隔几秒调用一次的管理 API 只在 `debug` 级别记录。
+
 ## 贡献
 
 请参阅 [CONTRIBUTING.md](../CONTRIBUTING.md) 了解构建命令、架构细节和编码规范。

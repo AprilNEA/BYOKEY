@@ -19,10 +19,42 @@ use tower_http::request_id::{
     MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer,
 };
 use tower_http::trace::TraceLayer;
-use tracing::{Span, info_span};
+use tracing::{Span, debug_span, info_span};
 
 use crate::AppState;
 use crate::handler::{count_tokens, management, messages, models};
+
+/// The span of one request: its method, path and BYOKEY's request id (also
+/// the `x-request-id` response header), plus the ids Claude Code sends, so a
+/// line in Claude Code's debug log (`x-client-request-id=…`) or one
+/// conversation (`X-Claude-Code-Session-Id`) can be found here. Management
+/// calls, which the TUI makes every few seconds, get a `debug` span and are
+/// not logged at the default level.
+fn request_span<B>(req: &http::Request<B>) -> Span {
+    let header = |name: &str| req.headers().get(name).and_then(|v| v.to_str().ok());
+    let request_id = req
+        .extensions()
+        .get::<RequestId>()
+        .and_then(|id| id.header_value().to_str().ok())
+        .unwrap_or("-");
+    macro_rules! span {
+        ($make:ident) => {
+            $make!(
+                "http",
+                method = %req.method(),
+                path = %req.uri().path(),
+                request_id,
+                client_request_id = header("x-client-request-id"),
+                session = header("x-claude-code-session-id"),
+            )
+        };
+    }
+    if req.uri().path().starts_with("/byokey.") {
+        span!(debug_span)
+    } else {
+        span!(info_span)
+    }
+}
 
 fn common_layers(router: Router) -> Router {
     // Sentry layers are added as the outermost wrapping, so a hub is bound
@@ -36,27 +68,17 @@ fn common_layers(router: Router) -> Router {
         .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(|req: &http::Request<_>| {
-                    let request_id = req
-                        .extensions()
-                        .get::<RequestId>()
-                        .and_then(|id| id.header_value().to_str().ok())
-                        .unwrap_or("-");
-                    info_span!(
-                        "http",
-                        method = %req.method(),
-                        uri = %req.uri(),
-                        request_id = request_id,
-                    )
-                })
+                .make_span_with(request_span)
                 .on_request(|_req: &http::Request<_>, _span: &Span| {
                     tracing::debug!("request received");
                 })
-                .on_response(
-                    |resp: &http::Response<_>, latency: Duration, _span: &Span| {
+                .on_response(|resp: &http::Response<_>, latency: Duration, span: &Span| {
+                    // A request whose span the level filter turned off (a
+                    // management call) is not worth a line either.
+                    if !span.is_disabled() {
                         tracing::info!(status = resp.status().as_u16(), ?latency, "response sent");
-                    },
-                )
+                    }
+                })
                 // `ApiError` logs each failure with its cause, at the level
                 // that says who failed; this only notes the classification.
                 .on_failure(
@@ -219,5 +241,33 @@ mod tests {
             axum::http::StatusCode::NOT_FOUND,
             "`ConnectRPC` fallback should serve management requests"
         );
+    }
+
+    #[tokio::test]
+    async fn management_calls_stay_out_of_the_default_log() {
+        let logs = crate::test_logs::Logs::capture();
+        let app = make_router(make_state());
+        for (method, uri, body) in [
+            ("POST", "/byokey.status.StatusService/GetStatus", "{}"),
+            ("GET", "/v1/models", ""),
+        ] {
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .header("content-type", "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+        }
+        let sent = logs
+            .at_least(tracing::Level::INFO)
+            .into_iter()
+            .filter(|e| e.message == "response sent")
+            .count();
+        assert_eq!(sent, 1, "only /v1/models is logged");
     }
 }

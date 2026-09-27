@@ -2,7 +2,8 @@
 //! the gateway logs.
 //!
 //! One subscriber is installed for the whole test binary and records into a
-//! buffer owned by the capturing thread. A per-test thread-local subscriber
+//! buffer owned by the capturing thread. Like the server at its default
+//! level, it turns off `debug` and `trace` spans and events. A per-test thread-local subscriber
 //! would race with other tests over `tracing`'s process-wide call-site
 //! cache and miss events.
 
@@ -100,8 +101,8 @@ impl Fields<'_> {
 }
 
 impl Subscriber for Collector {
-    fn enabled(&self, _: &Metadata<'_>) -> bool {
-        true
+    fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+        *metadata.level() <= Level::INFO
     }
 
     fn new_span(&self, _: &Attributes<'_>) -> Id {

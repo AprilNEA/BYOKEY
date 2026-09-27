@@ -300,6 +300,14 @@ counts the comments BYOKEY wrote while the upstream was silent.
 `upstream_message` is text the upstream wrote, so it stays in the local log
 and is never sent to Sentry.
 
+Every line of a request starts with its `http{…}` span. `request_id` is
+BYOKEY's id for the request, which the client also receives as the
+`x-request-id` header. When Claude Code sends them, `client_request_id` and
+`session` are its `x-client-request-id` and session id: `claude --debug`
+prints the former for each API request, so a request in Claude Code's debug
+log can be found in BYOKEY's. Management API calls, which `byokey tui` makes
+every few seconds, are logged only at `debug`.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for build commands, architecture details, and coding guidelines.
