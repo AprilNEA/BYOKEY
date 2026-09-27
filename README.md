@@ -309,6 +309,23 @@ prints the former for each API request, so a request in Claude Code's debug
 log can be found in BYOKEY's. Management API calls, which `byokey tui` makes
 every few seconds, are logged only at `debug`.
 
+`log.level` in the config file takes `RUST_LOG`-style directives, such as
+`debug` or `info,byokey_proxy=debug`, and defaults to `info,tarpc=warn`. The
+running server applies a change on the next config reload, without a restart.
+`RUST_LOG`, when set, overrides it for the life of the process. A value that
+does not parse, or that sets no default level (a typo such as `degub` is read
+as a module name), stops `serve` from starting.
+
+```yaml
+log:
+  level: info,byokey_proxy=debug
+  format: json      # one JSON object per line; default `text`
+  file: /path/to/byokey.log   # rotated daily, instead of stdout
+```
+
+Colour is used only when stdout is a terminal and `NO_COLOR` is unset, so a
+service's redirected log stays plain text.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for build commands, architecture details, and coding guidelines.

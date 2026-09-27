@@ -288,6 +288,21 @@ id，客户端也会在响应头 `x-request-id` 里收到它。Claude Code 发�
 请求打印前者，因此可以用它在 BYOKEY 的日志里找到 Claude Code 调试日志中的请求。
 `byokey tui` 每隔几秒调用一次的管理 API 只在 `debug` 级别记录。
 
+配置文件中的 `log.level` 使用 `RUST_LOG` 风格的指令，例如 `debug` 或
+`info,byokey_proxy=debug`，默认值为 `info,tarpc=warn`。修改后，运行中的服务会在下一次
+重新加载配置时生效，无需重启。设置了 `RUST_LOG` 时，它在整个进程生命周期内覆盖
+`log.level`。无法解析的值，或者没有设置默认级别的值（例如拼错的 `degub` 会被当作模块名），
+会让 `serve` 无法启动。
+
+```yaml
+log:
+  level: info,byokey_proxy=debug
+  format: json      # 每行一个 JSON 对象；默认为 `text`
+  file: /path/to/byokey.log   # 按天轮转，替代 stdout
+```
+
+只有 stdout 是终端且未设置 `NO_COLOR` 时才输出颜色，因此服务重定向出来的日志保持纯文本。
+
 ## 贡献
 
 请参阅 [CONTRIBUTING.md](../CONTRIBUTING.md) 了解构建命令、架构细节和编码规范。

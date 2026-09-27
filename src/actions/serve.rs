@@ -1,26 +1,74 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use arc_swap::ArcSwap;
 use byokey_auth::AuthManager;
 use byokey_config::{Config, ConfigWatcher, LogConfig, LogFormat};
 use byokey_proxy::AppState;
+use std::env::VarError;
+use std::io::IsTerminal as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Notify;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
+use tracing_subscriber::{EnvFilter, Registry, reload};
 
 use crate::ServerArgs;
 use crate::actions::telemetry;
 use crate::control_server::{self, ControlState};
 
-fn init_logging(cfg: &LogConfig, log_file: Option<PathBuf>) -> Option<WorkerGuard> {
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&cfg.level));
+/// The live log filter, which a configuration reload can replace.
+type FilterHandle = reload::Handle<EnvFilter, Registry>;
+
+/// The log filter: `RUST_LOG` (`env`) when set, else the configured
+/// `log.level` directives. An invalid one is an error: logging at some other
+/// level would hide the lines someone asked for.
+///
+/// `log.level` must also set a default level: a bare word that is not one
+/// (`degub`) is read as a module name, which turns every other module off.
+/// `RUST_LOG` may name modules alone, as it does while developing.
+fn log_filter(env: Result<String, VarError>, configured: &str) -> Result<EnvFilter> {
+    let directives = match env {
+        Ok(directives) => return parse_filter("RUST_LOG", &directives),
+        Err(VarError::NotPresent) => configured,
+        Err(e @ VarError::NotUnicode(_)) => return Err(e).context("RUST_LOG"),
+    };
+    if !directives
+        .split(',')
+        .any(|d| d.trim().parse::<LevelFilter>().is_ok())
+    {
+        anyhow::bail!(
+            "log.level `{directives}` sets no default level such as `info`; \
+             a bare word is read as a module name"
+        );
+    }
+    parse_filter("log.level", directives)
+}
+
+fn parse_filter(source: &str, directives: &str) -> Result<EnvFilter> {
+    EnvFilter::builder()
+        .parse(directives)
+        .with_context(|| format!("invalid {source} `{directives}`"))
+}
+
+/// Whether to colour the log: only for a person at a terminal, so a log
+/// file or a service's redirected stdout gets plain text, and never with
+/// `NO_COLOR` set.
+fn use_color(to_file: bool) -> bool {
+    !to_file
+        && std::io::stdout().is_terminal()
+        && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty())
+}
+
+fn init_logging(
+    cfg: &LogConfig,
+    log_file: Option<PathBuf>,
+) -> Result<(Option<WorkerGuard>, FilterHandle)> {
+    let (filter, handle) = reload::Layer::new(log_filter(std::env::var("RUST_LOG"), &cfg.level)?);
 
     let path = log_file
         .map(|p| p.to_string_lossy().into_owned())
@@ -39,11 +87,11 @@ fn init_logging(cfg: &LogConfig, log_file: Option<PathBuf>) -> Option<WorkerGuar
 
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
-        .with_ansi(path.is_none())
+        .with_ansi(use_color(path.is_some()))
         .with_writer(writer);
 
     let registry = tracing_subscriber::registry()
-        .with(env_filter)
+        .with(filter)
         .with(sentry::integrations::tracing::layer());
 
     match cfg.format {
@@ -51,7 +99,35 @@ fn init_logging(cfg: &LogConfig, log_file: Option<PathBuf>) -> Option<WorkerGuar
         LogFormat::Text => registry.with(fmt_layer).init(),
     }
 
-    guard
+    Ok((guard, handle))
+}
+
+/// Apply `log.level` each time the configuration reloads, so the log can
+/// be turned up without restarting (and losing what the server learned).
+/// `RUST_LOG` fixes the filter for the life of the process.
+fn follow_log_level(watcher: Arc<ConfigWatcher>, filter: FilterHandle) {
+    if std::env::var_os("RUST_LOG").is_some() {
+        return;
+    }
+    let mut reloads = watcher.subscribe();
+    let mut applied = watcher.load().log.level.clone();
+    tokio::spawn(async move {
+        while reloads.changed().await.is_ok() {
+            let level = watcher.load().log.level.clone();
+            if level == applied {
+                continue;
+            }
+            match log_filter(Err(VarError::NotPresent), &level)
+                .and_then(|new| filter.reload(new).context("replacing the log filter"))
+            {
+                Ok(()) => {
+                    tracing::info!(%level, "applied the new log.level");
+                    applied = level;
+                }
+                Err(e) => tracing::warn!(error = %format!("{e:#}"), "kept the current log.level"),
+            }
+        }
+    });
 }
 
 pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
@@ -94,7 +170,10 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
     let sentry_enabled = _sentry_guard.is_some();
 
     // _log_guard must be held until server exits to flush buffered writes.
-    let _log_guard = init_logging(&snapshot.log, log_file);
+    let (_log_guard, log_filter) = init_logging(&snapshot.log, log_file)?;
+    if let Some(watcher) = &config_watcher {
+        follow_log_level(Arc::clone(watcher), log_filter);
+    }
 
     if sentry_enabled {
         tracing::info!("sentry enabled");
@@ -248,4 +327,39 @@ fn spawn_signal_handler(shutdown: Arc<Notify>) {
         }
         shutdown.notify_waiters();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_invalid_log_filter_is_an_error_naming_where_it_came_from() {
+        assert!(log_filter(Err(VarError::NotPresent), "info,tarpc=warn").is_ok());
+        assert!(
+            log_filter(Ok("debug".into()), "not a level").is_ok(),
+            "RUST_LOG wins"
+        );
+
+        assert!(
+            log_filter(Ok("byokey_proxy=debug".into()), "info").is_ok(),
+            "RUST_LOG may name modules alone"
+        );
+
+        let err = log_filter(Err(VarError::NotPresent), "info,byokey_proxy=loud").unwrap_err();
+        assert!(
+            format!("{err:#}").starts_with("invalid log.level `info,byokey_proxy=loud`"),
+            "{err:#}"
+        );
+        let err = log_filter(Ok("byokey=verbose".into()), "info").unwrap_err();
+        assert!(
+            format!("{err:#}").starts_with("invalid RUST_LOG `byokey=verbose`"),
+            "{err:#}"
+        );
+        let err = log_filter(Err(VarError::NotPresent), "degub").unwrap_err();
+        assert!(
+            err.to_string().contains("sets no default level"),
+            "a typo would turn logging off: {err}"
+        );
+    }
 }

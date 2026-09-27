@@ -15,17 +15,22 @@ pub struct LogConfig {
     /// Output format: text (default) or json.
     #[serde(default)]
     pub format: LogFormat,
-    /// Optional log file path. If set, logs are written to this file
-    /// with daily rotation. Stdout logging continues alongside.
+    /// Optional log file path. If set, logs go to this file, rotated
+    /// daily, instead of stdout.
     #[serde(default)]
     pub file: Option<String>,
-    /// Log level override (default: "info"). Overridden by `RUST_LOG` env var.
+    /// Which logs to write, as `RUST_LOG`-style directives: a level
+    /// (`debug`), or a level with per-module overrides
+    /// (`info,byokey_proxy=debug`). `RUST_LOG`, when set, takes its place.
+    /// A reload applies a change without a restart.
     #[serde(default = "default_log_level")]
     pub level: String,
 }
 
+/// `info`, with the control socket's RPC library quieted: it logs five
+/// lines for each `byokey status` or `reload`.
 fn default_log_level() -> String {
-    "info".to_string()
+    "info,tarpc=warn".to_string()
 }
 
 impl Default for LogConfig {
@@ -94,7 +99,7 @@ mod tests {
         let c = Config::default();
         assert_eq!(c.log.format, LogFormat::Text);
         assert!(c.log.file.is_none());
-        assert_eq!(c.log.level, "info");
+        assert_eq!(c.log.level, "info,tarpc=warn");
     }
 
     #[test]
