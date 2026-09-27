@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0](https://github.com/AprilNEA/BYOKEY/compare/v3.0.0...v3.1.0) - 2026-09-27
+
+### Added
+
+- *(cli,config)* apply log.level on reload and reject a filter that hides logs
+- *(auth,provider)* log how long each side lookup takes
+- *(proxy)* name the requested model on every line of a request
+- *(proxy)* correlate a request with Claude Code's ids
+- *(proxy)* log each upstream exchange once, when it ends
+
+### Fixed
+
+- *(provider,proxy)* attribute Copilot usage to the account that served it
+- *(proxy)* log a failed request once, at a level that says who failed
+- *(provider)* retry a failed Copilot endpoint lookup within a minute
+- *(proxy)* list the last model catalog when a live one is slow
+
+### Other
+
+- *(proxy)* split the Messages handler by upstream
+
 ### Added
 
 - Each request BYOKEY sends upstream is logged once, when it ends, with its outcome (`completed`, `rejected`, `failed` or `abandoned`), the time to the upstream's first byte and in total, the input, output and cache token counts, the stop reason, the keepalives written while the upstream was silent, the upstream's request id and, on Copilot, whether the request was user- or agent-initiated. A stream the client abandons, such as Esc in Claude Code, is now visible; it left no trace before. See the new Logs section of the README.
