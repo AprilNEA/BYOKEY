@@ -68,7 +68,7 @@ jobs:
 
       - name: Build
         shell: bash
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --package byokey --target ${{ matrix.target }}
 
       - name: Install sentry-cli (Unix)
         # A pinned binary from GitHub releases. sentry.io/get-cli installs

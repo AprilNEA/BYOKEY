@@ -9,6 +9,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  # System libraries GPUI links on Linux, for byokey-desktop.
+  GPUI_DEPS: libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libx11-xcb-dev libzstd-dev
 
 jobs:
   check:
@@ -17,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler ${{ env.GPUI_DEPS }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -40,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler ${{ env.GPUI_DEPS }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -55,7 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler ${{ env.GPUI_DEPS }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:

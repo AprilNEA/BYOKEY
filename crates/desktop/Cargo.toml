@@ -1,0 +1,32 @@
+[package]
+name = "byokey-desktop"
+version.workspace = true
+edition.workspace = true
+# gpui-kit and gpui-updater are tested from 1.98.
+rust-version = "1.98"
+authors.workspace = true
+description = "Desktop app for managing a local BYOKEY server."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# Distributed as a bundled app, never as a crate.
+publish = false
+
+[[bin]]
+name = "byokey-desktop"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+byokey-proto = { workspace = true, features = ["client"] }
+connectrpc.workspace = true
+gpui-kit = "0.6.6"
+gpui-updater = { version = "0.1.0", package = "gpui-updater-pre" }
+http.workspace = true
+open.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
