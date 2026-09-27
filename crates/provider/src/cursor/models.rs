@@ -7,7 +7,7 @@
 //! `<model>-<value>-<value>` spelling resolves to a model id and parameters.
 
 use super::pb::{Fields, Msg};
-use byokey_types::{ByokError, Result};
+use byokey_types::{ByokError, Result, millis};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -251,7 +251,13 @@ async fn catalog(
     {
         return Ok(models.clone());
     }
+    let started = Instant::now();
     let models = fetch(http, api_base, token, version).await?;
+    tracing::info!(
+        models = models.len(),
+        duration_ms = millis(started.elapsed()),
+        "fetched the Cursor model catalog"
+    );
     *CACHE.lock().expect("catalog lock") = Some((Instant::now(), models.clone()));
     Ok(models)
 }

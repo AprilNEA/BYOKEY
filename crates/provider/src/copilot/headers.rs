@@ -99,9 +99,20 @@ impl CopilotIdentity {
         }
         .await;
         match fetched {
-            Ok(versions) => Self::from_versions(&versions),
+            Ok(versions) => {
+                let identity = Self::from_versions(&versions);
+                tracing::info!(
+                    editor = %identity.editor_version,
+                    plugin = %identity.plugin_version,
+                    "fetched Copilot client versions"
+                );
+                identity
+            }
             Err(e) => {
-                tracing::debug!(error = %e, "Copilot client versions unavailable, using defaults");
+                tracing::warn!(
+                    error = %e,
+                    "Copilot client versions unavailable, using the built-in ones"
+                );
                 Self::default()
             }
         }

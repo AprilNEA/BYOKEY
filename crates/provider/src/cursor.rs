@@ -22,7 +22,7 @@ use aigw_core::model::{
     StreamEvent, TypedContentPart, Usage,
 };
 use byokey_auth::AuthManager;
-use byokey_types::{ByokError, ProviderId, Result};
+use byokey_types::{ByokError, ProviderId, Result, millis};
 use futures_util::{Stream, StreamExt as _, stream};
 use serde_json::{Value, json};
 use session::{Event, Run, RunSpec, ToolSpec};
@@ -88,7 +88,12 @@ impl CursorUpstream {
         {
             return Ok(token.access_token.clone());
         }
+        let started = Instant::now();
         let token = byokey_auth::provider::cursor::exchange(&self.http, &credential).await?;
+        tracing::info!(
+            duration_ms = millis(started.elapsed()),
+            "exchanged a Cursor API key for an access token"
+        );
         let access = token.access_token.clone();
         EXCHANGED
             .lock()
@@ -128,6 +133,7 @@ impl CursorUpstream {
         Ok(turn_events(run, model_name, want_thinking))
     }
 
+    #[tracing::instrument(level = "debug", skip_all, fields(model = %request.model))]
     async fn start(&self, request: &CanonicalRequest) -> Result<Run> {
         let token = self.access_token().await?;
         let mut model =

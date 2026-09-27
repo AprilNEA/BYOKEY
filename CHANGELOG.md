@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Each request BYOKEY sends upstream is logged once, when it ends, with its outcome (`completed`, `rejected`, `failed` or `abandoned`), the time to the upstream's first byte and in total, the input, output and cache token counts, the stop reason, the keepalives written while the upstream was silent, the upstream's request id and, on Copilot, whether the request was user- or agent-initiated. A stream the client abandons, such as Esc in Claude Code, is now visible; it left no trace before. See the new Logs section of the README.
+- The lookups BYOKEY makes besides the request itself are logged with how long they took: exchanging a Copilot or Cursor token, looking up a Copilot account's API host, Copilot quotas, the Copilot and Cursor model catalogs, and refreshing an OAuth token. The Copilot client versions fetched at startup are logged too. A slow `/v1/models` or a slow first request now shows which lookup took the time.
 - A request's log lines carry BYOKEY's request id, which the client receives as `x-request-id`, and Claude Code's `x-client-request-id` and session id, so a request in `claude --debug` output can be found in BYOKEY's log.
 
 ### Fixed
@@ -21,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The per-request "routing Anthropic messages through Copilot" and "anthropic passthrough" lines are `debug` now, and a Copilot request's conversation keys print as eight hex digits instead of 64 numbers. A stream that fails is logged once, in its exchange line, instead of twice at `error`.
+- A lookup that fails and falls back to a default is a `warn` instead of `debug` or nothing: the Copilot client versions (the built-in ones are used), a Copilot account's API host (the default host is used), and a token about to expire that could not be refreshed ahead of time. A revoked refresh token is a `warn` naming the login command to run, instead of an `error`.
 - Management API calls, which `byokey tui` makes every few seconds, are logged at `debug`, and a request's line shows its path without the query string.
 - The requested model and streaming mode are fields of the request's `http` span instead of a separate `anthropic_messages` span, so every line of a request names them, including "response sent" and a failure rendered after the handler returned. `count_tokens` requests name their model too.
 

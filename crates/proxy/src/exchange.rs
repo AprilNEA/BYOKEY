@@ -18,7 +18,7 @@
 //! outcome but `abandoned` is counted in the usage statistics, with tokens
 //! for `completed` only.
 
-use byokey_types::{ByokError, ProviderId, Usage, UsageRecord};
+use byokey_types::{ByokError, ProviderId, Usage, UsageRecord, millis};
 use futures_util::{Future, FutureExt as _};
 use serde_json::Value;
 use std::sync::{Arc, OnceLock};
@@ -225,11 +225,6 @@ impl Drop for Exchange {
             self.end(&End::Abandoned);
         }
     }
-}
-
-/// `duration` in whole milliseconds.
-fn millis(duration: Duration) -> u64 {
-    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 enum End {

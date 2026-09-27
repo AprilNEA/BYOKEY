@@ -19,7 +19,7 @@ pub use headers::{Conversation, CopilotIdentity, CopilotVersions};
 use byokey_auth::AuthManager;
 use byokey_types::{
     AccountInfo, AccountToken, ByokError, CopilotClient, DEFAULT_ACCOUNT, OAuthToken, ProviderId,
-    Result,
+    Result, millis,
 };
 use serde_json::Value;
 use std::{
@@ -330,6 +330,7 @@ impl CopilotUpstream {
     /// The API host GitHub names for `token`'s account, cached for
     /// [`ENDPOINT_TTL`]. A configured `base_url` wins; when GitHub cannot be
     /// asked, the default host, which serves every seat type.
+    #[tracing::instrument(level = "debug", skip_all)]
     async fn account_endpoint(&self, token: &OAuthToken) -> String {
         if let Some(url) = &self.base_url {
             return url.trim_end_matches('/').to_owned();
@@ -339,15 +340,30 @@ impl CopilotUpstream {
         {
             return endpoint.clone();
         }
-        let endpoint = self
-            .user_info(token)
-            .await
-            .and_then(|user| {
-                user.pointer("/endpoints/api")
+        let started = Instant::now();
+        let endpoint = match self.user_info(token).await {
+            Ok(user) => {
+                let endpoint = user
+                    .pointer("/endpoints/api")
                     .and_then(Value::as_str)
-                    .map(|url| url.trim_end_matches('/').to_owned())
-            })
-            .unwrap_or_else(|| DEFAULT_BASE_URL.to_owned());
+                    .map_or(DEFAULT_BASE_URL, |url| url.trim_end_matches('/'))
+                    .to_owned();
+                tracing::info!(
+                    %endpoint,
+                    duration_ms = millis(started.elapsed()),
+                    "looked up the Copilot account's API host"
+                );
+                endpoint
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    fallback = DEFAULT_BASE_URL,
+                    "could not look up the Copilot account's API host"
+                );
+                DEFAULT_BASE_URL.to_owned()
+            }
+        };
         ENDPOINTS.lock().unwrap().insert(
             token.access_token.clone(),
             (Instant::now(), endpoint.clone()),
@@ -355,27 +371,19 @@ impl CopilotUpstream {
         endpoint
     }
 
-    /// `/copilot_internal/user` for `token`'s account, or `None` on any
-    /// failure (the callers have defaults).
-    async fn user_info(&self, token: &OAuthToken) -> Option<Value> {
-        let resp = self
-            .github_request(
-                COPILOT_USER_URL,
-                CopilotClient::of(token).ok()?,
-                &token.access_token,
-            )
-            .send()
-            .await
-            .ok()?;
-        if !resp.status().is_success() {
-            tracing::debug!(status = %resp.status(), "copilot_internal/user failed");
-            return None;
-        }
-        resp.json().await.ok()
+    /// `/copilot_internal/user` for `token`'s account.
+    async fn user_info(&self, token: &OAuthToken) -> Result<Value> {
+        let request = self.github_request(
+            COPILOT_USER_URL,
+            CopilotClient::of(token)?,
+            &token.access_token,
+        );
+        Ok(send(request).await?.json().await?)
     }
 
     /// Exchange `account_id`'s VS Code GitHub token for a Copilot API token
     /// and cache the result.
+    #[tracing::instrument(level = "debug", skip_all, fields(account = account_id))]
     async fn exchange_and_cache(
         &self,
         github_token: &str,
@@ -399,6 +407,7 @@ impl CopilotUpstream {
         }
 
         // Exchange GitHub token for Copilot API token
+        let started = Instant::now();
         let resp = self
             .github_request(COPILOT_TOKEN_URL, CopilotClient::VsCode, github_token)
             .send()
@@ -455,6 +464,13 @@ impl CopilotUpstream {
             );
         }
 
+        tracing::info!(
+            account = account_id,
+            endpoint = %api_endpoint,
+            valid_for_secs = ttl.as_secs(),
+            duration_ms = millis(started.elapsed()),
+            "exchanged a Copilot API token"
+        );
         Ok(CopilotCredentials {
             token: api_token,
             endpoint: api_endpoint,
@@ -467,10 +483,13 @@ impl CopilotUpstream {
 
     /// Fetch quota snapshot for a single GitHub account.
     ///
-    /// Returns `(percent_remaining, unlimited)` on success, `None` on any failure.
-    async fn fetch_quota(&self, token: &OAuthToken) -> Option<(f64, bool)> {
+    /// Returns `(percent_remaining, unlimited)`, or `None` when the account
+    /// reports no premium-request quota.
+    async fn fetch_quota(&self, token: &OAuthToken) -> Result<Option<(f64, bool)>> {
         let json = self.user_info(token).await?;
-        let pi = json.pointer("/quota_snapshots/premium_interactions")?;
+        let Some(pi) = json.pointer("/quota_snapshots/premium_interactions") else {
+            return Ok(None);
+        };
         let unlimited = pi
             .get("unlimited")
             .and_then(Value::as_bool)
@@ -479,7 +498,7 @@ impl CopilotUpstream {
             .get("percent_remaining")
             .and_then(Value::as_f64)
             .unwrap_or(0.0);
-        Some((percent, unlimited))
+        Ok(Some((percent, unlimited)))
     }
 
     /// Refresh quota for an account if the cached value is stale or missing.
@@ -502,29 +521,40 @@ impl CopilotUpstream {
         {
             Ok(t) => t,
             Err(e) => {
-                tracing::warn!(account_id, error = %e, "failed to get token for quota fetch");
+                tracing::warn!(account = account_id, error = %e, "failed to get token for quota fetch");
                 return;
             }
         };
 
-        if let Some((percent, unlimited)) = self.fetch_quota(&github_token).await {
-            tracing::info!(
-                account_id,
-                percent_remaining = percent,
-                unlimited,
-                "fetched copilot quota"
-            );
-            let mut tracker = ACCOUNT_TRACKER.lock().unwrap();
-            tracker.quotas.insert(
-                account_id.to_string(),
-                CachedQuota {
-                    percent_remaining: percent,
+        let started = Instant::now();
+        match self.fetch_quota(&github_token).await {
+            Ok(Some((percent, unlimited))) => {
+                tracing::info!(
+                    account = account_id,
+                    percent_remaining = percent,
                     unlimited,
-                    fetched_at: Instant::now(),
-                },
-            );
-        } else {
-            tracing::warn!(account_id, "failed to fetch copilot quota, skipping");
+                    duration_ms = millis(started.elapsed()),
+                    "fetched copilot quota"
+                );
+                let mut tracker = ACCOUNT_TRACKER.lock().unwrap();
+                tracker.quotas.insert(
+                    account_id.to_string(),
+                    CachedQuota {
+                        percent_remaining: percent,
+                        unlimited,
+                        fetched_at: Instant::now(),
+                    },
+                );
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    account = account_id,
+                    "copilot account reports no premium-request quota, skipping"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(account = account_id, error = %e, "failed to fetch copilot quota, skipping");
+            }
         }
     }
 
@@ -566,7 +596,7 @@ impl CopilotUpstream {
             .ok_or_else(|| ByokError::Auth("no copilot accounts available".into()))?;
 
         tracing::info!(
-            account_id = %best.account_id,
+            account = %best.account_id,
             score = quota_score(tracker.quotas.get(&best.account_id)),
             "selected copilot account"
         );
@@ -611,6 +641,7 @@ impl CopilotUpstream {
     ///
     /// Returns [`ByokError::Auth`] if no account is usable or the VS Code
     /// token exchange fails.
+    #[tracing::instrument(level = "debug", skip_all)]
     pub async fn credentials(&self) -> Result<CopilotCredentials> {
         if let Some(key) = &self.api_key {
             return Ok(CopilotCredentials {
@@ -649,6 +680,7 @@ impl CopilotUpstream {
     /// # Panics
     ///
     /// Panics if the catalog cache mutex is poisoned.
+    #[tracing::instrument(level = "debug", skip_all)]
     pub async fn models(&self) -> Result<Vec<CopilotModel>> {
         #[derive(serde::Deserialize)]
         struct Listing {
@@ -670,12 +702,19 @@ impl CopilotUpstream {
         {
             builder = builder.header(name, value);
         }
+        let started = Instant::now();
         let listing: Listing = send(builder).await?.json().await?;
         let models: Vec<CopilotModel> = listing
             .data
             .into_iter()
             .filter_map(CatalogEntry::offered)
             .collect();
+        tracing::info!(
+            account = %creds.account_id,
+            models = models.len(),
+            duration_ms = millis(started.elapsed()),
+            "fetched the Copilot model catalog"
+        );
         MODELS_CACHE
             .lock()
             .unwrap()

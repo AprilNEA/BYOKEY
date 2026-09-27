@@ -7,6 +7,7 @@
 //! - Multi-account support: save, switch, and list accounts per provider.
 use byokey_types::{
     AccountInfo, AccountToken, ByokError, OAuthToken, ProviderId, Result, TokenState, TokenStore,
+    millis,
 };
 use std::{
     collections::HashMap,
@@ -358,7 +359,9 @@ impl AuthManager {
 
             tracing::debug!(%provider, "auto-refresh: token nearing expiry, refreshing");
             if let Err(e) = self.refresh_token(provider, &token).await {
-                tracing::debug!(%provider, %e, "auto-refresh failed");
+                // The token still works for a few minutes; the request that
+                // finds it expired refreshes again and fails loudly.
+                tracing::warn!(%provider, error = %e, "refreshing a token about to expire failed");
             }
         }
     }
@@ -372,6 +375,7 @@ impl AuthManager {
         self.cooldown.ready(provider)
     }
 
+    #[tracing::instrument(level = "debug", skip_all, fields(%provider))]
     async fn refresh_token(&self, provider: ProviderId, token: &OAuthToken) -> Result<OAuthToken> {
         // Acquire the per-provider async lock so that concurrent callers
         // coalesce into a single refresh round-trip.
@@ -398,6 +402,7 @@ impl AuthManager {
             .as_deref()
             .ok_or_else(|| ByokError::Auth(format!("no refresh_token for {provider}")))?;
 
+        let started = Instant::now();
         let refresh_result = match provider {
             // GitHub tokens do not expire; one that stopped working needs a new login.
             ProviderId::Copilot => Err(ByokError::Auth(
@@ -412,7 +417,10 @@ impl AuthManager {
         let new_token = match refresh_result {
             Ok(t) => t,
             Err(ByokError::Auth(ref msg)) if msg.starts_with("invalid_grant:") => {
-                tracing::error!(%provider, "refresh token revoked or expired — user must re-authenticate");
+                tracing::warn!(
+                    %provider,
+                    "refresh token revoked or expired; run `byokey login {provider}` again"
+                );
                 if let Err(e) = self.store.remove(provider).await {
                     tracing::warn!(%provider, error = %e, "failed to remove revoked token from store");
                 }
@@ -432,7 +440,11 @@ impl AuthManager {
         };
 
         self.store.save(provider, &new_token).await?;
-        tracing::info!(%provider, "token refreshed successfully");
+        tracing::info!(
+            %provider,
+            duration_ms = millis(started.elapsed()),
+            "token refreshed successfully"
+        );
         Ok(new_token)
     }
 
