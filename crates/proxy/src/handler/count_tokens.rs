@@ -15,10 +15,12 @@ use byokey_types::ByokError;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-use super::messages::{
-    AnthropicUpstream, Backend, CONTEXT_1M_BETA, build_beta_header, copilot_request,
-    copilot_upstream, sanitize_system, strip_copilot_unsupported, strip_server_tools,
-    take_long_context_suffix,
+use super::copilot_messages::{
+    copilot_request, copilot_upstream, strip_copilot_unsupported, strip_server_tools,
+};
+use super::messages::{AnthropicUpstream, Backend};
+use super::normalize::{
+    CONTEXT_1M_BETA, build_beta_header, sanitize_system, take_long_context_suffix,
 };
 use crate::{AppState, error::ApiError};
 

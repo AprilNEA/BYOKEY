@@ -26,7 +26,7 @@ use crate::util::sse_response;
 use crate::util::stream::{keep_alive, tap_usage_stream, terminate_anthropic_stream};
 use std::time::Duration;
 
-/// See `messages::KEEPALIVE_INTERVAL`; a Cursor run parked on a tool call
+/// See `forward::KEEPALIVE_INTERVAL`; a Cursor run parked on a tool call
 /// can legitimately sit silent, so it gets no silence limit.
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
 use crate::{AppState, error::ApiError};

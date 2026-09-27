@@ -239,7 +239,7 @@ impl Live {
             }
         }
         let copilot = if usable.contains(&ProviderId::Copilot) {
-            super::messages::copilot_upstream(state)
+            super::copilot_messages::copilot_upstream(state)
                 .models()
                 .await
                 .inspect_err(|e| tracing::warn!(error = %e, "Copilot model listing failed"))
