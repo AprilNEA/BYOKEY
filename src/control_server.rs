@@ -16,7 +16,7 @@ use tokio::net::UnixListener;
 use tokio::sync::Notify;
 
 pub struct ControlState {
-    pub watcher: Option<Arc<ConfigWatcher>>,
+    pub watcher: Arc<ConfigWatcher>,
     pub shutdown: Arc<Notify>,
     pub start: Instant,
     pub host: String,
@@ -53,16 +53,9 @@ impl Control for ControlServer {
     }
 
     async fn reload(self, _: tarpc::context::Context) -> Result<(), String> {
-        match &self.0.watcher {
-            Some(w) => match w.reload() {
-                Ok(()) => {
-                    tracing::info!("control: config reloaded");
-                    Ok(())
-                }
-                Err(e) => Err(e.to_string()),
-            },
-            None => Err("no config file (server started without --config)".to_owned()),
-        }
+        self.0.watcher.reload().map_err(|e| e.to_string())?;
+        tracing::info!("control: config reloaded");
+        Ok(())
     }
 }
 

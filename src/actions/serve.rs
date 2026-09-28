@@ -1,7 +1,6 @@
 use anyhow::{Context as _, Result};
-use arc_swap::ArcSwap;
 use byokey_auth::AuthManager;
-use byokey_config::{Config, ConfigWatcher, LogConfig, LogFormat};
+use byokey_config::{ConfigWatcher, LogConfig, LogFormat};
 use byokey_proxy::AppState;
 use std::env::VarError;
 use std::io::IsTerminal as _;
@@ -138,28 +137,19 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
         db,
         log_file,
     } = args;
-    let effective_path = config_path.or_else(|| {
-        let default = byokey_daemon::paths::config_path().ok()?;
-        if default.exists() {
-            Some(default)
-        } else {
-            None
-        }
-    });
+    // The default file is watched even before it exists, so `byokey route`
+    // can create it under a running server.
+    let config_path = match config_path {
+        Some(path) => path,
+        None => byokey_daemon::paths::config_path()?,
+    };
 
     // Load config first so we can use log settings.
-    let (config_arc, config_watcher): (Arc<ArcSwap<Config>>, Option<Arc<ConfigWatcher>>) =
-        if let Some(ref path) = effective_path {
-            let watcher = Arc::new(
-                ConfigWatcher::new(path.clone())
-                    .map_err(|e| anyhow::anyhow!("config error: {e}"))?,
-            );
-            let arc = watcher.arc();
-            Arc::clone(&watcher).watch();
-            (arc, Some(watcher))
-        } else {
-            (Arc::new(ArcSwap::from_pointee(Config::default())), None)
-        };
+    let config_watcher = Arc::new(
+        ConfigWatcher::new(config_path).map_err(|e| anyhow::anyhow!("config error: {e}"))?,
+    );
+    let config_arc = config_watcher.arc();
+    Arc::clone(&config_watcher).watch();
 
     let snapshot = config_arc.load();
 
@@ -171,9 +161,7 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
 
     // _log_guard must be held until server exits to flush buffered writes.
     let (_log_guard, log_filter) = init_logging(&snapshot.log, log_file)?;
-    if let Some(watcher) = &config_watcher {
-        follow_log_level(Arc::clone(watcher), log_filter);
-    }
+    follow_log_level(Arc::clone(&config_watcher), log_filter);
 
     if sentry_enabled {
         tracing::info!("sentry enabled");

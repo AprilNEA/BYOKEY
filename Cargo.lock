@@ -726,7 +726,6 @@ name = "byokey"
 version = "3.0.0"
 dependencies = [
  "anyhow",
- "arc-swap",
  "axum",
  "byokey-auth",
  "byokey-config",

@@ -4,6 +4,12 @@ use std::{path::PathBuf, sync::Arc};
 use tokio::sync::watch;
 
 /// Watches a configuration file for changes and hot-reloads on modification.
+///
+/// The file's directory is watched rather than the file, so the file may be
+/// created after the watcher starts, and replaced by a rename (as editors
+/// and `byokey route` save it) without the watch going stale: inotify drops
+/// a watch on a file that is renamed over. A file that does not exist holds
+/// the default configuration.
 pub struct ConfigWatcher {
     /// Current configuration, atomically swappable.
     current: Arc<ArcSwap<Config>>,
@@ -67,26 +73,32 @@ impl ConfigWatcher {
     ///
     /// # Panics
     ///
-    /// Panics if the OS file watcher cannot be created or the config file path
-    /// cannot be registered for watching.
+    /// Panics if the OS file watcher cannot be created or the config file's
+    /// directory cannot be created or registered for watching.
     pub fn watch(self: Arc<Self>) {
         use notify::{RecursiveMode, Watcher as _};
         let watcher_self = Arc::clone(&self);
         let path = self.path.clone();
+        let dir = match path.parent() {
+            Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
+            _ => PathBuf::from("."),
+        };
 
         tokio::task::spawn_blocking(move || {
             let (tx, rx) = std::sync::mpsc::channel();
             let mut watcher =
                 notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-                    if res.is_ok() {
+                    if res.is_ok_and(|e| e.paths.iter().any(|p| p.file_name() == path.file_name()))
+                    {
                         let _ = tx.send(());
                     }
                 })
                 .expect("failed to create watcher");
 
+            std::fs::create_dir_all(&dir).expect("failed to create the config directory");
             watcher
-                .watch(&path, RecursiveMode::NonRecursive)
-                .expect("failed to watch config file");
+                .watch(&dir, RecursiveMode::NonRecursive)
+                .expect("failed to watch the config directory");
 
             for () in rx {
                 match watcher_self.reload() {
@@ -150,6 +162,46 @@ mod tests {
         write_config(&path, "port: 7777\n");
         watcher.reload().unwrap();
         assert_eq!(watcher.load().port, 7777);
+    }
+
+    /// Wait until `watcher` holds `port`, or fail after a few seconds.
+    fn reloaded_to(watcher: &ConfigWatcher, port: u16) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while watcher.load().port != port {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "never reloaded to port {port}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn a_file_created_or_renamed_over_is_reloaded() {
+        // The watch loop never ends, so the runtime must not wait for it.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sub").join("settings.json");
+        let watcher = Arc::new(ConfigWatcher::new(path.clone()).unwrap());
+        assert_eq!(
+            watcher.load().port,
+            8018,
+            "a missing file holds the defaults"
+        );
+        rt.block_on(async { Arc::clone(&watcher).watch() });
+        // The watch registers on a blocking thread.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+
+        write_config(&path, r#"{"port": 1111}"#);
+        reloaded_to(&watcher, 1111);
+
+        for port in [2222, 3333] {
+            let tmp = path.with_extension("tmp");
+            write_config(&tmp, &format!(r#"{{"port": {port}}}"#));
+            std::fs::rename(&tmp, &path).unwrap();
+            reloaded_to(&watcher, port);
+        }
+        rt.shutdown_background();
     }
 
     #[test]
