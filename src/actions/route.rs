@@ -5,6 +5,7 @@
 //! signed-in provider offers.
 
 use anyhow::{Context as _, Result, bail};
+use byokey_auth::AuthManager;
 use byokey_config::{Config, Routes};
 use byokey_proto::byokey::routes::RouteSource;
 use byokey_proto::client::ManagementClient;
@@ -12,6 +13,7 @@ use byokey_types::{ClaudeFamily, ClaudeModel, ProviderId};
 use clap::{Args, Subcommand};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(Subcommand, Debug)]
 pub enum RouteAction {
@@ -37,7 +39,7 @@ pub struct Target {
     /// One model, by Anthropic's id (e.g. `claude-opus-5-5`).
     #[arg(long, value_name = "MODEL")]
     model: Option<ClaudeModel>,
-    /// A model family: `fable`, `opus`, `sonnet` or `haiku`.
+    /// A model family: `fable` (or `mythos`), `opus`, `sonnet` or `haiku`.
     #[arg(long, value_name = "FAMILY")]
     family: Option<ClaudeFamily>,
     /// Every model without a model or family route.
@@ -64,11 +66,13 @@ impl From<Target> for RouteKey {
     }
 }
 
-/// Run `action`, or list the routes without one.
+/// Run `action`, or list the routes without one. `db` is the token store
+/// that tells whether a routed provider is signed in.
 pub async fn cmd_route(
     action: Option<RouteAction>,
     config: Option<PathBuf>,
     url: Option<String>,
+    db: Option<PathBuf>,
 ) -> Result<()> {
     let path = match config {
         Some(path) => path,
@@ -87,7 +91,35 @@ pub async fn cmd_route(
     };
     apply(&mut routes, key, provider);
     drop_claude_backend(&mut settings);
-    save(&path, settings, &routes)
+    save(&path, settings, &routes)?;
+    if let Some(provider) = provider {
+        let config = load(&path)?;
+        let store = Arc::new(crate::open_store(db).await?);
+        let auth = AuthManager::new(store, reqwest::Client::new());
+        if let Some(reason) = unusable(&auth, &config, provider).await {
+            eprintln!("warning: {reason}; requests on this route will fail until then");
+        }
+    }
+    Ok(())
+}
+
+/// Why `provider` cannot serve requests, if it cannot: disabled, or neither
+/// signed in nor given an API key. The server lists no model from it.
+pub(crate) async fn unusable(
+    auth: &AuthManager,
+    config: &Config,
+    provider: ProviderId,
+) -> Option<String> {
+    let pc = config.providers.get(&provider);
+    if pc.is_some_and(|c| !c.enabled) {
+        return Some(format!("{provider} is disabled in the config"));
+    }
+    if pc.is_some_and(|c| c.api_key.is_some()) || auth.is_authenticated(provider).await {
+        return None;
+    }
+    Some(format!(
+        "{provider} is not signed in; run `byokey login {provider}`"
+    ))
 }
 
 /// Route `key` to `provider`, or remove its route when `None`.
@@ -265,7 +297,15 @@ mod tests {
             r#"{"port": 9000, "providers": {"copilot": {}, "claude": {"backend": "copilot"}}}"#,
         )
         .unwrap();
-        let run = |args: &[&str]| cmd_route(Some(parse(args).unwrap()), Some(path.clone()), None);
+        let db = dir.path().join("tokens.db");
+        let run = |args: &[&str]| {
+            cmd_route(
+                Some(parse(args).unwrap()),
+                Some(path.clone()),
+                None,
+                Some(db.clone()),
+            )
+        };
         run(&["set", "--default", "copilot"]).await.unwrap();
         run(&["set", "--family", "opus", "cursor"]).await.unwrap();
         run(&["set", "--model", "claude-opus-5-5", "claude"])
@@ -296,6 +336,10 @@ mod tests {
 
         let yaml = dir.path().join("settings.yaml");
         let unset = parse(&["unset", "--default"]).unwrap();
-        assert!(cmd_route(Some(unset), Some(yaml), None).await.is_err());
+        assert!(
+            cmd_route(Some(unset), Some(yaml), None, None)
+                .await
+                .is_err()
+        );
     }
 }

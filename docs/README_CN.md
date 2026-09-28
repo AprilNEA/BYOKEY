@@ -201,11 +201,13 @@ Options:
 目标是以下之一：
 
 - `--model <MODEL>`：单个模型，用 Anthropic 的 id（`claude-opus-5-5`）
-- `--family <FAMILY>`：模型系列，`fable`、`opus`、`sonnet` 或 `haiku`
+- `--family <FAMILY>`：模型系列，`fable`（也可写 `mythos`）、`opus`、`sonnet` 或 `haiku`
 - `--default`：没有模型或系列路由的所有模型
 
-模型路由优先于系列路由，系列路由优先于默认；都没有时模型走 Anthropic。路由保存在
-配置文件里，运行中的服务器会自动重新加载。
+模型路由优先于系列路由，系列路由优先于默认；都没有时模型走 Anthropic。Claude Code
+的附带请求（标题、摘要）用的是 Haiku，所以 `--family haiku` 决定它们的去向。路由保存在
+配置文件里，运行中的服务器会自动重新加载，配置文件由 `byokey route` 新建时也一样。
+Provider 未登录时 `byokey route set` 会给出提醒，`byokey doctor` 会检查所有被路由到的 Provider。
 
 **`byokey service <install|uninstall|start|stop|status>`** — 将 byokey
 注册为系统托管服务。macOS 上使用 `launchd`、Linux 上使用 `systemd`、
@@ -275,6 +277,10 @@ Copilot 组织可以通过策略关闭 Anthropic 的 `web_search`、`web_fetch` 
 此时 Copilot 会拒绝整个请求。BYOKEY 在第一次被拒时学到这一点，去掉该工具重试，
 之后该账号的请求都不再带它，因此 Claude Code 的 `WebSearch`、`WebFetch` 在这样的
 账号上只是静默无效，而不会让整轮对话失败。
+
+Claude Code 或 Claude Desktop 选择的 effort（`output_config.effort`）会传到每个
+Provider。Cursor 把它作为模型的 `effort` 参数，模型不支持的档位会被拒绝，和 Anthropic、
+Copilot 的行为一致。
 
 **Cursor** 提供 Cursor 套餐内的全部模型，包括 `claude-opus-5-5-high-fast`、
 `gpt-5.6-sol-low-fast` 这类变体，`/v1/models` 不会列出它们。以 `cursor/<model>`

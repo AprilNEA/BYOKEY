@@ -205,12 +205,15 @@ route that picked it, and the signed-in providers that offer it.
 that route. The target is one of:
 
 - `--model <MODEL>`: one model, by Anthropic's id (`claude-opus-5-5`)
-- `--family <FAMILY>`: `fable`, `opus`, `sonnet` or `haiku`
+- `--family <FAMILY>`: `fable` (or `mythos`), `opus`, `sonnet` or `haiku`
 - `--default`: every model without a model or family route
 
 A model's route beats its family's, which beats the default; without any, the
-model goes to Anthropic. The routes are saved to the config file, which the
-running server reloads.
+model goes to Anthropic. Claude Code's incidental requests (titles,
+summaries) use the Haiku model, so `--family haiku` decides where those go.
+The routes are saved to the config file, which the running server reloads,
+also when `byokey route` creates it. `byokey route set` warns when the
+provider is not signed in, and `byokey doctor` checks every routed provider.
 
 **`byokey tui`** — Opens the terminal management UI. It connects to the
 ConnectRPC management API at `http://127.0.0.1:8018` by default; override with
@@ -294,6 +297,10 @@ server tools by policy; Copilot then rejects the whole request. BYOKEY learns
 this from the first rejection, retries without the tool, and leaves it out of
 later requests from that account, so Claude Code's `WebSearch` and `WebFetch`
 silently do nothing there instead of failing the turn.
+
+The effort Claude Code or Claude Desktop picks (`output_config.effort`)
+reaches every provider. Cursor takes it as the model's `effort` parameter and
+refuses a level the model lacks, as Anthropic and Copilot do.
 
 **Cursor** serves every model on your Cursor plan, including variants such as
 `claude-opus-5-5-high-fast` or `gpt-5.6-sol-low-fast`, which `/v1/models`

@@ -75,6 +75,7 @@ pub async fn cmd_doctor(url: Option<String>, db: Option<PathBuf>) -> Result<()> 
             report.check(&provider.to_string(), outcome);
         }
     }
+    report.check("routes", routes(&auth, &config).await);
     report.check("claude code", claude_code(&url));
     if let Some(outcome) = claude_desktop(&url) {
         report.check("claude desktop", outcome);
@@ -220,6 +221,30 @@ async fn account(
             "{accounts}, token expired; run `byokey login {provider}`"
         ))
     })
+}
+
+/// Whether every provider a route names can serve requests.
+async fn routes(auth: &AuthManager, config: &byokey_config::Config) -> Outcome {
+    let r = &config.routes;
+    let routed: std::collections::BTreeSet<ProviderId> = r
+        .default
+        .into_iter()
+        .chain(r.families.values().copied())
+        .chain(r.models.values().copied())
+        .collect();
+    let mut problems = Vec::new();
+    for provider in routed {
+        if let Some(reason) = super::route::unusable(auth, config, provider).await {
+            problems.push(reason);
+        }
+    }
+    if !problems.is_empty() {
+        return Outcome::Fail(problems.join("; "));
+    }
+    match r.default {
+        Some(p) => Outcome::Ok(format!("Claude models go to {p} unless routed otherwise")),
+        None => Outcome::Ok("Claude models go to Anthropic unless routed otherwise".into()),
+    }
 }
 
 /// Whether plain `claude` already points at BYOKEY.

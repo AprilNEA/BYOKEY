@@ -179,6 +179,10 @@ enum Commands {
         /// BYOKEY base URL to list routes from [default: the configured listen address].
         #[arg(long, global = true, display_order = 100)]
         url: Option<String>,
+        /// SQLite database path, to check that a routed provider is signed in
+        /// [default: ~/.byokey/tokens.db].
+        #[arg(long, value_name = "PATH", global = true, display_order = 100)]
+        db: Option<PathBuf>,
     },
     /// Claude Code CLI configuration.
     #[command(alias = "claude-code")]
@@ -272,7 +276,8 @@ async fn run(command: Commands) -> Result<()> {
             action,
             config,
             url,
-        } => route::cmd_route(action, config, url).await,
+            db,
+        } => route::cmd_route(action, config, url, db).await,
         Commands::Claude { action } => claude::cmd_claude(action),
         Commands::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "byokey", &mut std::io::stdout());

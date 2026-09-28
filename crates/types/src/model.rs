@@ -10,7 +10,10 @@ use std::fmt;
 use std::str::FromStr;
 
 /// A Claude model family, highest tier first. Written as Claude Code's
-/// family aliases are: `fable`, `opus`, `sonnet`, `haiku`.
+/// family aliases are: `fable`, `opus`, `sonnet`, `haiku`. As a family name,
+/// `mythos` reads as Fable: Anthropic names the same model Mythos where it
+/// lifts Fable's safeguards, and Claude Desktop's catalog files Fable under
+/// `mythos`. A `claude-mythos-…` model id is not a Fable model, though.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ClaudeFamily {
     Fable,
@@ -21,7 +24,7 @@ pub enum ClaudeFamily {
 
 /// A name that is not a [`ClaudeFamily`].
 #[derive(Debug, thiserror::Error)]
-#[error("unknown model family `{0}`; expected fable, opus, sonnet or haiku")]
+#[error("unknown model family `{0}`; expected fable (or mythos), opus, sonnet or haiku")]
 pub struct UnknownFamily(String);
 
 impl ClaudeFamily {
@@ -66,7 +69,10 @@ impl FromStr for ClaudeFamily {
     type Err = UnknownFamily;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::parse(s).ok_or_else(|| UnknownFamily(s.to_owned()))
+        match s {
+            "mythos" => Ok(Self::Fable),
+            s => Self::parse(s).ok_or_else(|| UnknownFamily(s.to_owned())),
+        }
     }
 }
 
@@ -229,7 +235,19 @@ mod tests {
         assert_eq!(f, ClaudeFamily::Opus);
         assert_eq!(serde_json::to_string(&f).unwrap(), r#""opus""#);
         let err = "claude-opus".parse::<ClaudeFamily>().unwrap_err();
-        assert!(err.to_string().contains("expected fable, opus"), "{err}");
+        assert!(
+            err.to_string().contains("expected fable (or mythos)"),
+            "{err}"
+        );
+        assert_eq!(
+            "mythos".parse::<ClaudeFamily>().unwrap(),
+            ClaudeFamily::Fable
+        );
+        assert_eq!(
+            ClaudeModel::from_id("claude-mythos-5-1"),
+            None,
+            "a Mythos model is not its Fable model"
+        );
     }
 
     #[test]
