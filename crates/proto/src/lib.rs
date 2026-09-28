@@ -11,6 +11,7 @@
 //!
 //! - [`byokey::status`] — server health and usage
 //! - [`byokey::accounts`] — provider accounts
+//! - [`byokey::routes`] — which provider serves each model
 //! - [`client`] — optional management API client wrapper (`client` feature)
 
 #![allow(

@@ -1,7 +1,9 @@
-//! BYOKEY management `ConnectRPC` services, read by `byokey tui`.
+//! BYOKEY management `ConnectRPC` services, read by `byokey tui` and
+//! `byokey route`.
 //!
 //! - `StatusService` — server address, provider login state, usage
 //! - `AccountsService` — the accounts stored per provider
+//! - `RoutesService` — which provider serves each model
 
 // The generated traits return `impl Future`, so a handler that has nothing
 // to await still declares `async fn` to satisfy them.
@@ -18,6 +20,8 @@
     reason = "handlers return the owned response type, as connectrpc's guide prescribes"
 )]
 
+mod routes;
+
 use std::sync::Arc;
 
 use connectrpc::{
@@ -25,18 +29,22 @@ use connectrpc::{
 };
 
 use byokey_proto::byokey::accounts as acct;
+use byokey_proto::byokey::routes as rt;
 use byokey_proto::byokey::status as stat;
 
 use crate::AppState;
+use routes::RoutesServiceImpl;
 
 /// Build a [`ConnectRouter`] with all management services registered.
 #[must_use]
 pub fn build_router(state: Arc<AppState>) -> ConnectRouter {
     use acct::AccountsServiceExt as _;
+    use rt::RoutesServiceExt as _;
     use stat::StatusServiceExt as _;
 
     let router = ConnectRouter::new();
     let router = Arc::new(StatusServiceImpl(state.clone())).register(router);
+    let router = Arc::new(RoutesServiceImpl(state.clone())).register(router);
     Arc::new(AccountsServiceImpl(state)).register(router)
 }
 

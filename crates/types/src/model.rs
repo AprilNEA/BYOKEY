@@ -9,7 +9,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
 
-/// A Claude model family, highest tier first.
+/// A Claude model family, highest tier first. Written as Claude Code's
+/// family aliases are: `fable`, `opus`, `sonnet`, `haiku`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ClaudeFamily {
     Fable,
@@ -17,6 +18,11 @@ pub enum ClaudeFamily {
     Sonnet,
     Haiku,
 }
+
+/// A name that is not a [`ClaudeFamily`].
+#[derive(Debug, thiserror::Error)]
+#[error("unknown model family `{0}`; expected fable, opus, sonnet or haiku")]
+pub struct UnknownFamily(String);
 
 impl ClaudeFamily {
     fn parse(s: &str) -> Option<Self> {
@@ -47,6 +53,33 @@ impl ClaudeFamily {
             Self::Sonnet => "Sonnet",
             Self::Haiku => "Haiku",
         }
+    }
+}
+
+impl fmt::Display for ClaudeFamily {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ClaudeFamily {
+    type Err = UnknownFamily;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s).ok_or_else(|| UnknownFamily(s.to_owned()))
+    }
+}
+
+impl Serialize for ClaudeFamily {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ClaudeFamily {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        s.parse().map_err(serde::de::Error::custom)
     }
 }
 
@@ -188,6 +221,15 @@ mod tests {
         );
         assert_eq!(opus(5, 5).display_name(), "Claude Opus 5.5");
         assert_eq!(opus(5, 0).display_name(), "Claude Opus 5");
+    }
+
+    #[test]
+    fn families_are_named_by_their_alias() {
+        let f: ClaudeFamily = serde_json::from_str(r#""opus""#).unwrap();
+        assert_eq!(f, ClaudeFamily::Opus);
+        assert_eq!(serde_json::to_string(&f).unwrap(), r#""opus""#);
+        let err = "claude-opus".parse::<ClaudeFamily>().unwrap_err();
+        assert!(err.to_string().contains("expected fable, opus"), "{err}");
     }
 
     #[test]

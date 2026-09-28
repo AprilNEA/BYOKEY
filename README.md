@@ -109,8 +109,9 @@ cargo install --path .
 byokey login copilot           # as OpenCode; `--client vscode` to log in as VS Code
 byokey login cursor            # or `byokey add-api-key cursor crsr_…`
 
-# 2. Start the proxy, and send Claude Code's traffic to Copilot
-byokey serve                   # with `providers.claude.backend: copilot` in the config
+# 2. Send Claude models to Copilot, and start the proxy
+byokey route set --default copilot
+byokey serve
 
 # 3. Run Claude Code on it
 byokey claude start
@@ -197,6 +198,20 @@ whether plain `claude` points at BYOKEY, and whether Claude Desktop's
 third-party profile does (macOS). Each failing line says what to run.
 Exits non-zero when a check fails.
 
+**`byokey route`** — Lists each Claude model, the provider serving it, the
+route that picked it, and the signed-in providers that offer it.
+`byokey route set <TARGET> <PROVIDER>` routes a target to `claude`
+(Anthropic), `copilot` or `cursor`, and `byokey route unset <TARGET>` removes
+that route. The target is one of:
+
+- `--model <MODEL>`: one model, by Anthropic's id (`claude-opus-5-5`)
+- `--family <FAMILY>`: `fable`, `opus`, `sonnet` or `haiku`
+- `--default`: every model without a model or family route
+
+A model's route beats its family's, which beats the default; without any, the
+model goes to Anthropic. The routes are saved to the config file, which the
+running server reloads.
+
 **`byokey tui`** — Opens the terminal management UI. It connects to the
 ConnectRPC management API at `http://127.0.0.1:8018` by default; override with
 `--url <URL>`.
@@ -214,8 +229,7 @@ to `~/.byokey/server.log` unless `--log-file` says otherwise.
 pointing at BYOKEY, passing `ARGS` through. A claude.ai login stays in effect,
 keeping features such as connectors; without any login, a placeholder
 `ANTHROPIC_AUTH_TOKEN` is set so Claude Code can start, along with gateway
-model discovery, which lists your Copilot and Cursor Claude models
-(`copilot/…`, `cursor/…`) in `/model`.
+model discovery, which lists the Claude models your routes serve in `/model`.
 
 **`byokey claude inject`** — Writes the same settings, plus any
 `claude_code.settings` from your byokey config, into `~/.claude/settings.json`,
@@ -239,13 +253,20 @@ Create a config file (JSON or YAML, e.g. `~/.config/byokey/settings.json`) and p
 port: 8018
 host: 127.0.0.1
 
+# Which provider serves each Claude model; `byokey route` edits this.
+# A model's route beats its family's, which beats the default. Without
+# any, models go to Anthropic.
+routes:
+  default: copilot
+  families:
+    opus: cursor
+  models:
+    claude-opus-5-5: copilot
+
 providers:
-  # Send every Claude Code / Claude Desktop request to Copilot
-  # (or `cursor`). Without this, unprefixed models go to Anthropic.
-  claude:
-    backend: copilot
-    # Or use Anthropic directly with a raw API key instead of a login
-    # api_key: "sk-ant-..."
+  # Use Anthropic with a raw API key instead of a login
+  # claude:
+  #   api_key: "sk-ant-..."
 
   copilot:
     small_model: gpt-5-mini
@@ -259,6 +280,11 @@ All fields are optional; unspecified providers are enabled by default and use
 the login stored in the database. Providers other than `claude`, `copilot`
 and `cursor` are rejected.
 
+`/v1/models` lists each Claude model once, under Anthropic's id
+(`claude-opus-5-5`), when the provider its route names offers it. Claude
+Desktop only recognises those ids, and reads each model's effort levels from
+them.
+
 **Copilot** plans that meter premium requests charge one per call, and Claude
 Code makes several tool-less calls around each turn (titles, suggestions,
 summaries). Set `providers.copilot.small_model: gpt-5-mini` to serve those with
@@ -270,10 +296,11 @@ later requests from that account, so Claude Code's `WebSearch` and `WebFetch`
 silently do nothing there instead of failing the turn.
 
 **Cursor** serves every model on your Cursor plan, including variants such as
-`claude-opus-5-5-high-fast` or `gpt-5.6-sol-low-fast`. Name them as
-`cursor/<model>`, so `byokey claude start --model cursor/claude-opus-5-5-low-fast`
-runs Claude Code on Cursor; `copilot/<model>` does the same for Copilot. Set
-`providers.claude.backend: cursor` to send all of Claude Code's traffic there.
+`claude-opus-5-5-high-fast` or `gpt-5.6-sol-low-fast`, which `/v1/models`
+does not list. Name them as `cursor/<model>`, so
+`byokey claude start --model cursor/claude-opus-5-5-low-fast` runs Claude Code
+on Cursor; `copilot/<model>` does the same for Copilot. A prefix overrides the
+routes for that request.
 
 ## Logs
 

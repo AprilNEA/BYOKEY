@@ -101,8 +101,9 @@ cargo install --path .
 byokey login copilot           # 以 OpenCode 身份；`--client vscode` 以 VS Code 身份登录
 byokey login cursor            # 或 `byokey add-api-key cursor crsr_…`
 
-# 2. 启动代理，并把 Claude Code 的请求转给 Copilot
-byokey serve                   # 配置里写上 `providers.claude.backend: copilot`
+# 2. 把 Claude 模型转给 Copilot，并启动代理
+byokey route set --default copilot
+byokey serve
 
 # 3. 在它上面运行 Claude Code
 byokey claude start
@@ -194,6 +195,18 @@ Options:
 
 **`byokey switch <PROVIDER> <ACCOUNT>`** — 切换某个 Provider 的活动账户。
 
+**`byokey route`** — 列出每个 Claude 模型、当前为它服务的 Provider、选中它的路由，
+以及已登录的 Provider 中哪些提供它。`byokey route set <目标> <PROVIDER>` 把目标路由到
+`claude`（Anthropic）、`copilot` 或 `cursor`，`byokey route unset <目标>` 删除这条路由。
+目标是以下之一：
+
+- `--model <MODEL>`：单个模型，用 Anthropic 的 id（`claude-opus-5-5`）
+- `--family <FAMILY>`：模型系列，`fable`、`opus`、`sonnet` 或 `haiku`
+- `--default`：没有模型或系列路由的所有模型
+
+模型路由优先于系列路由，系列路由优先于默认；都没有时模型走 Anthropic。路由保存在
+配置文件里，运行中的服务器会自动重新加载。
+
 **`byokey service <install|uninstall|start|stop|status>`** — 将 byokey
 注册为系统托管服务。macOS 上使用 `launchd`、Linux 上使用 `systemd`、
 Windows 上使用 SCM。`install` 接受与 `serve` 相同的选项；未指定 `--log-file`
@@ -202,8 +215,7 @@ Windows 上使用 SCM。`install` 接受与 `serve` 相同的选项；未指定 
 **`byokey claude start [ARGS]…`** — 以指向 BYOKEY 的 `ANTHROPIC_BASE_URL`
 运行 `claude`，`ARGS` 原样传入。已登录 claude.ai 时保留该登录，connectors 等功能
 照常可用；没有任何登录时会设置占位用的 `ANTHROPIC_AUTH_TOKEN`，保证 Claude Code
-能够启动，同时开启网关模型发现，让 `/model` 列出你 Copilot 和 Cursor 账号下的
-Claude 模型（`copilot/…`、`cursor/…`）。
+能够启动，同时开启网关模型发现，让 `/model` 列出路由所提供的 Claude 模型。
 
 **`byokey claude inject`** — 将同样的设置（以及 byokey 配置中的
 `claude_code.settings`）写入 `~/.claude/settings.json`，保留其他设置。可用
@@ -226,13 +238,19 @@ Claude 模型（`copilot/…`、`cursor/…`）。
 port: 8018
 host: 127.0.0.1
 
+# 每个 Claude 模型由哪个 Provider 提供；`byokey route` 会编辑这里。
+# 模型路由优先于系列路由，系列路由优先于 default；都没有时模型走 Anthropic。
+routes:
+  default: copilot
+  families:
+    opus: cursor
+  models:
+    claude-opus-5-5: copilot
+
 providers:
-  # 把 Claude Code / Claude Desktop 的所有请求转给 Copilot（或 `cursor`）。
-  # 不设置时，不带前缀的模型走 Anthropic。
-  claude:
-    backend: copilot
-    # 或者直接用原始 API Key 走 Anthropic，替代登录
-    # api_key: "sk-ant-..."
+  # 直接用原始 API Key 走 Anthropic，替代登录
+  # claude:
+  #   api_key: "sk-ant-..."
 
   copilot:
     small_model: gpt-5-mini
@@ -245,6 +263,10 @@ providers:
 所有字段均可选；未指定的 Provider 默认启用，并使用数据库中存储的登录。
 `claude`、`copilot`、`cursor` 之外的 Provider 会被拒绝。
 
+`/v1/models` 以 Anthropic 的 id（`claude-opus-5-5`）列出每个 Claude 模型，且只在
+其路由指向的 Provider 提供该模型时列出。Claude Desktop 只认这些 id，并据此显示
+每个模型的 effort 档位。
+
 **Copilot** 按 premium request 计费的套餐每次调用计一次，而 Claude Code 每轮对话
 前后会发出多个不带工具的调用（标题、建议、摘要）。设置
 `providers.copilot.small_model: gpt-5-mini` 可以让这些调用改走便宜的模型；
@@ -255,10 +277,9 @@ Copilot 组织可以通过策略关闭 Anthropic 的 `web_search`、`web_fetch` 
 账号上只是静默无效，而不会让整轮对话失败。
 
 **Cursor** 提供 Cursor 套餐内的全部模型，包括 `claude-opus-5-5-high-fast`、
-`gpt-5.6-sol-low-fast` 这类变体。以 `cursor/<model>` 指定，例如
-`byokey claude start --model cursor/claude-opus-5-5-low-fast` 就会让 Claude Code
-走 Cursor；`copilot/<model>` 对 Copilot 同理。设置 `providers.claude.backend: cursor`
-可以把 Claude Code 的全部请求都转给 Cursor。
+`gpt-5.6-sol-low-fast` 这类变体，`/v1/models` 不会列出它们。以 `cursor/<model>`
+指定，例如 `byokey claude start --model cursor/claude-opus-5-5-low-fast` 就会让
+Claude Code 走 Cursor；`copilot/<model>` 对 Copilot 同理。前缀会覆盖该请求的路由。
 
 ## 日志
 

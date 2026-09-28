@@ -34,7 +34,7 @@ Anthropic Messages request  (Claude Code, Claude Desktop, …)
     │
     ▼
 byokey-proxy  (axum HTTP server)
-    │  `copilot/` or `cursor/` prefix, else `providers.claude.backend`, else Anthropic
+    │  `copilot/` or `cursor/` prefix, else `routes`: the model's, its family's, the default; else Anthropic
     ▼
 byokey-provider  (Copilot credentials + catalog, Cursor agent client, Claude headers)
     │  get OAuth token (or api_key)
@@ -74,12 +74,14 @@ CLI entry point: `src/main.rs` (package = `byokey`, bin = `byokey`).
 |--------|------|-------------|
 | `POST` | `/v1/messages` | Anthropic Messages API (streaming supported) |
 | `POST` | `/v1/messages/count_tokens` | Token counting, routed like `/v1/messages` |
-| `GET` | `/v1/models` | The models `/v1/messages` can route |
+| `GET` | `/v1/models` | The Anthropic models `/v1/messages` serves under the routes |
 | `POST` | `/byokey.*.*Service/{Method}` | ConnectRPC management API (status, accounts, usage) |
 
 A `copilot/` or `cursor/` prefix on the `model` field picks the provider for
-one request; otherwise `providers.claude.backend` does, and without it the
+one request; otherwise `routes.models` does for that Claude model, then
+`routes.families` for its family, then `routes.default`, and without any the
 request goes to Anthropic.
+`byokey route` edits the routes and lists them through the management API.
 
 ### Daemon and control socket
 

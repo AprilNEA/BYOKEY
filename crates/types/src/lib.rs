@@ -13,7 +13,7 @@ pub mod traits;
 
 pub use copilot::CopilotClient;
 pub use error::{ByokError, Result};
-pub use model::{ClaudeFamily, ClaudeModel, ParsedId};
+pub use model::{ClaudeFamily, ClaudeModel, ParsedId, UnknownFamily};
 pub use provider::ProviderId;
 pub use provider::ThinkingCapability;
 pub use token::{AccountInfo, AccountToken, OAuthToken, TokenState};

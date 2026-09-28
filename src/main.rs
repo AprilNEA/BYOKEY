@@ -1,7 +1,7 @@
 mod actions;
 mod control_server;
 
-use actions::{auth, claude, daemon, doctor, serve};
+use actions::{auth, claude, daemon, doctor, route, serve};
 
 use anyhow::Result;
 use byokey_store::SqliteTokenStore;
@@ -169,6 +169,17 @@ enum Commands {
         #[command(flatten)]
         store: StoreArgs,
     },
+    /// Show or set which provider serves each Anthropic model.
+    Route {
+        #[command(subcommand)]
+        action: Option<route::RouteAction>,
+        /// BYOKEY configuration file [default: ~/.config/byokey/settings.json].
+        #[arg(long, value_name = "FILE", global = true, display_order = 100)]
+        config: Option<PathBuf>,
+        /// BYOKEY base URL to list routes from [default: the configured listen address].
+        #[arg(long, global = true, display_order = 100)]
+        url: Option<String>,
+    },
     /// Claude Code CLI configuration.
     #[command(alias = "claude-code")]
     Claude {
@@ -257,6 +268,11 @@ async fn run(command: Commands) -> Result<()> {
                 .switch(provider, account)
                 .await
         }
+        Commands::Route {
+            action,
+            config,
+            url,
+        } => route::cmd_route(action, config, url).await,
         Commands::Claude { action } => claude::cmd_claude(action),
         Commands::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "byokey", &mut std::io::stdout());

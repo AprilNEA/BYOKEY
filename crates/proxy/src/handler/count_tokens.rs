@@ -11,14 +11,14 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use byokey_provider::Conversation;
-use byokey_types::ByokError;
+use byokey_types::{ByokError, ProviderId};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
 use super::copilot_messages::{
     copilot_request, copilot_upstream, strip_copilot_unsupported, strip_server_tools,
 };
-use super::messages::{AnthropicUpstream, Backend};
+use super::messages::{AnthropicUpstream, route};
 use super::normalize::{
     CONTEXT_1M_BETA, build_beta_header, sanitize_system, take_long_context_suffix,
 };
@@ -45,11 +45,11 @@ async fn serve_count_tokens(
     sanitize_system(&mut body);
     let beta = build_beta_header(&mut body, headers, long_context.then_some(CONTEXT_1M_BETA));
     let config = state.config.load();
-    let resp = match Backend::route(&config, &mut body) {
-        Backend::Cursor => {
+    let resp = match route(&config, &mut body) {
+        ProviderId::Cursor => {
             return Ok(Json(json!({"input_tokens": estimate(&body)})).into_response());
         }
-        Backend::Copilot => {
+        ProviderId::Copilot => {
             strip_copilot_unsupported(&mut body);
             let copilot = copilot_upstream(state);
             let creds = copilot.credentials().await?;
@@ -69,7 +69,7 @@ async fn serve_count_tokens(
             .send()
             .await
         }
-        Backend::Anthropic => {
+        ProviderId::Claude => {
             let profile = state.device_profiles.resolve("global");
             let upstream = AnthropicUpstream::resolve(state, &config, &profile, &beta).await?;
             upstream

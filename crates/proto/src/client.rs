@@ -5,7 +5,7 @@ use std::time::Duration;
 use connectrpc::ConnectError;
 use connectrpc::client::{ClientConfig, HttpClient};
 
-use crate::byokey::{accounts as acct, status as stat};
+use crate::byokey::{accounts as acct, routes as rt, status as stat};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -14,6 +14,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct ManagementClient {
     status: stat::StatusServiceClient<HttpClient>,
     accounts: acct::AccountsServiceClient<HttpClient>,
+    routes: rt::RoutesServiceClient<HttpClient>,
 }
 
 impl ManagementClient {
@@ -34,7 +35,8 @@ impl ManagementClient {
     pub fn with_transport(transport: HttpClient, config: ClientConfig) -> Self {
         Self {
             status: stat::StatusServiceClient::new(transport.clone(), config.clone()),
-            accounts: acct::AccountsServiceClient::new(transport, config),
+            accounts: acct::AccountsServiceClient::new(transport.clone(), config.clone()),
+            routes: rt::RoutesServiceClient::new(transport, config),
         }
     }
 
@@ -80,6 +82,18 @@ impl ManagementClient {
     pub async fn list_accounts(&self) -> Result<acct::ListAccountsResponse, ConnectError> {
         self.accounts
             .list_accounts(acct::ListAccountsRequest::default())
+            .await
+            .map(connectrpc::client::UnaryResponse::into_owned)
+    }
+
+    /// Fetch which provider serves each model.
+    ///
+    /// # Errors
+    ///
+    /// Returns a ConnectRPC transport or application error from the server.
+    pub async fn list_routes(&self) -> Result<rt::ListRoutesResponse, ConnectError> {
+        self.routes
+            .list_routes(rt::ListRoutesRequest::default())
             .await
             .map(connectrpc::client::UnaryResponse::into_owned)
     }

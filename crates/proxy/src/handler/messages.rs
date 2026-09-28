@@ -1,11 +1,9 @@
 //! Anthropic Messages API passthrough handler.
 //!
-//! Accepts requests in native Anthropic format and forwards them to
-//! either `api.anthropic.com/v1/messages` (default), Copilot's own
-//! Messages endpoint (see [`super::copilot_messages`]) when
-//! `claude.backend: copilot` is configured, or Cursor (see
-//! [`super::cursor_messages`]) for `claude.backend: cursor` and
-//! `cursor/<model>` model names. Request bodies are normalised first (see
+//! Accepts requests in native Anthropic format and forwards them to the
+//! provider [`route`] picks: `api.anthropic.com/v1/messages`, Copilot's own
+//! Messages endpoint (see [`super::copilot_messages`]) or Cursor (see
+//! [`super::cursor_messages`]). Request bodies are normalised first (see
 //! [`super::normalize`]).
 //!
 //! The response (streaming SSE or complete JSON) is returned as-is (see
@@ -14,7 +12,7 @@
 use axum::{extract::State, http::HeaderMap, response::Response};
 use byokey_provider::claude::{ANTHROPIC_VERSION, fingerprint_headers};
 use byokey_provider::cloak::{derive_cc_entrypoint, inject_billing_header};
-use byokey_types::{ByokError, ProviderId};
+use byokey_types::{ByokError, ClaudeModel, ProviderId};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -63,12 +61,12 @@ async fn serve_messages(
     let beta = build_beta_header(&mut body, &headers, long_context.then_some(CONTEXT_1M_BETA));
 
     let config = state.config.load();
-    match Backend::route(&config, &mut body) {
-        Backend::Cursor => {
+    match route(&config, &mut body) {
+        ProviderId::Cursor => {
             return super::cursor_messages::cursor_messages(&state, body, stream).await;
         }
-        Backend::Copilot => return copilot_messages(&state, body, stream, &beta).await,
-        Backend::Anthropic => {}
+        ProviderId::Copilot => return copilot_messages(&state, body, stream, &beta).await,
+        ProviderId::Claude => {}
     }
 
     // Default: passthrough to Anthropic API.
@@ -222,39 +220,34 @@ impl AnthropicUpstream {
     }
 }
 
-/// Which upstream serves a Messages request.
-pub(super) enum Backend {
-    Anthropic,
-    Copilot,
-    Cursor,
-}
-
-impl Backend {
-    /// An explicit `copilot/` or `cursor/` model prefix wins over any global
-    /// backend; otherwise `claude.backend` picks Copilot or Cursor for every
-    /// request. The prefix is stripped from `body.model`.
-    pub(super) fn route(config: &byokey_config::Config, body: &mut Value) -> Self {
-        let model = body
-            .get("model")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let (hint, bare) = byokey_provider::parse_qualified_model(model);
-        let explicit = hint.filter(|p| matches!(p, ProviderId::Copilot | ProviderId::Cursor));
-        if explicit.is_some() {
-            body["model"] = Value::String(bare.to_owned());
-        }
-        let backend = explicit.or_else(|| {
-            config
-                .providers
-                .get(&ProviderId::Claude)
-                .and_then(|c| c.backend)
-        });
-        match backend {
-            Some(ProviderId::Cursor) => Self::Cursor,
-            Some(ProviderId::Copilot) => Self::Copilot,
-            _ => Self::Anthropic,
-        }
+/// The provider that serves a Messages request.
+///
+/// A `copilot/` or `cursor/` model prefix picks it for this request and is
+/// stripped from `body.model`. A Claude model otherwise goes where
+/// `routes` sends it; any other model goes to `routes.default` (see
+/// [`Routes::fallback`](byokey_config::Routes::fallback)). Cursor knows a
+/// routed Claude model only by Anthropic's undated id, so `body.model`
+/// becomes that id for Cursor.
+pub(super) fn route(config: &byokey_config::Config, body: &mut Value) -> ProviderId {
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if let (Some(provider @ (ProviderId::Copilot | ProviderId::Cursor)), bare) =
+        byokey_provider::parse_qualified_model(model)
+    {
+        body["model"] = Value::String(bare.to_owned());
+        return provider;
     }
+    let routes = &config.routes;
+    let Some(model) = ClaudeModel::from_id(model) else {
+        return routes.fallback().0;
+    };
+    let provider = routes.provider(model);
+    if provider == ProviderId::Cursor {
+        body["model"] = Value::String(model.to_string());
+    }
+    provider
 }
 
 #[cfg(test)]
@@ -263,32 +256,58 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn explicit_prefix_beats_global_backend_and_is_stripped() {
-        let mut config = byokey_config::Config::default();
-        config.providers.insert(
-            ProviderId::Claude,
-            byokey_config::ProviderConfig {
-                backend: Some(ProviderId::Copilot),
-                ..Default::default()
-            },
-        );
+    fn a_prefix_beats_the_routes_and_is_stripped() {
+        let config = byokey_config::Config::from_yaml(
+            "routes:\n  default: copilot\n  families:\n    sonnet: claude\n  models:\n    claude-opus-5-5: cursor\n",
+        )
+        .unwrap();
         let route = |model: &str| {
             let mut body = json!({"model": model});
-            let backend = Backend::route(&config, &mut body);
-            (backend, body["model"].as_str().unwrap().to_owned())
+            let provider = route(&config, &mut body);
+            (provider, body["model"].as_str().unwrap().to_owned())
         };
-        assert!(matches!(route("cursor/opus"), (Backend::Cursor, m) if m == "opus"));
-        assert!(
-            matches!(route("copilot/claude-opus-5.5"), (Backend::Copilot, m) if m == "claude-opus-5.5")
+        assert_eq!(route("cursor/opus"), (ProviderId::Cursor, "opus".into()));
+        assert_eq!(
+            route("copilot/claude-opus-5.5"),
+            (ProviderId::Copilot, "claude-opus-5.5".into())
         );
-        assert!(
-            matches!(route("claude-opus-5-5"), (Backend::Copilot, m) if m == "claude-opus-5-5")
+        assert_eq!(
+            route("claude-opus-5.5"),
+            (ProviderId::Cursor, "claude-opus-5-5".into()),
+            "a model's route, whatever its spelling, under Anthropic's id for Cursor"
         );
-        assert!(matches!(route("codex/gpt-5.4"), (Backend::Copilot, m) if m == "codex/gpt-5.4"));
+        assert_eq!(
+            route("claude-haiku-4-5-20251001"),
+            (ProviderId::Copilot, "claude-haiku-4-5-20251001".into()),
+            "Copilot takes the id as sent"
+        );
+        assert_eq!(
+            route("claude-sonnet-5"),
+            (ProviderId::Claude, "claude-sonnet-5".into()),
+            "a family's route"
+        );
+        assert_eq!(
+            route("claude-fable-5-1"),
+            (ProviderId::Copilot, "claude-fable-5-1".into())
+        );
+        assert_eq!(
+            route("claude-opus-4.8-fast"),
+            (ProviderId::Copilot, "claude-opus-4.8-fast".into()),
+            "a variant follows the default"
+        );
+        assert_eq!(
+            route("codex/gpt-5.4"),
+            (ProviderId::Copilot, "codex/gpt-5.4".into())
+        );
+        let unrouted = byokey_config::Config::default();
+        assert_eq!(
+            super::route(&unrouted, &mut json!({"model": "claude-sonnet-5"})),
+            ProviderId::Claude
+        );
     }
 
     #[test]
-    fn a_long_context_model_still_gets_its_thinking_and_backend_resolved() {
+    fn a_long_context_model_still_gets_its_thinking_and_provider_resolved() {
         let mut body = json!({"model": "claude-opus-5-5[1m]", "thinking": {"type": "auto"}});
         take_long_context_suffix(&mut body);
         sanitize_thinking(&mut body);
@@ -296,8 +315,8 @@ mod tests {
 
         let mut body = json!({"model": "copilot/claude-opus-5.5[1m]"});
         assert!(take_long_context_suffix(&mut body));
-        let backend = Backend::route(&byokey_config::Config::default(), &mut body);
-        assert!(matches!(backend, Backend::Copilot));
+        let provider = route(&byokey_config::Config::default(), &mut body);
+        assert_eq!(provider, ProviderId::Copilot);
         assert_eq!(body["model"], "claude-opus-5.5");
     }
 }

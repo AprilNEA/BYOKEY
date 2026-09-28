@@ -731,6 +731,7 @@ dependencies = [
  "byokey-auth",
  "byokey-config",
  "byokey-daemon",
+ "byokey-proto",
  "byokey-provider",
  "byokey-proxy",
  "byokey-store",

@@ -1,9 +1,11 @@
 pub mod claude_code;
 pub mod provider;
+pub mod routes;
 pub mod runtime;
 
 pub use claude_code::ClaudeCodeConfig;
 pub use provider::ProviderConfig;
+pub use routes::{RouteSource, Routes};
 pub use runtime::{LogConfig, LogFormat, TelemetryConfig};
 
 use byokey_types::ProviderId;
@@ -29,6 +31,9 @@ pub struct Config {
     /// Provider configuration map.
     #[serde(default)]
     pub providers: HashMap<ProviderId, ProviderConfig>,
+    /// Which provider serves each Anthropic model.
+    #[serde(default)]
+    pub routes: Routes,
     /// Claude Code CLI integration configuration.
     #[serde(default)]
     pub claude_code: ClaudeCodeConfig,
@@ -50,6 +55,7 @@ impl Default for Config {
             port: default_port(),
             host: default_host(),
             providers: HashMap::new(),
+            routes: Routes::default(),
             claude_code: ClaudeCodeConfig::default(),
             proxy_url: None,
             log: LogConfig::default(),
@@ -70,9 +76,7 @@ impl Config {
             Figment,
             providers::{Format as _, Serialized, Yaml},
         };
-        Figment::from(Serialized::defaults(Config::default()))
-            .merge(Yaml::string(yaml))
-            .extract()
+        extract(&Figment::from(Serialized::defaults(Config::default())).merge(Yaml::string(yaml)))
     }
 
     /// Loads configuration from a file path, merged with defaults.
@@ -95,8 +99,22 @@ impl Config {
         } else {
             base.merge(Yaml::file(path))
         };
-        figment.extract()
+        extract(&figment)
     }
+}
+
+/// Extract a [`Config`], refusing settings that no longer exist.
+#[allow(clippy::result_large_err)]
+fn extract(figment: &figment::Figment) -> Result<Config, figment::Error> {
+    if let Ok(backend) = figment.find_value("providers.claude.backend") {
+        let provider = backend.as_str().unwrap_or("<provider>");
+        return Err(format!(
+            "`providers.claude.backend` was replaced by `routes.default`; \
+             run `byokey route set --default {provider}`"
+        )
+        .into());
+    }
+    figment.extract()
 }
 
 #[cfg(test)]
@@ -140,6 +158,16 @@ providers:
     fn test_default_proxy_url_is_none() {
         let c = Config::default();
         assert!(c.proxy_url.is_none());
+    }
+
+    #[test]
+    fn the_removed_claude_backend_names_its_replacement() {
+        let err = Config::from_yaml("providers:\n  claude:\n    backend: copilot\n").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("byokey route set --default copilot"),
+            "{err}"
+        );
     }
 
     #[test]

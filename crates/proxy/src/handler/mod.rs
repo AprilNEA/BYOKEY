@@ -8,6 +8,7 @@
 
 use serde_json::Value;
 
+pub(crate) mod catalog;
 mod copilot_messages;
 pub(crate) mod count_tokens;
 pub(crate) mod cursor_messages;

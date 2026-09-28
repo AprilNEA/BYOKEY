@@ -1,0 +1,44 @@
+syntax = "proto3";
+package byokey.routes;
+
+// Which provider serves each Anthropic model on `/v1/messages`.
+service RoutesService {
+  rpc ListRoutes(ListRoutesRequest) returns (ListRoutesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}
+
+message ListRoutesRequest {}
+
+message ListRoutesResponse {
+  // Every model a usable provider offers, and every model with a route.
+  repeated ModelRoute models = 1;
+  // The provider for models without a model or family route; unset means
+  // Anthropic.
+  optional string default_provider = 2;
+  // Family (`opus`, `sonnet`, …) → provider.
+  map<string, string> families = 3;
+}
+
+message ModelRoute {
+  // Anthropic's id, e.g. `claude-opus-5-5`.
+  string model = 1;
+  // The provider serving it.
+  string provider = 2;
+  // The setting that picked `provider`.
+  RouteSource source = 3;
+  // The usable providers that offer the model.
+  repeated string offered_by = 4;
+}
+
+enum RouteSource {
+  ROUTE_SOURCE_UNSPECIFIED = 0;
+  // A route set for this model.
+  ROUTE_SOURCE_MODEL = 1;
+  // A route set for the model's family.
+  ROUTE_SOURCE_FAMILY = 2;
+  // The default route.
+  ROUTE_SOURCE_DEFAULT = 3;
+  // No route; Anthropic serves the model.
+  ROUTE_SOURCE_UNSET = 4;
+}

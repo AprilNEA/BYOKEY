@@ -1,4 +1,3 @@
-use byokey_types::ProviderId;
 use serde::{Deserialize, Serialize};
 
 fn default_true() -> bool {
@@ -20,11 +19,6 @@ pub struct ProviderConfig {
     /// Whether this provider is enabled (defaults to `true`).
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// Claude: serve every `/v1/messages` request from this provider instead
-    /// of Anthropic (`copilot` or `cursor`). A `copilot/` or `cursor/` model
-    /// prefix picks a provider per request without this.
-    #[serde(default)]
-    pub backend: Option<ProviderId>,
     /// Copilot: serve Anthropic Messages requests that carry no tools with
     /// this model instead of the requested one. Claude Code sends several
     /// such requests per turn (titles, suggestions, summaries), and on a
@@ -39,7 +33,6 @@ impl Default for ProviderConfig {
             api_key: None,
             base_url: None,
             enabled: true,
-            backend: None,
             small_model: None,
         }
     }
@@ -49,13 +42,13 @@ impl Default for ProviderConfig {
 mod tests {
     use super::*;
     use crate::schema::Config;
+    use byokey_types::ProviderId;
 
     #[test]
     fn test_provider_config_default() {
         let pc = ProviderConfig::default();
         assert!(pc.enabled);
         assert!(pc.api_key.is_none());
-        assert!(pc.backend.is_none());
         assert!(pc.small_model.is_none());
     }
 
@@ -96,18 +89,6 @@ providers:
         let cursor = c.providers.get(&ProviderId::Cursor).unwrap();
         assert!(!cursor.enabled);
         assert!(cursor.api_key.is_none());
-    }
-
-    #[test]
-    fn test_from_yaml_backend_copilot() {
-        let yaml = r"
-providers:
-  claude:
-    backend: copilot
-";
-        let c = Config::from_yaml(yaml).unwrap();
-        let claude = c.providers.get(&ProviderId::Claude).unwrap();
-        assert_eq!(claude.backend, Some(ProviderId::Copilot));
     }
 
     #[test]
