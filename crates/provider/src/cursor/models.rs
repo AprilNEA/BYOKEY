@@ -99,6 +99,33 @@ impl Model {
 pub struct Resolved {
     pub id: String,
     pub params: Params,
+    /// The `effort` values the model accepts, in Cursor's order.
+    pub efforts: Vec<String>,
+}
+
+impl Resolved {
+    /// Set `effort`, which Anthropic requests carry as
+    /// `output_config.effort`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ByokError::InvalidRequest`] when the model takes no effort
+    /// or not this one, as Anthropic answers such a request.
+    pub fn set_effort(&mut self, effort: &str) -> Result<()> {
+        if self.efforts.iter().any(|e| e == effort) {
+            self.params.set("effort", effort);
+            return Ok(());
+        }
+        Err(ByokError::InvalidRequest(if self.efforts.is_empty() {
+            format!("model {} does not support effort", self.id)
+        } else {
+            format!(
+                "model {} does not support effort `{effort}`; it takes {}",
+                self.id,
+                self.efforts.join(", ")
+            )
+        }))
+    }
 }
 
 /// The catalog and when it was fetched.
@@ -334,12 +361,17 @@ fn resolve_in(models: &[Model], name: &str) -> Option<Resolved> {
         })
         .rev() // first spelling wins on collision
         .collect();
-    let exact = |s: &str| {
-        index.get(s).map(|(m, p)| Resolved {
-            id: m.id.clone(),
-            params: (*p).clone(),
-        })
+    let resolved = |m: &Model, params: &Params| Resolved {
+        id: m.id.clone(),
+        params: params.clone(),
+        efforts: m
+            .options
+            .iter()
+            .find(|o| o.id == "effort")
+            .map(|o| o.values.clone())
+            .unwrap_or_default(),
     };
+    let exact = |s: &str| index.get(s).map(|(m, p)| resolved(m, p));
     if let Some(hit) = exact(&low) {
         return Some(hit);
     }
@@ -347,10 +379,7 @@ fn resolve_in(models: &[Model], name: &str) -> Option<Resolved> {
     let parts: Vec<&str> = low.split('-').collect();
     (1..parts.len()).rev().find_map(|cut| {
         let (model, params) = index.get(&parts[..cut].join("-"))?;
-        let mut hit = Resolved {
-            id: model.id.clone(),
-            params: (*params).clone(),
-        };
+        let mut hit = resolved(model, params);
         for tok in &parts[cut..] {
             match *tok {
                 "thinking" | "think" => hit.params.set("thinking", "true"),
@@ -431,6 +460,28 @@ mod tests {
         );
         assert!(resolve_in(&m, "claude-opus-5-5-bogus").is_none());
         assert!(resolve_in(&m, "gpt-9").is_none());
+    }
+
+    #[test]
+    fn a_requested_effort_is_one_the_model_takes() {
+        let m = [opus()];
+        let mut hit = resolve_in(&m, "claude-opus-5-5").unwrap();
+        hit.set_effort("low").unwrap();
+        assert_eq!(hit.params.get("effort"), Some("low"));
+        let err = hit.set_effort("max").unwrap_err().to_string();
+        assert!(err.contains("takes low, high"), "{err}");
+        assert_eq!(hit.params.get("effort"), Some("low"), "left as it was");
+
+        let mut plain = resolve_in(
+            &[Model {
+                options: Vec::new(),
+                ..opus()
+            }],
+            "claude-opus-5-5",
+        )
+        .unwrap();
+        let err = plain.set_effort("low").unwrap_err().to_string();
+        assert!(err.contains("does not support effort"), "{err}");
     }
 
     #[test]

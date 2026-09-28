@@ -42,6 +42,10 @@ pub enum ByokError {
     #[error("unsupported model: {0}")]
     UnsupportedModel(String),
 
+    /// The request asks for something the model does not offer.
+    #[error("invalid request: {0}")]
+    InvalidRequest(String),
+
     /// The requested provider name is not recognized.
     #[error("unsupported provider: {0}")]
     UnsupportedProvider(String),

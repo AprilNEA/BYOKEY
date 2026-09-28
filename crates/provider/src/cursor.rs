@@ -145,6 +145,9 @@ impl CursorUpstream {
         {
             model.params.set("thinking", "false");
         }
+        if let Some(effort) = requested_effort(request) {
+            model.set_effort(effort)?;
+        }
         let (system, prompt) = render(&request.messages);
         let tools = match request
             .tool_choice
@@ -466,6 +469,12 @@ pub async fn collect(mut events: EventStream) -> Result<ChatResponse> {
         "usage": usage,
     }))
     .map_err(|e| ByokError::Translation(e.to_string()))
+}
+
+/// The effort an Anthropic request asks for, `output_config.effort`, which
+/// the canonical request keeps among its extra fields.
+fn requested_effort(request: &CanonicalRequest) -> Option<&str> {
+    request.extra.get("output_config")?.get("effort")?.as_str()
 }
 
 #[cfg(test)]

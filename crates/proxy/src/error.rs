@@ -111,6 +111,11 @@ impl ApiError {
                 "invalid_request_error",
                 "model_not_found",
             ),
+            ByokError::InvalidRequest(_) => (
+                StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+                "invalid_request",
+            ),
             ByokError::UnsupportedProvider(_) => (
                 StatusCode::BAD_REQUEST,
                 "invalid_request_error",
