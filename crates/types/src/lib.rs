@@ -6,12 +6,14 @@
 
 pub mod copilot;
 pub mod error;
+pub mod model;
 pub mod provider;
 pub mod token;
 pub mod traits;
 
 pub use copilot::CopilotClient;
 pub use error::{ByokError, Result};
+pub use model::{ClaudeFamily, ClaudeModel, ParsedId};
 pub use provider::ProviderId;
 pub use provider::ThinkingCapability;
 pub use token::{AccountInfo, AccountToken, OAuthToken, TokenState};
