@@ -22,6 +22,37 @@ A local Anthropic Messages API backed by GitHub Copilot, Cursor or your own Clau
 
 </div>
 
+> [!IMPORTANT]
+> **BYOKEY is archived and no longer maintained (2026-09-28).**
+>
+> GitHub Copilot's `/v1/messages` endpoint now accepts Claude Code's requests as they are, so Claude Code no longer needs a gateway to run on Copilot. The Cursor backend drives Cursor's private agent protocol, which Cursor does not allow outside its own clients, and it does not hold up in Claude Code's tool loops.
+>
+> To use Copilot directly (GitHub does not document this endpoint), sign in with the GitHub CLI and configure:
+>
+> **Claude Code** — `~/.claude/settings.json`
+>
+> ```json
+> {
+>   "env": { "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com" },
+>   "apiKeyHelper": "gh auth token"
+> }
+> ```
+>
+> **Claude Desktop** — third-party inference with the gateway provider. Copilot serves no `/v1/models`, so list the models by full id:
+>
+> ```json
+> {
+>   "inferenceProvider": "gateway",
+>   "inferenceGatewayBaseUrl": "https://api.githubcopilot.com",
+>   "inferenceGatewayAuthScheme": "bearer",
+>   "inferenceCredentialKind": "helper-script",
+>   "inferenceCredentialHelper": "/opt/homebrew/bin/gh",
+>   "inferenceCredentialHelperArgs": ["auth", "token"],
+>   "modelDiscoveryEnabled": false,
+>   "inferenceModels": ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-haiku-4-5"]
+> }
+> ```
+
 ```
 Subscriptions                                     Clients
 

@@ -22,6 +22,37 @@
 
 </div>
 
+> [!IMPORTANT]
+> **BYOKEY 已归档，不再维护（2026-09-28）。**
+>
+> GitHub Copilot 的 `/v1/messages` 现在原样接受 Claude Code 的请求，Claude Code 跑在 Copilot 上已不再需要网关。Cursor 后端依赖 Cursor 的私有 agent 协议，Cursor 不允许在其官方客户端之外使用，而且在 Claude Code 的工具调用循环中也不可靠。
+>
+> 直连 Copilot（GitHub 未公开文档化这个接口）：先用 GitHub CLI 登录，再按下面配置。
+>
+> **Claude Code** — `~/.claude/settings.json`
+>
+> ```json
+> {
+>   "env": { "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com" },
+>   "apiKeyHelper": "gh auth token"
+> }
+> ```
+>
+> **Claude Desktop** — 第三方推理，选择 gateway 提供方。Copilot 没有 `/v1/models`，需要按完整 id 列出模型：
+>
+> ```json
+> {
+>   "inferenceProvider": "gateway",
+>   "inferenceGatewayBaseUrl": "https://api.githubcopilot.com",
+>   "inferenceGatewayAuthScheme": "bearer",
+>   "inferenceCredentialKind": "helper-script",
+>   "inferenceCredentialHelper": "/opt/homebrew/bin/gh",
+>   "inferenceCredentialHelperArgs": ["auth", "token"],
+>   "modelDiscoveryEnabled": false,
+>   "inferenceModels": ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-haiku-4-5"]
+> }
+> ```
+
 ```
 订阅                                              客户端
 
