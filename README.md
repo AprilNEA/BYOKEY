@@ -393,6 +393,8 @@ service's redirected log stays plain text.
 
 ## Contributing
 
+With Nix and devenv installed, run `devenv shell` to load the Rust toolchain and build dependencies.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for build commands, architecture details, and coding guidelines.
 
 ## License

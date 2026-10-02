@@ -2,8 +2,23 @@
 
 ## Requirements
 
-- Rust stable 1.91+ (recommended via [rustup](https://rustup.rs/))
-- SQLite 3 (system-level; pre-installed on macOS)
+With Nix and [devenv](https://devenv.sh/) installed, run:
+
+```sh
+devenv shell
+```
+
+The environment provides Rust, Cargo, Clippy, rustfmt, rust-analyzer, a C compiler, and `protoc`. Commit `devenv.lock` to keep the tool versions reproducible. Run `devenv update` to update the pinned inputs.
+
+To run one command without opening a shell:
+
+```sh
+devenv shell cargo check --workspace --all-targets
+```
+
+If your shell already uses direnv, review `.envrc` and run `direnv allow` to activate the environment when entering this directory.
+
+Without devenv, install Rust stable 1.91+, a C compiler, and `protoc`. SQLite is compiled from the bundled source by Cargo.
 
 ## Common Commands
 
