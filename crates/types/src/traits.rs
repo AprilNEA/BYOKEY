@@ -112,7 +112,8 @@ pub struct Usage {
 #[derive(Debug, Clone)]
 pub struct UsageRecord {
     pub model: String,
-    pub provider: ProviderId,
+    /// Built-in provider or configured upstream name; independent of stored logins.
+    pub provider: String,
     /// Account identifier. Use [`DEFAULT_ACCOUNT`] for API-key flows or when
     /// the caller can't determine the specific OAuth account that served the
     /// request.

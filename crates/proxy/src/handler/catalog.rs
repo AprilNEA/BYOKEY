@@ -60,7 +60,7 @@ impl Catalog {
             if !usable.contains(&ProviderId::Copilot) {
                 return None;
             }
-            let upstream = super::copilot_messages::copilot_upstream(state);
+            let upstream = super::copilot::copilot_upstream(state);
             Some(
                 last_or(ProviderId::Copilot, &COPILOT_CATALOG, async move {
                     upstream.models().await
@@ -226,6 +226,7 @@ mod tests {
             id: id.into(),
             name: id.into(),
             messages,
+            responses: false,
             context_window,
         }
     }

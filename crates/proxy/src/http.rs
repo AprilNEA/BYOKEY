@@ -33,6 +33,8 @@ const HTTP2_PING_TIMEOUT: Duration = Duration::from_secs(10);
 /// client cannot be built.
 pub fn upstream_client(proxy_url: Option<&str>) -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
+        // Custom auth headers must not reach a redirect destination.
+        .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(CONNECT_TIMEOUT)
         .http2_keep_alive_interval(HTTP2_PING_INTERVAL)
         .http2_keep_alive_timeout(HTTP2_PING_TIMEOUT)

@@ -140,9 +140,17 @@ fn scrub_request(req: &mut Request) {
         url.set_query(None);
     }
     req.query_string = None;
-    // Remove provider-specific auth headers not in Sentry's default blocklist.
-    req.headers
-        .retain(|name, _| !is_extra_sensitive(name.as_str()));
+    if req
+        .url
+        .as_ref()
+        .is_some_and(|url| url.path().starts_with("/codex/") || url.path() == "/v1/responses")
+    {
+        // ChatGPT may add attestation headers beyond Sentry's auth blocklist.
+        req.headers.clear();
+    } else {
+        req.headers
+            .retain(|name, _| !is_extra_sensitive(name.as_str()));
+    }
     // `sentry-tower` doesn't populate `data`, but scrub defensively: bodies
     // in an AI proxy are always user prompts.
     req.data = None;
@@ -222,6 +230,21 @@ mod tests {
         scrub_request(&mut req);
         assert!(!req.headers.contains_key("x-goog-api-key"));
         assert!(req.headers.contains_key("user-agent"));
+    }
+
+    #[test]
+    fn responses_headers_stay_out_of_sentry() {
+        let mut req = Request {
+            url: Some("http://localhost:8018/codex/responses".parse().unwrap()),
+            headers: [
+                ("ChatGPT-Account-ID".into(), "private-account".into()),
+                ("X-OpenAI-Attestation".into(), "private-attestation".into()),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        scrub_request(&mut req);
+        assert!(req.headers.is_empty());
     }
 
     #[test]

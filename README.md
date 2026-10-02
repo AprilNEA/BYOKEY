@@ -9,8 +9,8 @@
 # BYOKEY
 
 **Bring Your Own Keys**<br>
-Run Claude Code and Claude Desktop on the subscription you already pay for.<br>
-A local Anthropic Messages API backed by GitHub Copilot, Cursor or your own Claude login.
+Run ChatGPT.app / Codex and Claude clients through a local gateway.<br>
+Responses supports your ChatGPT subscription, GitHub Copilot and custom upstreams; Anthropic Messages supports Copilot, Cursor and Claude.
 
 [![ci](https://img.shields.io/github/actions/workflow/status/AprilNEA/BYOKEY/ci.yml?style=flat-square&labelColor=000&color=444&label=ci)](https://github.com/AprilNEA/BYOKEY/actions/workflows/ci.yml)
 &nbsp;
@@ -23,7 +23,7 @@ A local Anthropic Messages API backed by GitHub Copilot, Cursor or your own Clau
 </div>
 
 > [!IMPORTANT]
-> **BYOKEY is archived and no longer maintained (2026-09-28).**
+> **The published Anthropic-only release was archived on 2026-09-28.** The Responses gateway described below is a source-build feature on this branch, not a published release.
 >
 > GitHub Copilot's `/v1/messages` endpoint now accepts Claude Code's requests as they are, so Claude Code no longer needs a gateway to run on Copilot. The Cursor backend drives Cursor's private agent protocol, which Cursor does not allow outside its own clients, and it does not hold up in Claude Code's tool loops.
 >
@@ -134,6 +134,72 @@ cargo install --path .
 > **Requirements:** Rust 1.91+ (edition 2024), a C compiler for SQLite, and `protoc` for ConnectRPC code generation (`brew install protobuf`, `apt-get install protobuf-compiler`, or `choco install protoc`).
 
 ## Quick Start
+
+### ChatGPT.app / Codex
+
+This connects the Codex functionality in the ChatGPT desktop app, not the legacy ChatGPT conversation API. Keep the client signed in to ChatGPT: the client supplies its access token and account header and remains responsible for token refresh. BYOKEY does not import or store that login.
+
+Build and start this checkout:
+
+```sh
+devenv shell cargo run -- serve
+```
+
+Merge these settings into `~/.codex/config.toml`, keeping top-level keys before any TOML table, then restart the client:
+
+```toml
+model = "gpt-6-sol"
+model_provider = "byokey"
+web_search = "disabled"
+
+[model_providers.byokey]
+name = "BYOKEY"
+base_url = "http://127.0.0.1:8018/codex"
+wire_api = "responses"
+requires_openai_auth = true
+supports_websockets = false
+model_catalog_url = "http://127.0.0.1:8018/codex/models"
+
+[features]
+enable_request_compression = false
+```
+
+Use a model available to your account. `model_catalog_url` is the full catalog URL, not the API root. This setup uses HTTP SSE and local compaction; WebSocket transport and compressed request bodies are not supported. Keep web search disabled until the selected upstream supports the client's search tools.
+
+With no Responses configuration, all requests go to ChatGPT. To add Copilot and a custom gateway, sign in with `byokey login copilot` and merge the following into the BYOKEY config passed to `serve --config`:
+
+```yaml
+responses:
+  default: chatgpt
+  models:
+    copilot-fast:
+      upstream: copilot
+      model: gpt-5.4-mini
+      catalog_model: gpt-5.4-mini
+    company-fast:
+      upstream: company
+      model: my-deployment
+      catalog_model: gpt-5.4-mini
+  upstreams:
+    company:
+      base_url: https://gateway.example.com/team/v1
+      api_key: { env: COMPANY_API_KEY }
+      headers:
+        X-Tenant: engineering
+        X-Special-Token: { env: COMPANY_GATEWAY_TOKEN }
+```
+
+`company-fast` assumes that `my-deployment` serves the same model as `catalog_model`; choose matching metadata for the actual deployment. Export the referenced variables in the **BYOKEY server process**, not just the client. Missing variables fail the request. A configured `Authorization` header overrides `api_key`. `/responses` is appended to each `base_url`; custom upstreams must implement the Responses API themselves.
+
+Select `copilot-fast` or `company-fast` in the client. Exact aliases take priority, followed by `chatgpt/<model>`, `copilot/<model>` or `<upstream>/<model>`, followed by `responses.default` for unqualified names. Copilot models must advertise `/responses`; BYOKEY does not translate Chat Completions or Anthropic requests on this path. Copilot uses BYOKEY's stored accounts or `providers.copilot.api_key`, never the client's ChatGPT credential.
+
+The catalog borrows actual ChatGPT model metadata, including instructions and capabilities. An alias needs a matching `catalog_model`, or a complete Codex ModelInfo object under `catalog`. A missing match is an error. A custom default with complete catalog objects needs no ChatGPT catalog access; otherwise catalog discovery needs the client's ChatGPT login. Alias upgrades are disabled so the client does not migrate an alias to a different route. The existing `/v1/models`, `byokey route`, and TUI route list remain Anthropic-only.
+
+Send `Reply with exactly: gateway-ok` and check the gateway log for the intended upstream and model. Then test a tool call and a follow-up. Upstream errors and `retry-after` are preserved. Normal Responses streams end with `response.completed`; failed, incomplete and truncated streams are recorded as failures, while client cancellation is recorded as `abandoned`.
+
+Keep the listener on `127.0.0.1`. BYOKEY has no inbound authentication for its stored Copilot/custom credentials; do not expose this port to an untrusted network. Only the configured ChatGPT backend receives the client's ChatGPT auth headers. Redirects are not followed. Responses routes are excluded from `BYOKEY_DUMP`, and their request headers are removed from Sentry events.
+
+### Claude Code / Claude Desktop
 
 ```sh
 # 1. Sign in (opens a browser or shows a device code)
@@ -312,7 +378,7 @@ providers:
 
 All fields are optional; unspecified providers are enabled by default and use
 the login stored in the database. Providers other than `claude`, `copilot`
-and `cursor` are rejected.
+and `cursor` are rejected in `providers`; Responses custom upstreams belong in `responses.upstreams`.
 
 `/v1/models` lists each Claude model once, under Anthropic's id
 (`claude-opus-5-5`), when the provider its route names offers it. Claude

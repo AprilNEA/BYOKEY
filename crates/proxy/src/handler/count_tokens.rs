@@ -11,13 +11,13 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use byokey_provider::Conversation;
+use byokey_provider::claude::ANTHROPIC_VERSION;
 use byokey_types::{ByokError, ProviderId};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-use super::copilot_messages::{
-    copilot_request, copilot_upstream, strip_copilot_unsupported, strip_server_tools,
-};
+use super::copilot::{copilot_request, copilot_upstream, strip_server_tools};
+use super::copilot_messages::strip_copilot_unsupported;
 use super::messages::{AnthropicUpstream, route};
 use super::normalize::{
     CONTEXT_1M_BETA, build_beta_header, sanitize_system, take_long_context_suffix,
@@ -61,11 +61,12 @@ async fn serve_count_tokens(
                 &state.http,
                 "/v1/messages/count_tokens",
                 &creds,
-                &beta,
                 copilot.identity(),
                 &conversation,
                 &body,
             )
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .header("anthropic-beta", &beta)
             .send()
             .await
         }

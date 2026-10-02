@@ -25,6 +25,10 @@ pub fn dump_dir() -> Option<PathBuf> {
 
 /// Axum middleware that dumps every request and response to disk as JSON.
 pub async fn dump_middleware(request: Request, next: Next) -> Response {
+    // Responses traffic carries the client's ChatGPT subscription credentials.
+    if request.uri().path().starts_with("/codex/") || request.uri().path() == "/v1/responses" {
+        return next.run(request).await;
+    }
     let Some(dir) = dump_dir() else {
         return next.run(request).await;
     };

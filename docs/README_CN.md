@@ -9,8 +9,8 @@
 # BYOKEY
 
 **Bring Your Own Keys**<br>
-用你已有的订阅运行 Claude Code 和 Claude Desktop。<br>
-一个本地 Anthropic Messages API，后端是 GitHub Copilot、Cursor 或你自己的 Claude 登录。
+通过本地网关接入 ChatGPT.app / Codex 和 Claude 客户端。<br>
+Responses 支持 ChatGPT 订阅、GitHub Copilot 和自定义上游；Anthropic Messages 支持 Copilot、Cursor 和 Claude。
 
 [![ci](https://img.shields.io/github/actions/workflow/status/AprilNEA/BYOKEY/ci.yml?style=flat-square&labelColor=000&color=444&label=ci)](https://github.com/AprilNEA/BYOKEY/actions/workflows/ci.yml)
 &nbsp;
@@ -23,7 +23,7 @@
 </div>
 
 > [!IMPORTANT]
-> **BYOKEY 已归档，不再维护（2026-09-28）。**
+> **已发布的 Anthropic 专用版本于 2026-09-28 归档。** 当前分支新增的 Responses 网关需从源码构建，尚未发布。ChatGPT.app 配置、模型别名和自定义 Header 用法见 [英文版快速开始](../README.md#chatgptapp--codex)。
 >
 > GitHub Copilot 的 `/v1/messages` 现在原样接受 Claude Code 的请求，Claude Code 跑在 Copilot 上已不再需要网关。Cursor 后端依赖 Cursor 的私有 agent 协议，Cursor 不允许在其官方客户端之外使用，而且在 Claude Code 的工具调用循环中也不可靠。
 >

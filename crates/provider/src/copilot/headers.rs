@@ -226,6 +226,18 @@ impl Conversation {
             session: anchor(messages, (!messages.is_empty()).then_some(0)),
         }
     }
+
+    /// Infer Copilot turn and vision headers from Responses input items.
+    #[must_use]
+    pub fn from_responses(input: &Value) -> Self {
+        match input {
+            Value::String(text) => {
+                Self::from_messages(&[serde_json::json!({"role": "user", "content": text})])
+            }
+            Value::Array(items) => Self::from_messages(items),
+            _ => Self::from_messages(&[]),
+        }
+    }
 }
 
 /// The turn and session keys as their first four bytes in hex: enough to
@@ -313,7 +325,7 @@ fn has_image(content: &Value) -> bool {
         parts
             .iter()
             .any(|part| match part.get("type").and_then(Value::as_str) {
-                Some("image" | "image_url") => true,
+                Some("image" | "image_url" | "input_image") => true,
                 Some("tool_result") => part.get("content").is_some_and(has_image),
                 _ => false,
             })

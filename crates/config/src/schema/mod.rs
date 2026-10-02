@@ -1,5 +1,6 @@
 pub mod claude_code;
 pub mod provider;
+pub mod responses;
 pub mod routes;
 pub mod runtime;
 
@@ -34,6 +35,9 @@ pub struct Config {
     /// Which provider serves each Anthropic model.
     #[serde(default)]
     pub routes: Routes,
+    /// Responses API routing for ChatGPT.app and Codex.
+    #[serde(default)]
+    pub responses: responses::ResponsesConfig,
     /// Claude Code CLI integration configuration.
     #[serde(default)]
     pub claude_code: ClaudeCodeConfig,
@@ -56,6 +60,7 @@ impl Default for Config {
             host: default_host(),
             providers: HashMap::new(),
             routes: Routes::default(),
+            responses: responses::ResponsesConfig::default(),
             claude_code: ClaudeCodeConfig::default(),
             proxy_url: None,
             log: LogConfig::default(),
@@ -114,7 +119,12 @@ fn extract(figment: &figment::Figment) -> Result<Config, figment::Error> {
         )
         .into());
     }
-    figment.extract()
+    let config: Config = figment.extract()?;
+    config
+        .responses
+        .validate()
+        .map_err(|e| figment::Error::from(e.to_string()))?;
+    Ok(config)
 }
 
 #[cfg(test)]

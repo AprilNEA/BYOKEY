@@ -16,7 +16,7 @@ impl UsageStore for SqliteTokenStore {
              VALUES (?, ?, ?, ?, ?, ?, ?)",
             vec![
                 rec.model.clone().into(),
-                rec.provider.to_string().into(),
+                rec.provider.clone().into(),
                 rec.account_id.clone().into(),
                 (rec.usage.input_tokens as i64).into(),
                 (rec.usage.output_tokens as i64).into(),
@@ -91,7 +91,7 @@ mod tests {
         let s = mem().await;
         s.record(&UsageRecord {
             model: "gpt-4o".into(),
-            provider: ProviderId::Copilot,
+            provider: ProviderId::Copilot.to_string(),
             account_id: "default".into(),
             usage: Usage {
                 input_tokens: 100,
@@ -103,7 +103,7 @@ mod tests {
         .unwrap();
         s.record(&UsageRecord {
             model: "gpt-4o".into(),
-            provider: ProviderId::Copilot,
+            provider: ProviderId::Copilot.to_string(),
             account_id: "default".into(),
             usage: Usage {
                 input_tokens: 200,

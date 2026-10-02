@@ -90,6 +90,8 @@ CLI entry point: `src/main.rs` (package = `byokey`, bin = `byokey`).
 | `POST` | `/v1/messages` | Anthropic Messages API (streaming supported) |
 | `POST` | `/v1/messages/count_tokens` | Token counting, routed like `/v1/messages` |
 | `GET` | `/v1/models` | The Anthropic models `/v1/messages` serves under the routes |
+| `POST` | `/v1/responses`, `/codex/responses` | Responses passthrough to ChatGPT, Copilot or a custom upstream |
+| `GET` | `/codex/models` | Codex-native model metadata and configured aliases |
 | `POST` | `/byokey.*.*Service/{Method}` | ConnectRPC management API (status, accounts, usage) |
 
 A `copilot/` or `cursor/` prefix on the `model` field picks the provider for
@@ -97,6 +99,8 @@ one request; otherwise `routes.models` does for that Claude model, then
 `routes.families` for its family, then `routes.default`, and without any the
 request goes to Anthropic.
 `byokey route` edits the routes and lists them through the management API.
+
+Responses routing is separate: an exact `responses.models` alias takes priority over an upstream prefix and `responses.default`. The client owns ChatGPT credentials and refresh. Copilot reuses stored accounts, while custom upstreams use configured credentials. The Responses forwarder preserves JSON and SSE bytes and accounts for Responses terminal events; do not reuse the Anthropic terminal-event parser. HTTP mock tests in `crates/proxy/src/handler/responses/` cover credential isolation, model capabilities, aliases, errors and stream cancellation.
 
 ### Daemon and control socket
 

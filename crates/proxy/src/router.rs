@@ -22,7 +22,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{Span, debug_span, info_span};
 
 use crate::AppState;
-use crate::handler::{count_tokens, management, messages, models};
+use crate::handler::{count_tokens, management, messages, models, responses};
 
 /// The span of one request: its method, path and BYOKEY's request id (also
 /// the `x-request-id` response header), plus the ids Claude Code sends, so a
@@ -116,7 +116,10 @@ pub fn make_router(state: Arc<AppState>) -> Router {
             "/v1/messages/count_tokens",
             post(count_tokens::count_tokens),
         )
-        .route("/v1/models", get(models::list_models));
+        .route("/v1/models", get(models::list_models))
+        .route("/v1/responses", post(responses::responses))
+        .route("/codex/responses", post(responses::responses))
+        .route("/codex/models", get(responses::models));
 
     // `ConnectRPC` management service (served as the fallback).
     let connect_service = management::build_router(state.clone()).into_axum_service();

@@ -9,6 +9,7 @@
 use serde_json::Value;
 
 pub(crate) mod catalog;
+mod copilot;
 mod copilot_messages;
 pub(crate) mod count_tokens;
 pub(crate) mod cursor_messages;
@@ -17,6 +18,7 @@ pub mod management;
 pub(crate) mod messages;
 pub(crate) mod models;
 mod normalize;
+pub(crate) mod responses;
 
 /// Name the model a Messages-format request asks for on the request's span
 /// (the router's `http` span, which a handler runs in), so every line of

@@ -18,7 +18,7 @@
 //! outcome but `abandoned` is counted in the usage statistics, with tokens
 //! for `completed` only.
 
-use byokey_types::{ByokError, ProviderId, Usage, UsageRecord, millis};
+use byokey_types::{ByokError, Usage, UsageRecord, millis};
 use futures_util::{Future, FutureExt as _};
 use serde_json::Value;
 use std::sync::{Arc, OnceLock};
@@ -32,7 +32,7 @@ use crate::error::UpstreamMessage;
 /// client went away.
 pub(crate) struct Exchange {
     recorder: Arc<UsageRecorder>,
-    provider: ProviderId,
+    provider: String,
     model: String,
     account_id: String,
     span: Span,
@@ -50,10 +50,11 @@ impl Exchange {
     /// starting now.
     pub(crate) fn start(
         recorder: &Arc<UsageRecorder>,
-        provider: ProviderId,
+        provider: impl ToString + Copy,
         model: impl Into<String>,
         account_id: impl Into<String>,
     ) -> Self {
+        let provider = provider.to_string();
         let model = model.into();
         let account_id = account_id.into();
         let span = tracing::info_span!(
@@ -211,7 +212,7 @@ impl Exchange {
         };
         self.recorder.record(UsageRecord {
             model: std::mem::take(&mut self.model),
-            provider: self.provider,
+            provider: std::mem::take(&mut self.provider),
             account_id: std::mem::take(&mut self.account_id),
             usage,
             success,
@@ -295,7 +296,11 @@ impl Report {
         if let Some(usage) = response.get("usage") {
             report.read_usage(usage);
         }
-        report.read_stop_reason(response.get("stop_reason"));
+        report.read_stop_reason(
+            response
+                .get("stop_reason")
+                .or_else(|| response.get("status")),
+        );
         report
     }
 
@@ -331,6 +336,12 @@ impl Report {
                 *slot = Some(n);
             }
         }
+        if let Some(n) = usage
+            .pointer("/input_tokens_details/cached_tokens")
+            .and_then(Value::as_u64)
+        {
+            self.cache_read_tokens = Some(n);
+        }
     }
 
     fn read_stop_reason(&mut self, stop_reason: Option<&Value>) {
@@ -353,6 +364,7 @@ impl From<&Report> for Usage {
 mod tests {
     use super::*;
     use crate::test_logs::Logs;
+    use byokey_types::ProviderId;
     use serde_json::json;
     use tracing::Level;
 

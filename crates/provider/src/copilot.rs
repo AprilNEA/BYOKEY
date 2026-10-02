@@ -169,6 +169,8 @@ pub struct CopilotModel {
     pub name: String,
     /// Served on Copilot's Anthropic-format `/v1/messages`.
     pub messages: bool,
+    /// Served on Copilot's native `/responses` endpoint.
+    pub responses: bool,
     /// Context window in tokens, when the catalog states it.
     pub context_window: Option<u64>,
 }
@@ -205,7 +207,12 @@ impl CatalogEntry {
             id: self.id,
             messages: self
                 .supported_endpoints
+                .as_ref()
                 .is_some_and(|eps| eps.iter().any(|ep| ep == "/v1/messages")),
+            responses: self
+                .supported_endpoints
+                .as_ref()
+                .is_some_and(|eps| eps.iter().any(|ep| ep == "/responses")),
             context_window: self
                 .capabilities
                 .and_then(|c| c.limits)
@@ -763,12 +770,14 @@ mod tests {
                     id: "claude-opus-5.5".into(),
                     name: "Claude Opus 5.5".into(),
                     messages: true,
+                    responses: false,
                     context_window: Some(1_000_000),
                 },
                 CopilotModel {
                     id: "gpt-5.4".into(),
                     name: "gpt-5.4".into(),
                     messages: false,
+                    responses: true,
                     context_window: None,
                 },
             ],
