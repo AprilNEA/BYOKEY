@@ -30,9 +30,9 @@ const EXTRA_SENSITIVE_HEADERS: &[&str] = &[
     "x-session-id",
 ];
 
-/// Log fields that stay in the local log: `upstream_message` is text an
-/// upstream wrote, which can quote the request it rejected.
-const LOCAL_ONLY_FIELDS: &[&str] = &["upstream_message"];
+/// Account identifiers and upstream text stay in local logs, not telemetry.
+/// Upstream messages can quote the request that the upstream rejected.
+const LOCAL_ONLY_FIELDS: &[&str] = &["account", "upstream_message"];
 
 /// Maximum length for event `message` / exception `value` fields. Longer
 /// strings (often serialized upstream error bodies) are truncated.
@@ -108,12 +108,15 @@ fn scrub_event(event: &mut Event<'static>) {
     for exc in &mut event.exception.values {
         truncate(&mut exc.value, MAX_MESSAGE_LEN);
     }
-    // sentry-tracing puts an event's fields in an `Other` context.
+    // Sentry attaches root span data to error events even when the trace is not sampled.
     for context in event.contexts.values_mut() {
-        if let Context::Other(fields) = context {
-            for field in LOCAL_ONLY_FIELDS {
-                fields.remove(*field);
-            }
+        let fields = match context {
+            Context::Other(fields) => fields,
+            Context::Trace(trace) => &mut trace.data,
+            _ => continue,
+        };
+        for field in LOCAL_ONLY_FIELDS {
+            fields.remove(*field);
         }
     }
 }
@@ -257,6 +260,52 @@ mod tests {
         scrub_request(&mut req);
         assert!(req.data.is_none());
         assert!(req.cookies.is_none());
+    }
+
+    #[test]
+    fn account_fields_stay_out_of_sentry_contexts() {
+        let mut event: Event<'static> = serde_json::from_value(serde_json::json!({
+            "contexts": {
+                "trace": {
+                    "type": "trace",
+                    "trace_id": "0123456789abcdef0123456789abcdef",
+                    "span_id": "0123456789abcdef",
+                    "data": {"account": "private-account", "upstream_message": "echoed prompt", "status": 502}
+                },
+                "Rust Tracing Fields": {"account": "private-account", "status": 502}
+            }
+        }))
+        .unwrap();
+
+        scrub_event(&mut event);
+
+        let payload = serde_json::to_value(event).unwrap();
+        assert_eq!(
+            payload["contexts"]["trace"]["data"],
+            serde_json::json!({"status": 502})
+        );
+        assert!(
+            payload["contexts"]["Rust Tracing Fields"]
+                .get("account")
+                .is_none()
+        );
+        assert_eq!(payload["contexts"]["Rust Tracing Fields"]["status"], 502);
+    }
+
+    #[test]
+    fn account_fields_stay_out_of_sentry_breadcrumbs() {
+        let mut crumb = Breadcrumb {
+            data: [
+                ("account".into(), "private-account".into()),
+                ("status".into(), 502.into()),
+            ]
+            .into(),
+            ..Default::default()
+        };
+
+        scrub_breadcrumb(&mut crumb);
+
+        assert_eq!(crumb.data, [("status".into(), 502.into())].into());
     }
 
     #[test]

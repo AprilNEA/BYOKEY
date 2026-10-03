@@ -3,10 +3,12 @@
 mod catalog;
 mod forward;
 mod item_ids;
+mod passthrough;
 #[cfg(test)]
 mod tests;
 
 pub(crate) use catalog::models;
+pub(crate) use passthrough::passthrough;
 
 use axum::{
     Json,

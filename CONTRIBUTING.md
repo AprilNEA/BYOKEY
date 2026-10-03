@@ -92,6 +92,7 @@ CLI entry point: `src/main.rs` (package = `byokey`, bin = `byokey`).
 | `GET` | `/v1/models` | The Anthropic models `/v1/messages` serves under the routes |
 | `POST` | `/v1/responses`, `/codex/responses` | Responses passthrough to ChatGPT, Copilot or a custom upstream |
 | `GET` | `/codex/models` | Codex-native model metadata and configured aliases |
+| Any HTTP method | Other `/codex/*` paths | Raw HTTP forwarding to the configured ChatGPT backend; no WebSocket support |
 | `POST` | `/byokey.*.*Service/{Method}` | ConnectRPC management API (status, accounts, usage) |
 
 A `copilot/` or `cursor/` prefix on the `model` field picks the provider for
@@ -101,6 +102,8 @@ request goes to Anthropic.
 `byokey route` edits the routes and lists them through the management API.
 
 Responses routing is separate: an exact `responses.models` alias takes priority over an upstream prefix and `responses.default`. The client owns ChatGPT credentials and refresh. Copilot reuses stored accounts, while custom upstreams use configured credentials. The Responses forwarder preserves JSON and SSE bytes and accounts for Responses terminal events; do not reuse the Anthropic terminal-event parser. HTTP mock tests in `crates/proxy/src/handler/responses/` cover credential isolation, model capabilities, aliases, errors and stream cancellation.
+
+Native Codex forwarding in `handler/responses/passthrough.rs` always uses `responses.chatgpt_base_url`, without model routing or body parsing. Keep its HTTP client separate: automatic decompression would change the forwarded bytes and headers. Both clients use the proxy and connection settings from `http.rs`. `AppState::new` returns a `Result` because it builds the native client. The native client disables redirects and retries; it streams bodies without Responses event parsing or token accounting. Tests cover raw bytes, encoded paths, credential isolation, errors, redirects and streaming cancellation.
 
 ### Daemon and control socket
 

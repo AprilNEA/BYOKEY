@@ -10,7 +10,7 @@
 use axum::extract::DefaultBodyLimit;
 use axum::{
     Router, http, middleware,
-    routing::{get, post},
+    routing::{any, get, post},
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -106,6 +106,8 @@ fn common_layers(router: Router) -> Router {
 /// Routes served:
 /// - `/v1/messages`, `/v1/messages/count_tokens`, `/v1/models` — the
 ///   Anthropic Messages API.
+/// - `/codex/responses`, `/codex/models` — routed inference and model discovery.
+/// - Other `/codex/*` paths — native `ChatGPT` HTTP forwarding.
 /// - `/byokey.status.StatusService/{Method}`,
 ///   `/byokey.accounts.AccountsService/{Method}` — local byokey management
 ///   over `ConnectRPC` (fallback service).
@@ -119,7 +121,8 @@ pub fn make_router(state: Arc<AppState>) -> Router {
         .route("/v1/models", get(models::list_models))
         .route("/v1/responses", post(responses::responses))
         .route("/codex/responses", post(responses::responses))
-        .route("/codex/models", get(responses::models));
+        .route("/codex/models", get(responses::models))
+        .route("/codex/{*path}", any(responses::passthrough));
 
     // `ConnectRPC` management service (served as the fallback).
     let connect_service = management::build_router(state.clone()).into_axum_service();
@@ -148,7 +151,7 @@ mod tests {
         let config = Arc::new(arc_swap::ArcSwap::from_pointee(
             byokey_config::Config::default(),
         ));
-        AppState::new(config, auth, http, None)
+        AppState::new(config, auth, http, None).unwrap()
     }
 
     async fn body_json(resp: axum::response::Response) -> Value {

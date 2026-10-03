@@ -16,6 +16,7 @@ use tokio::sync::mpsc;
 use tower::ServiceExt as _;
 
 mod catalog;
+mod passthrough;
 
 struct Server {
     url: String,
@@ -83,6 +84,7 @@ fn state(config: Config) -> Arc<AppState> {
         http,
         None,
     )
+    .unwrap()
 }
 
 fn request(body: &Value) -> Request<Body> {
@@ -267,14 +269,14 @@ async fn custom_upstreams_apply_the_service_tier_and_generate_fresh_request_head
     let (router, mut received) = capture(StatusCode::OK, COMPLETED);
     let upstream = serve(router).await;
     let config: Config = serde_json::from_value(json!({"responses": {
-        "models": {"LLM Router": {"upstream": "company", "model": "gpt-example"}},
+        "models": {"Company Model": {"upstream": "company", "model": "gpt-example"}},
         "upstreams": {"company": {
             "base_url": format!("{}/openai/v1", upstream.url),
             "service_tier": "fast",
             "headers": {
-                "x-request-resource-group": "5",
-                "x-request-options": "{\"account_details\":\"1\"}",
-                "x-request-task-uid": {"uuid_prefix": "task-fast-"},
+                "x-tenant": "engineering",
+                "x-options": "{\"region\":\"test\"}",
+                "x-request-uid": {"uuid_prefix": "request-"},
             },
         }},
     }}))
@@ -284,7 +286,7 @@ async fn custom_upstreams_apply_the_service_tier_and_generate_fresh_request_head
     let first = router
         .clone()
         .oneshot(request(&json!({
-            "model": "LLM Router", "stream": true, "service_tier": "default",
+            "model": "Company Model", "stream": true, "service_tier": "default",
             "input": [{"type": "function_call_output", "call_id": "opaque-call", "output": "42"}],
             "future_field": {"preserved": true},
         })))
@@ -292,7 +294,7 @@ async fn custom_upstreams_apply_the_service_tier_and_generate_fresh_request_head
         .unwrap();
     let second = router
         .oneshot(request(&json!({
-            "model": "LLM Router", "stream": true, "input": "another request",
+            "model": "Company Model", "stream": true, "input": "another request",
         })))
         .await
         .unwrap();
@@ -317,17 +319,14 @@ async fn custom_upstreams_apply_the_service_tier_and_generate_fresh_request_head
         })
     );
     assert_eq!(second_body["service_tier"], "fast");
-    assert_eq!(first_headers["x-request-resource-group"], "5");
-    assert_eq!(
-        first_headers["x-request-options"],
-        "{\"account_details\":\"1\"}"
-    );
-    let first_id = first_headers["x-request-task-uid"].to_str().unwrap();
-    let second_id = second_headers["x-request-task-uid"].to_str().unwrap();
+    assert_eq!(first_headers["x-tenant"], "engineering");
+    assert_eq!(first_headers["x-options"], "{\"region\":\"test\"}");
+    let first_id = first_headers["x-request-uid"].to_str().unwrap();
+    let second_id = second_headers["x-request-uid"].to_str().unwrap();
     assert_ne!(first_id, second_id);
-    let uuid = uuid::Uuid::parse_str(first_id.strip_prefix("task-fast-").unwrap()).unwrap();
-    assert_eq!(first_id, format!("task-fast-{uuid}"));
-    assert!(second_id.starts_with("task-fast-"));
+    let uuid = uuid::Uuid::parse_str(first_id.strip_prefix("request-").unwrap()).unwrap();
+    assert_eq!(first_id, format!("request-{uuid}"));
+    assert!(second_id.starts_with("request-"));
     assert!(!first_headers.contains_key("authorization"));
     assert!(!first_headers.contains_key("chatgpt-account-id"));
 }

@@ -28,7 +28,7 @@ pub use usage::{UsageRecorder, UsageStats};
 use arc_swap::ArcSwap;
 use byokey_auth::AuthManager;
 use byokey_provider::{CopilotIdentity, DeviceProfileCache};
-use byokey_types::UsageStore;
+use byokey_types::{Result, UsageStore};
 use std::{sync::Arc, time::Duration};
 
 /// Shared application state passed to all route handlers.
@@ -40,6 +40,8 @@ pub struct AppState {
     pub auth: Arc<AuthManager>,
     /// HTTP client for upstream requests.
     pub http: reqwest::Client,
+    /// HTTP client that preserves encoded bodies for native Codex forwarding.
+    pub(crate) passthrough_http: reqwest::Client,
     /// In-memory usage statistics with optional persistent backing.
     pub usage: Arc<UsageRecorder>,
     /// Per-auth device fingerprint cache for Claude API headers.
@@ -59,20 +61,26 @@ impl AppState {
     ///
     /// `http` is the upstream client (see [`upstream_client`]). An optional
     /// [`UsageStore`] enables persistent usage tracking.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the native Codex HTTP client cannot be built.
     pub fn new(
         config: Arc<ArcSwap<byokey_config::Config>>,
         auth: Arc<AuthManager>,
         http: reqwest::Client,
         usage_store: Option<Arc<dyn UsageStore>>,
-    ) -> Arc<Self> {
-        Arc::new(Self {
+    ) -> Result<Arc<Self>> {
+        let passthrough_http = http::passthrough_client(config.load().proxy_url.as_deref())?;
+        Ok(Arc::new(Self {
             config,
             auth,
             http,
+            passthrough_http,
             usage: Arc::new(UsageRecorder::new(usage_store)),
             device_profiles: Arc::new(DeviceProfileCache::new()),
             copilot_identity: ArcSwap::from_pointee(CopilotIdentity::default()),
-        })
+        }))
     }
 
     /// Fetch the published Copilot client versions in the background and

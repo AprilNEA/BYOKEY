@@ -173,8 +173,7 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
     let addr = format!("{effective_host}:{effective_port}");
 
     let store = Arc::new(crate::open_store(db).await?);
-    // One client for every upstream: token refreshes, catalog and version
-    // fetches, and the proxied requests themselves.
+    // Share one client for token refreshes, catalogs, and protocol-aware requests.
     let http = byokey_proxy::upstream_client(snapshot.proxy_url.as_deref())?;
     let auth = Arc::new(AuthManager::new(store.clone(), http.clone()));
 
@@ -190,7 +189,7 @@ pub async fn cmd_serve(args: ServerArgs) -> Result<()> {
         auth,
         http,
         Some(usage_store.clone()),
-    );
+    )?;
     let _identity_handle = state.spawn_copilot_identity_fetch();
 
     // Pre-load cumulative usage from persisted records so the in-memory snapshot

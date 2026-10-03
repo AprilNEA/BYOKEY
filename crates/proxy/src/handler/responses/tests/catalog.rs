@@ -39,7 +39,7 @@ async fn custom_catalogs_list_and_route_each_matching_model() {
         "upstreams": {"company": {
             "base_url": format!("{}/deployment", upstream.url),
             "models_url": format!("{}/directory?tenant=5", catalog.url),
-            "display_name": "LLM Router",
+            "display_name": "Company Gateway",
             "api_key": "company-key",
             "headers": {"x-tenant": "engineering"},
         }},
@@ -64,7 +64,7 @@ async fn custom_catalogs_list_and_route_each_matching_model() {
             "native-only"
         ]
     );
-    assert_eq!(models[0]["display_name"], "Large (LLM Router)");
+    assert_eq!(models[0]["display_name"], "Large (Company Gateway)");
     assert_eq!(models[0]["context_window"], 400_000);
     assert_eq!(
         models[0]["model_messages"]["instructions_template"],
@@ -72,7 +72,7 @@ async fn custom_catalogs_list_and_route_each_matching_model() {
     );
     assert_eq!(models[0]["future_capability"], json!({"enabled": true}));
     assert!(models[0].get("base_instructions").is_none());
-    assert_eq!(models[1]["display_name"], "Small (LLM Router)");
+    assert_eq!(models[1]["display_name"], "Small (Company Gateway)");
     assert_eq!(models[1]["context_window"], 64_000);
     assert_eq!(models[1]["base_instructions"], "small instructions");
     assert_eq!(models[1]["upgrade"], Value::Null);

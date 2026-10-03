@@ -163,9 +163,11 @@ supports_websockets = false
 enable_request_compression = false
 ```
 
-Use a model available to your account. With a ChatGPT login, Codex discovers the catalog at `base_url/models`. Leave `model_catalog_url` unset: explicitly configured catalog URLs have a 1 MiB limit, which a combined multi-provider catalog can exceed. This setup uses HTTP SSE and local compaction; WebSocket transport and compressed request bodies are not supported. Keep web search disabled until the selected upstream supports the client's search tools.
+Use a model available to your account. With a ChatGPT login, Codex discovers the catalog at `base_url/models`. Leave `model_catalog_url` unset: explicitly configured catalog URLs have a 1 MiB limit, which a combined multi-provider catalog can exceed. This setup uses HTTP SSE and local compaction; WebSocket transport and compressed Responses request bodies are not supported. Keep web search disabled until the selected upstream supports the client's search tools.
 
-With no Responses configuration, all requests go to ChatGPT. To add Copilot and a custom gateway, sign in with `byokey login copilot` and merge the following into the BYOKEY config passed to `serve --config`:
+Unmatched `/codex/*` HTTP paths, including `images/generations` and `images/edits`, go directly to `responses.chatgpt_base_url` (default `https://chatgpt.com/backend-api/codex`) with the client's ChatGPT credentials. This fallback is independent of the selected inference provider. It preserves the method, path suffix, query, body bytes, upstream status and end-to-end headers; cookies and connection-specific request headers are removed. Request and response bodies stream without JSON parsing or automatic decompression. Redirects and retries are disabled. Native requests are logged but do not contribute to Responses token usage statistics. The fallback does not enable client-side features or translate model aliases for native endpoints.
+
+With no Responses configuration, inference requests go to ChatGPT. To add Copilot and a custom gateway, sign in with `byokey login copilot` and merge the following into the BYOKEY config passed to `serve --config`:
 
 ```yaml
 responses:
@@ -205,7 +207,9 @@ The catalog borrows actual ChatGPT model metadata, including instructions and ca
 
 Send `Reply with exactly: gateway-ok` and check the gateway log for the intended upstream and model. Then test a tool call and a follow-up. Upstream errors and `retry-after` are preserved. Normal Responses streams end with `response.completed`; failed, incomplete and truncated streams are recorded as failures, while client cancellation is recorded as `abandoned`.
 
-Keep the listener on `127.0.0.1`. BYOKEY has no inbound authentication for its stored Copilot/custom credentials; do not expose this port to an untrusted network. Only the configured ChatGPT backend receives the client's ChatGPT auth headers. Redirects are not followed. Responses routes are excluded from `BYOKEY_DUMP`, and their request headers are removed from Sentry events.
+Keep the listener on `127.0.0.1`. BYOKEY has no inbound authentication for its stored Copilot/custom credentials; do not expose this port to an untrusted network. Only the configured ChatGPT backend receives the client's ChatGPT auth headers; configure only a trusted `responses.chatgpt_base_url`. Redirects are not followed. Responses routes are excluded from `BYOKEY_DUMP`, and their request headers are removed from Sentry events.
+
+Local logs and usage records retain account identifiers. Local error logs can contain text quoted by the upstream. Account identifiers and upstream error text are removed from Sentry event fields, trace data and breadcrumbs.
 
 ### Claude Code / Claude Desktop
 
