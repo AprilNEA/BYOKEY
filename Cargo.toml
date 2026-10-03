@@ -16,7 +16,7 @@ members = [
 edition = "2024"
 # Floor set by `Duration::from_mins` (stable since 1.91).
 rust-version = "1.91"
-version = "3.0.0"
+version = "4.0.0"
 authors = ["AprilNEA <github@sku.moe>"]
 description = "Bring Your Own Keys — AI subscription-to-API proxy gateway"
 license = "MIT OR Apache-2.0"
@@ -28,15 +28,15 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Workspace crates
-byokey-types = { version = "3.0.0", path = "crates/types" }
-byokey-config = { version = "3.0.0", path = "crates/config" }
-byokey-store = { version = "3.0.0", path = "crates/store" }
-byokey-auth = { version = "3.0.0", path = "crates/auth" }
-byokey-provider = { version = "3.0.0", path = "crates/provider" }
-byokey-proto = { version = "3.0.0", path = "crates/proto" }
-byokey-proxy = { version = "3.0.0", path = "crates/proxy" }
-byokey-daemon = { version = "3.0.0", path = "crates/daemon" }
-byokey-tui = { version = "3.0.0", path = "crates/tui" }
+byokey-types = { version = "4.0.0", path = "crates/types" }
+byokey-config = { version = "4.0.0", path = "crates/config" }
+byokey-store = { version = "4.0.0", path = "crates/store" }
+byokey-auth = { version = "4.0.0", path = "crates/auth" }
+byokey-provider = { version = "4.0.0", path = "crates/provider" }
+byokey-proto = { version = "4.0.0", path = "crates/proto" }
+byokey-proxy = { version = "4.0.0", path = "crates/proxy" }
+byokey-daemon = { version = "4.0.0", path = "crates/daemon" }
+byokey-tui = { version = "4.0.0", path = "crates/tui" }
 aigw = { version = "0.7.0", default-features = false, features = ["anthropic"] }
 aigw-core = "0.7.0"
 
