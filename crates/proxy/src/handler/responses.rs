@@ -82,7 +82,11 @@ pub(crate) async fn responses(
             if let Some(tier) = &upstream.service_tier {
                 body["service_tier"] = Value::String(tier.clone());
             }
-            let request = custom_request(&state.http, upstream, &headers)?.json(&body);
+            let request = state
+                .http
+                .post(endpoint(&upstream.base_url, "responses"))
+                .headers(custom_headers(upstream, &headers)?)
+                .json(&body);
             let exchange = Exchange::start(&state.usage, name, model, "configured");
             let response = match send(request, &exchange).await {
                 Ok(response) => response,
@@ -178,11 +182,10 @@ fn chatgpt_headers(mut headers: HeaderMap) -> HeaderMap {
     headers
 }
 
-fn custom_request(
-    http: &reqwest::Client,
+fn custom_headers(
     upstream: &ResponsesUpstream,
     incoming: &HeaderMap,
-) -> Result<reqwest::RequestBuilder, ByokError> {
+) -> Result<HeaderMap, ByokError> {
     let mut headers = protocol_headers(incoming);
     if let Some(key) = &upstream.api_key {
         let mut value = HeaderValue::from_str(&format!("Bearer {}", key.resolve()?))
@@ -199,9 +202,7 @@ fn custom_request(
         headers.insert(name, value);
     }
     strip_hop_headers(&mut headers);
-    Ok(http
-        .post(endpoint(&upstream.base_url, "responses"))
-        .headers(headers))
+    Ok(headers)
 }
 
 fn protocol_headers(incoming: &HeaderMap) -> HeaderMap {

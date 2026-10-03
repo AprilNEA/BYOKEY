@@ -158,13 +158,12 @@ base_url = "http://127.0.0.1:8018/codex"
 wire_api = "responses"
 requires_openai_auth = true
 supports_websockets = false
-model_catalog_url = "http://127.0.0.1:8018/codex/models"
 
 [features]
 enable_request_compression = false
 ```
 
-Use a model available to your account. `model_catalog_url` is the full catalog URL, not the API root. This setup uses HTTP SSE and local compaction; WebSocket transport and compressed request bodies are not supported. Keep web search disabled until the selected upstream supports the client's search tools.
+Use a model available to your account. With a ChatGPT login, Codex discovers the catalog at `base_url/models`. Leave `model_catalog_url` unset: explicitly configured catalog URLs have a 1 MiB limit, which a combined multi-provider catalog can exceed. This setup uses HTTP SSE and local compaction; WebSocket transport and compressed request bodies are not supported. Keep web search disabled until the selected upstream supports the client's search tools.
 
 With no Responses configuration, all requests go to ChatGPT. To add Copilot and a custom gateway, sign in with `byokey login copilot` and merge the following into the BYOKEY config passed to `serve --config`:
 
@@ -183,6 +182,8 @@ responses:
   upstreams:
     company:
       base_url: https://gateway.example.com/team/v1
+      models_url: https://gateway.example.com/team/v1/models
+      display_name: Company
       api_key: { env: COMPANY_API_KEY }
       headers:
         X-Tenant: engineering
@@ -192,13 +193,15 @@ responses:
 
 `company-fast` assumes that `my-deployment` serves the same model as `catalog_model`; choose matching metadata for the actual deployment. Export the referenced variables in the **BYOKEY server process**, not just the client. Missing variables fail the request. A configured `Authorization` header overrides `api_key`. `/responses` is appended to each `base_url`; custom upstreams must implement the Responses API themselves.
 
+Set `models_url` to an OpenAI-compatible `{"data":[{"id":"..."}]}` endpoint to discover multiple models without defining each alias. BYOKEY lists every ID that also has ChatGPT Codex metadata as `<upstream>/<model>`, displayed as `<model display name> (<display_name>)`. The provider label defaults to the upstream name. Models without matching metadata need an explicit alias with a complete `catalog`; BYOKEY does not fabricate their instructions or capabilities. A model list does not guarantee current account access or Responses support. The model list URL receives the same configured credentials and headers as the Responses URL, never the client's ChatGPT credentials. Configure only trusted URLs. Catalog errors are returned to the client. Explicit aliases override discovered entries with the same slug. Omit `models_url` to keep manual aliases only.
+
 `uuid_prefix` generates a fresh lowercase UUID v4 for each upstream request, preceded by the configured prefix. Set an upstream's optional `service_tier` to override the client's top-level `service_tier`, for example `service_tier: fast` when that upstream supports it. Without an override, BYOKEY preserves the client's value. Do not wrap Responses parameters in `extra_body`; send them at the top level.
 
 Select `copilot-fast` or `company-fast` in the client. Exact aliases take priority, followed by `chatgpt/<model>`, `copilot/<model>` or `<upstream>/<model>`, followed by `responses.default` for unqualified names. Copilot models must advertise `/responses`; BYOKEY does not translate Chat Completions or Anthropic requests on this path. Copilot uses BYOKEY's stored accounts or `providers.copilot.api_key`, never the client's ChatGPT credential.
 
 Copilot can change an output item's ID between stream events. BYOKEY retains the first ID for each output index so Codex updates one message instead of displaying a duplicate. Response IDs and tool `call_id` values remain unchanged. ChatGPT and custom upstreams retain their original stream payloads.
 
-The catalog borrows actual ChatGPT model metadata, including instructions and capabilities. When `model_messages.instructions_template` is present, BYOKEY omits the legacy `base_instructions` copy to reduce catalog size: Codex limits remote custom catalogs to 1 MiB. An alias needs a matching `catalog_model`, or a complete Codex ModelInfo object under `catalog`. A missing match is an error. A custom default with complete catalog objects needs no ChatGPT catalog access; otherwise catalog discovery needs the client's ChatGPT login. Alias upgrades are disabled so the client does not migrate an alias to a different route. The existing `/v1/models`, `byokey route`, and TUI route list remain Anthropic-only.
+The catalog borrows actual ChatGPT model metadata, including instructions and capabilities. When `model_messages.instructions_template` is present, BYOKEY omits the ignored legacy `base_instructions` copy to reduce catalog size. An alias needs a matching `catalog_model`, or a complete Codex ModelInfo object under `catalog`. A missing match is an error. A custom default with complete catalog objects and no `models_url` needs no ChatGPT catalog access; otherwise catalog discovery needs the client's ChatGPT login. Alias upgrades are disabled so the client does not migrate an alias to a different route. The existing `/v1/models`, `byokey route`, and TUI route list remain Anthropic-only.
 
 Send `Reply with exactly: gateway-ok` and check the gateway log for the intended upstream and model. Then test a tool call and a follow-up. Upstream errors and `retry-after` are preserved. Normal Responses streams end with `response.completed`; failed, incomplete and truncated streams are recorded as failures, while client cancellation is recorded as `abandoned`.
 

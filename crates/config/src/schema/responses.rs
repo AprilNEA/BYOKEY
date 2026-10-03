@@ -60,6 +60,12 @@ pub struct ResponseModel {
 pub struct ResponsesUpstream {
     /// API root; `/responses` is appended. May include `/v1` or a gateway path.
     pub base_url: String,
+    /// OpenAI-compatible model list URL. When set, discover models with matching Codex metadata.
+    #[serde(default)]
+    pub models_url: Option<String>,
+    /// Provider label in discovered model names; defaults to the upstream name.
+    #[serde(default)]
+    pub display_name: Option<String>,
     /// Bearer token, either literal or read from an environment variable.
     #[serde(default)]
     pub api_key: Option<ConfigValue>,

@@ -38,6 +38,8 @@ pub struct ApiError {
     pub wire: Wire,
     /// Whether the failure was logged where it happened.
     logged: bool,
+    /// Preserve upstream HTTP-date values that `ByokError` cannot represent as a duration.
+    upstream_retry_after: Option<HeaderValue>,
 }
 
 impl ApiError {
@@ -48,6 +50,16 @@ impl ApiError {
             error,
             wire: Wire::OpenAi,
             logged: false,
+            upstream_retry_after: None,
+        }
+    }
+
+    /// Keep the upstream retry header in its original HTTP format.
+    pub(crate) async fn from_response(response: reqwest::Response) -> Self {
+        let upstream_retry_after = response.headers().get(RETRY_AFTER).cloned();
+        Self {
+            upstream_retry_after,
+            ..Self::new(ByokError::from_response(response).await)
         }
     }
 
@@ -236,7 +248,9 @@ impl IntoResponse for ApiError {
                 }
             };
             let mut response = (status, Json(payload)).into_response();
-            if let Some(delay) = retry_after
+            if let Some(value) = self.upstream_retry_after {
+                response.headers_mut().insert(RETRY_AFTER, value);
+            } else if let Some(delay) = retry_after
                 && let Ok(value) = HeaderValue::from_str(&delay.as_secs().to_string())
             {
                 response.headers_mut().insert(RETRY_AFTER, value);

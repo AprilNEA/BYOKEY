@@ -15,6 +15,8 @@ use serde_json::json;
 use tokio::sync::mpsc;
 use tower::ServiceExt as _;
 
+mod catalog;
+
 struct Server {
     url: String,
     task: tokio::task::JoinHandle<()>,
@@ -208,6 +210,8 @@ async fn custom_upstreams_replace_credentials_and_resolve_environment_headers() 
         "company".into(),
         ResponsesUpstream {
             base_url: format!("{}/team/v1", upstream.url),
+            models_url: None,
+            display_name: None,
             api_key: Some(ConfigValue::Literal("company-key".into())),
             service_tier: None,
             headers: [

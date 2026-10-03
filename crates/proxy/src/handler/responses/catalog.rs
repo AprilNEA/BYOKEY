@@ -5,11 +5,13 @@ use axum::{
     extract::{OriginalUri, State},
     http::HeaderMap,
 };
+use byokey_config::schema::responses::ResponsesConfig;
 use byokey_types::{ByokError, ProviderId};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::Arc};
 
-use super::{chatgpt_headers, copilot_upstream, endpoint, require_chatgpt_auth};
+use super::{chatgpt_headers, copilot_upstream, custom_headers, endpoint, require_chatgpt_auth};
 use crate::{ApiError, AppState};
 
 pub(crate) async fn models(
@@ -23,7 +25,8 @@ pub(crate) async fn models(
         || settings
             .models
             .values()
-            .any(|model| model.catalog.is_none());
+            .any(|model| model.catalog.is_none())
+        || settings.upstreams.values().any(|u| u.models_url.is_some());
     let originals = if needs_catalog {
         fetch_catalog(
             &state.http,
@@ -74,6 +77,7 @@ pub(crate) async fn models(
             output.insert(alias, metadata);
         }
     }
+    add_custom_models(&state.http, settings, &originals, &mut output).await?;
     for (alias, route) in &settings.models {
         let source = route.catalog_model.as_deref().unwrap_or(&route.model);
         let mut metadata = route
@@ -102,7 +106,7 @@ pub(crate) async fn models(
         }
         output.insert(alias.clone(), metadata);
     }
-    // Codex limits custom catalogs to 1 MiB and ignores legacy instructions when a template exists.
+    // Codex ignores legacy instructions when a template exists; omit that duplicate to limit catalog size.
     for metadata in output.values_mut().filter_map(Value::as_object_mut) {
         if metadata
             .get("model_messages")
@@ -115,6 +119,56 @@ pub(crate) async fn models(
     Ok(Json(
         json!({"models": output.into_values().collect::<Vec<_>>()}),
     ))
+}
+
+async fn add_custom_models(
+    http: &reqwest::Client,
+    settings: &ResponsesConfig,
+    originals: &BTreeMap<String, Value>,
+    output: &mut BTreeMap<String, Value>,
+) -> Result<(), ApiError> {
+    #[derive(Deserialize)]
+    struct Model {
+        id: String,
+    }
+    #[derive(Deserialize)]
+    struct ModelList {
+        data: Vec<Model>,
+    }
+
+    for (name, upstream) in &settings.upstreams {
+        let Some(url) = &upstream.models_url else {
+            continue;
+        };
+        let response = http
+            .get(url)
+            .headers(custom_headers(upstream, &HeaderMap::new())?)
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .await
+            .map_err(|e| ByokError::Http(e.without_url().to_string()))?;
+        if !response.status().is_success() {
+            return Err(ApiError::from_response(response).await);
+        }
+        let models: ModelList = response.json().await.map_err(ByokError::from)?;
+        let label = upstream.display_name.as_deref().unwrap_or(name);
+        for model in models.data {
+            let Some(metadata) = originals.get(&model.id) else {
+                continue;
+            };
+            let mut metadata = metadata.clone();
+            metadata["upgrade"] = Value::Null;
+            if settings.default == *name {
+                output.insert(model.id.clone(), metadata.clone());
+            }
+            let alias = format!("{name}/{}", model.id);
+            let display_name = metadata["display_name"].as_str().unwrap_or(&model.id);
+            metadata["display_name"] = json!(format!("{display_name} ({label})"));
+            metadata["slug"] = json!(alias);
+            output.insert(alias, metadata);
+        }
+    }
+    Ok(())
 }
 
 fn cap_context(metadata: &mut Value, limit: Option<u64>) {
