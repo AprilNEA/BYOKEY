@@ -326,6 +326,62 @@ async fn copilot_uses_its_own_credential_and_marks_tool_results_as_agent_request
 }
 
 #[tokio::test]
+async fn copilot_streaming_and_completed_messages_have_the_same_identity() {
+    const BODY: &str = concat!(
+        "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"message-added\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n\n",
+        "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"message-delta\",\"delta\":\"One reply.\"}\n\n",
+        "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"message-done\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"One reply.\"}]}}\n\n",
+        "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"response-completed\",\"status\":\"completed\",\"output\":[{\"id\":\"message-completed\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"One reply.\"}]}]}}\n\n",
+    );
+    let (router, _received) = capture(StatusCode::OK, BODY);
+    let upstream = serve(router.route(
+        "/models",
+        get(|| async {
+            Json(json!({"data": [{"id": "gpt-example", "model_picker_enabled": true, "supported_endpoints": ["/responses"]}]}))
+        }),
+    ))
+    .await;
+    let mut config = Config::default();
+    config.providers.insert(
+        ProviderId::Copilot,
+        ProviderConfig {
+            api_key: Some(uuid::Uuid::new_v4().to_string()),
+            base_url: Some(upstream.url.clone()),
+            ..Default::default()
+        },
+    );
+
+    let response = crate::make_router(state(config))
+        .oneshot(request(
+            &json!({"model": "copilot/gpt-example", "stream": true, "input": "reply once"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = std::str::from_utf8(&bytes).unwrap();
+    let events: Vec<Value> = body
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .map(|data| serde_json::from_str(data).unwrap())
+        .collect();
+    assert_eq!(events.len(), 4);
+    assert_eq!(
+        [
+            &events[0]["item"]["id"],
+            &events[1]["item_id"],
+            &events[2]["item"]["id"],
+            &events[3]["response"]["output"][0]["id"],
+        ],
+        [&json!("message-added"); 4]
+    );
+    assert_eq!(events[1]["delta"], "One reply.");
+    assert_eq!(events[2]["item"]["content"][0]["text"], "One reply.");
+    assert_eq!(events[3]["response"]["id"], "response-completed");
+}
+
+#[tokio::test]
 async fn aliases_keep_catalog_capabilities_but_disable_upstream_migrations() {
     let (router, mut received) = capture(
         StatusCode::OK,

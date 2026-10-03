@@ -2,6 +2,7 @@
 
 mod catalog;
 mod forward;
+mod item_ids;
 #[cfg(test)]
 mod tests;
 
@@ -64,7 +65,7 @@ pub(crate) async fn responses(
                 Err(error) => return Err(end_with(exchange, error)),
             };
             // Authentication failures return to the client so its own refresh flow runs.
-            forward::response(response, exchange, stream).await
+            forward::response(response, exchange, stream, forward::StreamMode::Passthrough).await
         }
         "copilot" => {
             if config
@@ -84,7 +85,7 @@ pub(crate) async fn responses(
                 Ok(response) => response,
                 Err(error) => return Err(end_with(exchange, error)),
             };
-            forward::response(response, exchange, stream).await
+            forward::response(response, exchange, stream, forward::StreamMode::Passthrough).await
         }
     }
 }
@@ -138,7 +139,7 @@ async fn copilot_responses(
             exchange.fail(&ByokError::from_response(response).await);
             continue;
         }
-        return forward::response(response, exchange, stream).await;
+        return forward::response(response, exchange, stream, forward::StreamMode::Copilot).await;
     }
 }
 
