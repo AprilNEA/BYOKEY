@@ -79,6 +79,9 @@ pub(crate) async fn responses(
         }
         name => {
             let upstream = &config.responses.upstreams[name];
+            if let Some(tier) = &upstream.service_tier {
+                body["service_tier"] = Value::String(tier.clone());
+            }
             let request = custom_request(&state.http, upstream, &headers)?.json(&body);
             let exchange = Exchange::start(&state.usage, name, model, "configured");
             let response = match send(request, &exchange).await {

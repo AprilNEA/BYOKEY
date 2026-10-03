@@ -209,6 +209,7 @@ async fn custom_upstreams_replace_credentials_and_resolve_environment_headers() 
         ResponsesUpstream {
             base_url: format!("{}/team/v1", upstream.url),
             api_key: Some(ConfigValue::Literal("company-key".into())),
+            service_tier: None,
             headers: [
                 (
                     "X-Special".into(),
@@ -233,7 +234,7 @@ async fn custom_upstreams_replace_credentials_and_resolve_environment_headers() 
     );
     let response = crate::make_router(state(config))
         .oneshot(request(
-            &json!({"model":"fast-alias","input":"hi","stream":true}),
+            &json!({"model":"fast-alias","input":"hi","stream":true,"service_tier":"flex"}),
         ))
         .await
         .unwrap();
@@ -244,6 +245,7 @@ async fn custom_upstreams_replace_credentials_and_resolve_environment_headers() 
     let (path, headers, payload) = received.recv().await.unwrap();
     assert_eq!(path, "/team/v1/responses");
     assert_eq!(payload["model"], "vendor/gpt-fast");
+    assert_eq!(payload["service_tier"], "flex");
     assert_eq!(headers["authorization"], "Bearer company-key");
     assert_eq!(headers["x-special"], "special-value");
     assert_eq!(headers["x-codex-turn-state"], "previous-turn-state");
@@ -254,6 +256,76 @@ async fn custom_upstreams_replace_credentials_and_resolve_environment_headers() 
     assert!(!headers.contains_key("chatgpt-account-id"));
     assert!(!headers.contains_key("cookie"));
     assert!(!headers.contains_key("x-oai-attestation"));
+}
+
+#[tokio::test]
+async fn custom_upstreams_apply_the_service_tier_and_generate_fresh_request_headers() {
+    let (router, mut received) = capture(StatusCode::OK, COMPLETED);
+    let upstream = serve(router).await;
+    let config: Config = serde_json::from_value(json!({"responses": {
+        "models": {"LLM Router": {"upstream": "company", "model": "gpt-example"}},
+        "upstreams": {"company": {
+            "base_url": format!("{}/openai/v1", upstream.url),
+            "service_tier": "fast",
+            "headers": {
+                "x-request-resource-group": "5",
+                "x-request-options": "{\"account_details\":\"1\"}",
+                "x-request-task-uid": {"uuid_prefix": "task-fast-"},
+            },
+        }},
+    }}))
+    .unwrap();
+    let router = crate::make_router(state(config));
+
+    let first = router
+        .clone()
+        .oneshot(request(&json!({
+            "model": "LLM Router", "stream": true, "service_tier": "default",
+            "input": [{"type": "function_call_output", "call_id": "opaque-call", "output": "42"}],
+            "future_field": {"preserved": true},
+        })))
+        .await
+        .unwrap();
+    let second = router
+        .oneshot(request(&json!({
+            "model": "LLM Router", "stream": true, "input": "another request",
+        })))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        to_bytes(first.into_body(), usize::MAX).await.unwrap(),
+        COMPLETED
+    );
+    assert_eq!(
+        to_bytes(second.into_body(), usize::MAX).await.unwrap(),
+        COMPLETED
+    );
+    let (path, first_headers, first_body) = received.recv().await.unwrap();
+    let (_, second_headers, second_body) = received.recv().await.unwrap();
+    assert_eq!(path, "/openai/v1/responses");
+    assert_eq!(
+        first_body,
+        json!({
+            "model": "gpt-example", "stream": true, "service_tier": "fast",
+            "input": [{"type": "function_call_output", "call_id": "opaque-call", "output": "42"}],
+            "future_field": {"preserved": true},
+        })
+    );
+    assert_eq!(second_body["service_tier"], "fast");
+    assert_eq!(first_headers["x-request-resource-group"], "5");
+    assert_eq!(
+        first_headers["x-request-options"],
+        "{\"account_details\":\"1\"}"
+    );
+    let first_id = first_headers["x-request-task-uid"].to_str().unwrap();
+    let second_id = second_headers["x-request-task-uid"].to_str().unwrap();
+    assert_ne!(first_id, second_id);
+    let uuid = uuid::Uuid::parse_str(first_id.strip_prefix("task-fast-").unwrap()).unwrap();
+    assert_eq!(first_id, format!("task-fast-{uuid}"));
+    assert!(second_id.starts_with("task-fast-"));
+    assert!(!first_headers.contains_key("authorization"));
+    assert!(!first_headers.contains_key("chatgpt-account-id"));
 }
 
 #[tokio::test]

@@ -66,9 +66,12 @@ pub struct ResponsesUpstream {
     /// Additional headers; a configured Authorization header overrides `api_key`.
     #[serde(default)]
     pub headers: BTreeMap<String, ConfigValue>,
+    /// Override the client's service tier for this upstream; absent preserves the request.
+    #[serde(default)]
+    pub service_tier: Option<String>,
 }
 
-/// A literal configuration value or an explicit environment-variable reference.
+/// A literal, an environment-variable reference, or a per-request generated value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ConfigValue {
@@ -78,6 +81,11 @@ pub enum ConfigValue {
     Environment {
         /// Name of the environment variable.
         env: String,
+    },
+    /// Generate a new UUID v4 each time the value is resolved.
+    Uuid {
+        /// Prefix placed before the lowercase, hyphenated UUID.
+        uuid_prefix: String,
     },
 }
 
@@ -92,6 +100,7 @@ impl ConfigValue {
             Self::Environment { env } => std::env::var(env).map_err(|_| {
                 ByokError::Config(format!("environment variable {env} is unavailable"))
             }),
+            Self::Uuid { uuid_prefix } => Ok(format!("{uuid_prefix}{}", uuid::Uuid::new_v4())),
         }
     }
 }

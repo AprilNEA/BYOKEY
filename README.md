@@ -187,9 +187,12 @@ responses:
       headers:
         X-Tenant: engineering
         X-Special-Token: { env: COMPANY_GATEWAY_TOKEN }
+        X-Request-UID: { uuid_prefix: "byokey-" }
 ```
 
 `company-fast` assumes that `my-deployment` serves the same model as `catalog_model`; choose matching metadata for the actual deployment. Export the referenced variables in the **BYOKEY server process**, not just the client. Missing variables fail the request. A configured `Authorization` header overrides `api_key`. `/responses` is appended to each `base_url`; custom upstreams must implement the Responses API themselves.
+
+`uuid_prefix` generates a fresh lowercase UUID v4 for each upstream request, preceded by the configured prefix. Set an upstream's optional `service_tier` to override the client's top-level `service_tier`, for example `service_tier: fast` when that upstream supports it. Without an override, BYOKEY preserves the client's value. Do not wrap Responses parameters in `extra_body`; send them at the top level.
 
 Select `copilot-fast` or `company-fast` in the client. Exact aliases take priority, followed by `chatgpt/<model>`, `copilot/<model>` or `<upstream>/<model>`, followed by `responses.default` for unqualified names. Copilot models must advertise `/responses`; BYOKEY does not translate Chat Completions or Anthropic requests on this path. Copilot uses BYOKEY's stored accounts or `providers.copilot.api_key`, never the client's ChatGPT credential.
 
