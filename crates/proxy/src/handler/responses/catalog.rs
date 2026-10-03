@@ -102,6 +102,16 @@ pub(crate) async fn models(
         }
         output.insert(alias.clone(), metadata);
     }
+    // Codex limits custom catalogs to 1 MiB and ignores legacy instructions when a template exists.
+    for metadata in output.values_mut().filter_map(Value::as_object_mut) {
+        if metadata
+            .get("model_messages")
+            .and_then(|messages| messages.get("instructions_template"))
+            .is_some_and(Value::is_string)
+        {
+            metadata.remove("base_instructions");
+        }
+    }
     Ok(Json(
         json!({"models": output.into_values().collect::<Vec<_>>()}),
     ))

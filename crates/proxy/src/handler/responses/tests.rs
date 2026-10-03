@@ -142,6 +142,64 @@ async fn chatgpt_keeps_auth_and_unknown_request_fields_and_counts_responses_usag
 }
 
 #[tokio::test]
+async fn chatgpt_streams_without_content_type_still_forward_sse_and_record_usage() {
+    let upstream =
+        serve(Router::new().fallback(|| async { Response::new(Body::from(COMPLETED)) })).await;
+    let mut config = Config::default();
+    config.responses.chatgpt_base_url = upstream.url.clone();
+    let state = state(config);
+
+    let response = crate::make_router(state.clone())
+        .oneshot(request(
+            &json!({"model":"gpt-example", "stream":true, "input":"hi"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["content-type"], "text/event-stream");
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(bytes, COMPLETED);
+    let usage = state.usage.snapshot();
+    assert_eq!(
+        (
+            usage.success_requests,
+            usage.input_tokens,
+            usage.output_tokens
+        ),
+        (1, 13, 7)
+    );
+}
+
+#[tokio::test]
+async fn non_streaming_requests_without_content_type_still_forward_json() {
+    const BODY: &str = r#"{"status":"completed","usage":{"input_tokens":17,"output_tokens":3}}"#;
+    let upstream =
+        serve(Router::new().fallback(|| async { Response::new(Body::from(BODY)) })).await;
+    let mut config = Config::default();
+    config.responses.chatgpt_base_url = upstream.url.clone();
+    let state = state(config);
+
+    let response = crate::make_router(state.clone())
+        .oneshot(request(&json!({"model":"gpt-example", "input":"hi"})))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(bytes, BODY);
+    let usage = state.usage.snapshot();
+    assert_eq!(
+        (
+            usage.success_requests,
+            usage.input_tokens,
+            usage.output_tokens
+        ),
+        (1, 17, 3)
+    );
+}
+
+#[tokio::test]
 async fn custom_upstreams_replace_credentials_and_resolve_environment_headers() {
     let (router, mut received) = capture(StatusCode::OK, COMPLETED);
     let upstream = serve(router).await;
@@ -307,6 +365,75 @@ async fn aliases_keep_catalog_capabilities_but_disable_upstream_migrations() {
     assert_eq!(path, "/models?client_version=1.2.3");
     assert_eq!(headers["authorization"], "Bearer catalog-token");
     assert!(!headers.contains_key("if-none-match"));
+}
+
+#[tokio::test]
+async fn aliased_catalogs_fit_codex_limits_without_losing_canonical_or_legacy_instructions() {
+    let upstream = serve(Router::new().route(
+        "/models",
+        get(|| async {
+            Json(json!({"models": [
+                {
+                    "slug": "modern",
+                    "base_instructions": "obsolete".repeat(40_000),
+                    "model_messages": {"instructions_template": "canonical".repeat(32_000)},
+                    "future_field": 17
+                },
+                {
+                    "slug": "legacy",
+                    "base_instructions": "legacy instructions",
+                    "model_messages": {"instructions_template": null}
+                }
+            ]}))
+        }),
+    ))
+    .await;
+    let mut config = Config::default();
+    config.responses.chatgpt_base_url = upstream.url.clone();
+    config.responses.models.insert(
+        "alias".into(),
+        ResponseModel {
+            upstream: "chatgpt".into(),
+            model: "modern".into(),
+            catalog_model: None,
+            catalog: None,
+        },
+    );
+
+    let response = crate::make_router(state(config))
+        .oneshot(
+            Request::builder()
+                .uri("/codex/models")
+                .header("authorization", "Bearer catalog-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["models"].as_array().unwrap().len(), 3);
+    let alias = &body["models"][0];
+    let legacy = &body["models"][1];
+    let modern = &body["models"][2];
+    assert_eq!(alias["slug"], "alias");
+    assert_eq!(modern["slug"], "modern");
+    assert!(alias.get("base_instructions").is_none());
+    assert!(modern.get("base_instructions").is_none());
+    assert_eq!(
+        alias["model_messages"]["instructions_template"],
+        "canonical".repeat(32_000)
+    );
+    assert_eq!(
+        modern["model_messages"]["instructions_template"],
+        "canonical".repeat(32_000)
+    );
+    assert_eq!(alias["future_field"], 17);
+    assert_eq!(modern["future_field"], 17);
+    assert_eq!(legacy["slug"], "legacy");
+    assert_eq!(legacy["base_instructions"], "legacy instructions");
 }
 
 #[tokio::test]

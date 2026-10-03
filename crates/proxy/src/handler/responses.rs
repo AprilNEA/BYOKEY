@@ -36,10 +36,8 @@ pub(crate) async fn responses(
     }
     let Json(mut body) =
         body.map_err(|e| ApiError::from(ByokError::InvalidRequest(e.body_text())))?;
-    super::record_model(&body).record(
-        "stream",
-        body.get("stream").and_then(Value::as_bool).unwrap_or(false),
-    );
+    let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
+    super::record_model(&body).record("stream", stream);
     let requested = body
         .get("model")
         .and_then(Value::as_str)
@@ -66,7 +64,7 @@ pub(crate) async fn responses(
                 Err(error) => return Err(end_with(exchange, error)),
             };
             // Authentication failures return to the client so its own refresh flow runs.
-            forward::response(response, exchange).await
+            forward::response(response, exchange, stream).await
         }
         "copilot" => {
             if config
@@ -76,7 +74,7 @@ pub(crate) async fn responses(
             {
                 return Err(ByokError::UnsupportedProvider("copilot is disabled".into()).into());
             }
-            copilot_responses(&state, &headers, body).await
+            copilot_responses(&state, &headers, body, stream).await
         }
         name => {
             let upstream = &config.responses.upstreams[name];
@@ -86,7 +84,7 @@ pub(crate) async fn responses(
                 Ok(response) => response,
                 Err(error) => return Err(end_with(exchange, error)),
             };
-            forward::response(response, exchange).await
+            forward::response(response, exchange, stream).await
         }
     }
 }
@@ -95,6 +93,7 @@ async fn copilot_responses(
     state: &Arc<AppState>,
     headers: &HeaderMap,
     body: Value,
+    stream: bool,
 ) -> Result<Response, ApiError> {
     let upstream = copilot_upstream(state);
     let model = body["model"]
@@ -139,7 +138,7 @@ async fn copilot_responses(
             exchange.fail(&ByokError::from_response(response).await);
             continue;
         }
-        return forward::response(response, exchange).await;
+        return forward::response(response, exchange, stream).await;
     }
 }
 

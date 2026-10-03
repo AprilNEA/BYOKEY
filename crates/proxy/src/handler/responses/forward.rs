@@ -17,15 +17,20 @@ use crate::{
 pub(super) async fn response(
     upstream: reqwest::Response,
     exchange: Exchange,
+    stream_requested: bool,
 ) -> Result<Response, ApiError> {
     let status = upstream.status();
     let mut headers = upstream.headers().clone();
     strip_hop_headers(&mut headers);
+    // ChatGPT can omit Content-Type on successful SSE responses.
     let streaming = status.is_success()
-        && headers
-            .get("content-type")
-            .is_some_and(|v| v.as_bytes().starts_with(b"text/event-stream"));
+        && headers.get("content-type").map_or(stream_requested, |v| {
+            v.as_bytes().starts_with(b"text/event-stream")
+        });
     let body = if streaming {
+        headers
+            .entry("content-type")
+            .or_insert("text/event-stream".parse().unwrap());
         headers.insert("cache-control", "no-cache".parse().unwrap());
         headers.insert("x-accel-buffering", "no".parse().unwrap());
         Body::from_stream(deliver(
@@ -335,7 +340,9 @@ mod tests {
     async fn invalid_success_json_is_an_upstream_failure_not_a_cancellation() {
         let usage = Arc::new(UsageRecorder::new(None));
         let upstream = axum::http::Response::new("not JSON").into();
-        let error = response(upstream, exchange(&usage)).await.unwrap_err();
+        let error = response(upstream, exchange(&usage), false)
+            .await
+            .unwrap_err();
         assert!(matches!(error.error, ByokError::Http(_)));
         assert_eq!(usage.snapshot().failure_requests, 1);
     }
