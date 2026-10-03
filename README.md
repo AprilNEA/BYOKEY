@@ -23,9 +23,12 @@ Responses supports your ChatGPT subscription, GitHub Copilot and custom upstream
 </div>
 
 > [!IMPORTANT]
-> **The published Anthropic-only release was archived on 2026-09-28.** The Responses gateway described below is a source-build feature on this branch, not a published release.
+> **BYOKEY is no longer archived.** The Responses gateway and native Codex HTTP forwarding are available on `master`.
 >
-> GitHub Copilot's `/v1/messages` endpoint now accepts Claude Code's requests as they are, so Claude Code no longer needs a gateway to run on Copilot. The Cursor backend drives Cursor's private agent protocol, which Cursor does not allow outside its own clients, and it does not hold up in Claude Code's tool loops.
+> The latest published release, `v3.0.0`, does not include these features. [Build from source](#installation) to use the [ChatGPT.app / Codex quick start](#chatgptapp--codex).
+
+> [!NOTE]
+> **Direct Copilot access is an alternative for Claude clients that only need Copilot.** Its `/v1/messages` endpoint accepts Claude Code's requests without BYOKEY. The Cursor backend drives Cursor's private agent protocol, which Cursor does not allow outside its own clients, and it does not hold up in Claude Code's tool loops.
 >
 > To use Copilot directly (GitHub does not document this endpoint), sign in with the GitHub CLI and configure:
 >
@@ -53,6 +56,8 @@ Responses supports your ChatGPT subscription, GitHub Copilot and custom upstream
 > }
 > ```
 
+The Anthropic Messages path is shown below. Responses uses the same server with separate model routing.
+
 ```
 Subscriptions                                     Clients
 
@@ -63,6 +68,8 @@ Claude Pro/Max ─┘                            └──  any Anthropic Messag
 
 ## Features
 
+- **Responses API** — `/v1/responses` and `/codex/responses` for ChatGPT.app / Codex, with model aliases, custom upstreams, and Codex model discovery at `/codex/models`
+- **Native Codex HTTP forwarding** — unmatched `/codex/*` paths go to the configured ChatGPT backend, including image generation and editing endpoints; no WebSocket support
 - **Anthropic Messages API** — `/v1/messages`, `/v1/messages/count_tokens` and `/v1/models`, as Claude Code and Claude Desktop expect them; `[1m]` long-context ids included
 - **Copilot as a Claude backend** — Copilot's Anthropic-format endpoint, with quota-aware rotation across accounts, a cheaper model for Claude Code's incidental calls, and the request fields Copilot rejects stripped
 - **Cursor as a Claude backend** — every model on your Cursor plan, driven through Cursor's agent protocol
@@ -71,6 +78,8 @@ Claude Pro/Max ─┘                            └──  any Anthropic Messag
 - **Runs as a service** — launchd / systemd / Windows SCM registration, hot-reloaded config
 
 ## Supported Providers
+
+Responses supports ChatGPT with client-owned credentials, Copilot with stored accounts or a configured API key, and custom Responses-compatible upstreams. The providers below serve the Anthropic Messages API.
 
 <table>
   <tr>
@@ -102,6 +111,8 @@ Claude Pro/Max ─┘                            └──  any Anthropic Messag
 </table>
 
 ## Installation
+
+For Responses and native Codex HTTP forwarding, build from `master` using the source instructions below. These features are not yet in the published packages or release binaries.
 
 **Homebrew (macOS / Linux)**
 
@@ -139,7 +150,7 @@ cargo install --path .
 
 This connects the Codex functionality in the ChatGPT desktop app, not the legacy ChatGPT conversation API. Keep the client signed in to ChatGPT: the client supplies its access token and account header and remains responsible for token refresh. BYOKEY does not import or store that login.
 
-Build and start this checkout:
+After installing from source, run `byokey serve`. Alternatively, with Nix and devenv installed, build and start this checkout:
 
 ```sh
 devenv shell cargo run -- serve

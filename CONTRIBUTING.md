@@ -39,7 +39,7 @@ cargo run -- serve                        # Start proxy (default :8018)
 - edition 2024
 - All async traits use the `async-trait` macro
 - Error types: use `ByokError` (`thiserror`) across crate boundaries, `anyhow` within a crate
-- HTTP client is `reqwest` (rustls, platform root store), built once by `byokey_proxy::http::upstream_client` with TCP and HTTP/2 keepalives
+- HTTP clients use `reqwest` (rustls, platform root store), with shared proxy and keepalive settings in `crates/proxy/src/http.rs`. Protocol-aware requests share the upstream client; native Codex forwarding uses a separate client without automatic decompression or retries.
 - HTTP server is `axum 0.8`
 
 ## Architecture
@@ -75,7 +75,7 @@ Strict layered DAG — no reverse cross-layer dependencies:
 | `byokey-auth` | 2 | OAuth flows (does not depend on provider / proxy) |
 | `byokey-provider` | 3 | Copilot credentials and catalog, Cursor agent client, Anthropic headers and model registry |
 | `byokey-proto` | 3 | ConnectRPC management API schema and generated client/server protocol types |
-| `byokey-proxy` | 4 | axum HTTP server, Messages routing and passthrough, ConnectRPC management fallback |
+| `byokey-proxy` | 4 | axum HTTP server, Responses and Messages routing, native Codex HTTP forwarding, ConnectRPC management fallback |
 | `byokey-tui` | — | ratatui management client using the ConnectRPC API |
 | `byokey-daemon` | — | Process/service management, PID file, Unix control socket (separate from the layered DAG — used by the CLI binary only) |
 

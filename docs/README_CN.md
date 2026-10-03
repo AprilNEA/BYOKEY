@@ -23,9 +23,12 @@ Responses 支持 ChatGPT 订阅、GitHub Copilot 和自定义上游；Anthropic 
 </div>
 
 > [!IMPORTANT]
-> **已发布的 Anthropic 专用版本于 2026-09-28 归档。** 当前分支新增的 Responses 网关需从源码构建，尚未发布。ChatGPT.app 配置、模型别名和自定义 Header 用法见 [英文版快速开始](../README.md#chatgptapp--codex)。
+> **BYOKEY 已解除归档。** Responses 网关和原生 Codex HTTP 转发已合入 `master`。
 >
-> GitHub Copilot 的 `/v1/messages` 现在原样接受 Claude Code 的请求，Claude Code 跑在 Copilot 上已不再需要网关。Cursor 后端依赖 Cursor 的私有 agent 协议，Cursor 不允许在其官方客户端之外使用，而且在 Claude Code 的工具调用循环中也不可靠。
+> 最新发布版本 `v3.0.0` 尚不包含这些功能。请[从源码构建](#安装)，再按 [ChatGPT.app / Codex 快速开始](#chatgptapp--codex)配置。
+
+> [!NOTE]
+> **仅需 Copilot 的 Claude 客户端也可以选择直连。** Copilot 的 `/v1/messages` 端点无需 BYOKEY 即可接受 Claude Code 的请求。Cursor 后端依赖 Cursor 的私有 agent 协议，Cursor 不允许在其官方客户端之外使用，而且在 Claude Code 的工具调用循环中也不可靠。
 >
 > 直连 Copilot（GitHub 未公开文档化这个接口）：先用 GitHub CLI 登录，再按下面配置。
 >
@@ -53,6 +56,8 @@ Responses 支持 ChatGPT 订阅、GitHub Copilot 和自定义上游；Anthropic 
 > }
 > ```
 
+下图展示 Anthropic Messages 路径。Responses 使用同一服务，但采用独立的模型路由。
+
 ```
 订阅                                              客户端
 
@@ -63,6 +68,8 @@ Claude Pro/Max ─┘                            └──  任意 Anthropic Mes
 
 ## 功能特性
 
+- **Responses API** — 通过 `/v1/responses` 和 `/codex/responses` 接入 ChatGPT.app / Codex，支持模型别名、自定义上游及 `/codex/models` 模型发现
+- **原生 Codex HTTP 转发** — 未匹配已有路由的 `/codex/*` 请求直接转发到配置的 ChatGPT 后端，包括图片生成和编辑端点；不支持 WebSocket
 - **Anthropic Messages API** — `/v1/messages`、`/v1/messages/count_tokens` 和 `/v1/models`，与 Claude Code、Claude Desktop 的预期一致，包括 `[1m]` 长上下文模型
 - **用 Copilot 跑 Claude** — 走 Copilot 的 Anthropic 格式端点，多账号按剩余配额轮换，Claude Code 的附带请求可改走便宜模型，Copilot 不接受的字段自动剔除
 - **用 Cursor 跑 Claude** — 通过 Cursor 的 agent 协议使用套餐内的全部模型
@@ -71,6 +78,8 @@ Claude Pro/Max ─┘                            └──  任意 Anthropic Mes
 - **作为系统服务运行** — 注册到 launchd / systemd / Windows SCM，配置热重载
 
 ## 支持的 Provider
+
+Responses 支持使用客户端登录凭据的 ChatGPT、使用已存储账户或配置的 API Key 的 Copilot，以及兼容 Responses 的自定义上游。下表列出 Anthropic Messages API 的 Provider。
 
 <table>
   <tr>
@@ -103,6 +112,8 @@ Claude Pro/Max ─┘                            └──  任意 Anthropic Mes
 
 ## 安装
 
+如需 Responses 或原生 Codex HTTP 转发，请按下方说明从 `master` 源码构建。已发布的软件包和二进制文件尚不包含这些功能。
+
 **Homebrew（macOS / Linux）**
 
 ```sh
@@ -126,6 +137,42 @@ cargo install --path .
 > **环境要求：** Rust 1.91+（edition 2024）、用于 SQLite 的 C 编译器，以及用于 ConnectRPC 代码生成的 `protoc`（`brew install protobuf` / `apt-get install protobuf-compiler` / `choco install protoc`）。
 
 ## 快速开始
+
+### ChatGPT.app / Codex
+
+这里接入的是 ChatGPT 桌面应用中的 Codex 功能，不是传统的 ChatGPT 会话 API。保持客户端登录 ChatGPT：客户端提供访问令牌和账户标识，并负责刷新令牌。BYOKEY 不导入或保存这份登录凭据。
+
+从源码安装后运行 `byokey serve`，或在已安装 Nix 和 devenv 的源码目录中构建并启动：
+
+```sh
+devenv shell cargo run -- serve
+```
+
+将以下配置合入 `~/.codex/config.toml`，确保顶层键位于所有 TOML 表之前，然后重启客户端：
+
+```toml
+model = "gpt-6-sol"
+model_provider = "byokey"
+web_search = "disabled"
+
+[model_providers.byokey]
+name = "BYOKEY"
+base_url = "http://127.0.0.1:8018/codex"
+wire_api = "responses"
+requires_openai_auth = true
+supports_websockets = false
+
+[features]
+enable_request_compression = false
+```
+
+选择账户可用的模型。Codex 通过 `/codex/models` 发现模型，无需设置 `model_catalog_url`。此配置使用 HTTP SSE 和本地上下文压缩，不支持 WebSocket 或压缩的 Responses 请求体。
+
+未匹配已有路由的 `/codex/*` 请求使用客户端的 ChatGPT 凭据，转发到 `responses.chatgpt_base_url`，默认值为 `https://chatgpt.com/backend-api/codex`。图片生成和编辑等原生接口不受推理模型所选 Provider 影响。转发不会自动启用客户端功能，也不会改写原生接口的模型别名。完整的模型别名、自定义上游和能力限制说明见[英文版快速开始](../README.md#chatgptapp--codex)。
+
+保持监听地址为 `127.0.0.1`，且只配置可信的上游地址。BYOKEY 不为已存储的 Copilot 或自定义上游凭据提供入站鉴权，不要向不可信网络暴露端口。
+
+### Claude Code / Claude Desktop
 
 ```sh
 # 1. 登录（会打开浏览器或显示设备码）
