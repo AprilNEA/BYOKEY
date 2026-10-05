@@ -368,8 +368,8 @@ providers:
 每个模型的 effort 档位。
 
 **Copilot** 请求保留客户端选择的模型，包括普通无工具聊天和 compaction。
-`providers.copilot.small_model` 已移除；旧配置会在加载时被拒绝并显示迁移提示。
-删除该配置项，在 Claude Code 客户端选择后台模型：
+`providers.copilot.small_model` 已弃用；旧配置仍可加载，但该值会被忽略，并向 stderr
+输出弃用警告。删除该配置项，在 Claude Code 客户端选择后台模型：
 
 ```sh
 ANTHROPIC_DEFAULT_HAIKU_MODEL=copilot/claude-haiku-4-5 byokey claude start

@@ -213,10 +213,17 @@ async fn disabling_a_keyed_provider_on_reload_stops_upstream_requests() {
 }
 
 #[tokio::test]
-async fn copilot_preserves_the_model_for_ordinary_tool_less_chat() {
+async fn copilot_preserves_the_model_despite_a_legacy_small_model_setting() {
     let mut upstream =
         Upstream::start(StatusCode::OK, r#"{"content":[],"stop_reason":"end_turn"}"#).await;
-    let app = crate::make_router(state(upstream.config()));
+    let mut config = Config::from_yaml(
+        "routes:\n  default: copilot\nproviders:\n  copilot:\n    small_model: gpt-5-mini\n",
+    )
+    .unwrap();
+    let provider = config.providers.get_mut(&ProviderId::Copilot).unwrap();
+    provider.api_key = Some(uuid::Uuid::new_v4().to_string());
+    provider.base_url = Some(upstream.url.clone());
+    let app = crate::make_router(state(config));
     let body = json!({"model": "claude-opus-5-5", "max_tokens": 16, "tools": [],
         "messages": [{"role": "user", "content": "Explain ownership."}]});
 

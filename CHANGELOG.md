@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.0](https://github.com/AprilNEA/BYOKEY/compare/v4.0.0...v4.1.0) - 2026-10-05
+
+### Deprecated
+
+- `providers.copilot.small_model` is accepted for configuration-loading compatibility, but its value is ignored and a warning is printed to stderr. Remove the setting and use Claude Code's `ANTHROPIC_DEFAULT_HAIKU_MODEL` to select its background model. Automatic model replacement is not restored.
+
 ### Added
 
 - Configure Responses model picker names with `responses.catalog`: MiniJinja templates, built-in provider labels, model name overrides, and exact aliases to hide. Valid changes hot-reload; rejected configurations retain the last valid settings.
@@ -14,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve the client-selected model for ordinary Copilot chat without tools and for compaction requests.
+- Reject Messages and token-count requests routed to disabled providers, including explicit provider prefixes, without falling back to another provider.
+- Return Copilot server-tool policy errors without removing tools or retrying a modified request. Later generation and token-count requests retain their tools.
 - Use consistent provider-labelled names for native ChatGPT, Copilot, and custom upstream models. Show at most one visible entry per upstream and model while retaining hidden aliases for existing sessions and explicit routing.
 - Update test assertions for the Rust 1.99 Clippy rules used by CI without changing the asserted conditions.
 
