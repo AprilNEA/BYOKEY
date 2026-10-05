@@ -21,7 +21,23 @@ pub(crate) async fn models(
 ) -> Result<Json<Value>, ApiError> {
     let config = state.config.load_full();
     let settings = &config.responses;
-    let needs_catalog = matches!(settings.default.as_str(), "chatgpt" | "copilot")
+    let copilot_config = config.providers.get(&ProviderId::Copilot);
+    let requires_copilot =
+        settings.default == "copilot" || settings.models.values().any(|m| m.upstream == "copilot");
+    let copilot_enabled = copilot_config.is_none_or(|c| c.enabled);
+    if requires_copilot && !copilot_enabled {
+        return Err(ByokError::UnsupportedProvider("copilot is disabled".into()).into());
+    }
+    let uses_copilot = requires_copilot
+        || (copilot_enabled
+            && (copilot_config.is_some_and(|c| c.api_key.is_some())
+                || !state
+                    .auth
+                    .list_accounts(ProviderId::Copilot)
+                    .await?
+                    .is_empty()));
+    let needs_catalog = settings.default == "chatgpt"
+        || uses_copilot
         || settings
             .models
             .values()
@@ -39,16 +55,7 @@ pub(crate) async fn models(
         BTreeMap::new()
     };
 
-    let uses_copilot =
-        settings.default == "copilot" || settings.models.values().any(|m| m.upstream == "copilot");
     let copilot = if uses_copilot {
-        if config
-            .providers
-            .get(&ProviderId::Copilot)
-            .is_some_and(|c| !c.enabled)
-        {
-            return Err(ByokError::UnsupportedProvider("copilot is disabled".into()).into());
-        }
         copilot_upstream(&state)
             .models()
             .await?
@@ -73,7 +80,6 @@ pub(crate) async fn models(
             }
             let alias = format!("copilot/{slug}");
             metadata["slug"] = json!(alias);
-            metadata["display_name"] = json!(format!("{} (Copilot)", model.name));
             output.insert(alias, metadata);
         }
     }
@@ -101,13 +107,64 @@ pub(crate) async fn models(
         }
         metadata["slug"] = json!(alias);
         metadata["upgrade"] = Value::Null;
-        if route.catalog.is_none() {
-            metadata["display_name"] = json!(alias);
-        }
         output.insert(alias.clone(), metadata);
     }
+    present_models(settings, &mut output)?;
+    Ok(Json(
+        json!({"models": output.into_values().collect::<Vec<_>>()}),
+    ))
+}
+
+fn present_models(
+    settings: &ResponsesConfig,
+    models: &mut BTreeMap<String, Value>,
+) -> Result<(), ByokError> {
+    let mut preferred = BTreeMap::new();
+    for (slug, metadata) in models.iter() {
+        let (upstream, model) = settings.route(slug)?;
+        let rank = if slug == model {
+            0
+        } else if *slug == format!("{upstream}/{model}") {
+            1
+        } else {
+            2
+        };
+        let hidden = matches!(metadata["visibility"].as_str(), Some("hide" | "none"));
+        let candidate = (hidden, rank, slug.clone());
+        preferred
+            .entry((upstream.to_owned(), model.to_owned()))
+            .and_modify(|current| {
+                if candidate < *current {
+                    current.clone_from(&candidate);
+                }
+            })
+            .or_insert(candidate);
+    }
+    for (slug, metadata) in models.iter_mut() {
+        let (upstream, model) = settings.route(slug)?;
+        let label = match upstream {
+            "chatgpt" => "ChatGPT",
+            "copilot" => "Copilot",
+            name => settings.upstreams[name]
+                .display_name
+                .as_deref()
+                .unwrap_or(name),
+        };
+        let suffix = format!(" ({label})");
+        let name = metadata["display_name"].as_str().unwrap_or(model);
+        let name = name.strip_suffix(&suffix).unwrap_or(name);
+        let name = name.strip_prefix("GPT-").map_or_else(
+            || name.to_owned(),
+            |rest| format!("GPT-{}", rest.replace('-', " ")),
+        );
+        metadata["display_name"] = json!(format!("{name}{suffix}"));
+        if preferred[&(upstream.to_owned(), model.to_owned())].2 != *slug {
+            // Hidden aliases retain metadata for existing sessions and explicit selection.
+            metadata["visibility"] = json!("hide");
+        }
+    }
     // Codex ignores legacy instructions when a template exists; omit that duplicate to limit catalog size.
-    for metadata in output.values_mut().filter_map(Value::as_object_mut) {
+    for metadata in models.values_mut().filter_map(Value::as_object_mut) {
         if metadata
             .get("model_messages")
             .and_then(|messages| messages.get("instructions_template"))
@@ -116,9 +173,7 @@ pub(crate) async fn models(
             metadata.remove("base_instructions");
         }
     }
-    Ok(Json(
-        json!({"models": output.into_values().collect::<Vec<_>>()}),
-    ))
+    Ok(())
 }
 
 async fn add_custom_models(
@@ -151,7 +206,6 @@ async fn add_custom_models(
             return Err(ApiError::from_response(response).await);
         }
         let models: ModelList = response.json().await.map_err(ByokError::from)?;
-        let label = upstream.display_name.as_deref().unwrap_or(name);
         for model in models.data {
             let Some(metadata) = originals.get(&model.id) else {
                 continue;
@@ -162,8 +216,6 @@ async fn add_custom_models(
                 output.insert(model.id.clone(), metadata.clone());
             }
             let alias = format!("{name}/{}", model.id);
-            let display_name = metadata["display_name"].as_str().unwrap_or(&model.id);
-            metadata["display_name"] = json!(format!("{display_name} ({label})"));
             metadata["slug"] = json!(alias);
             output.insert(alias, metadata);
         }

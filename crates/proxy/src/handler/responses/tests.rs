@@ -490,7 +490,7 @@ async fn aliases_keep_catalog_capabilities_but_disable_upstream_migrations() {
     let result: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(
         result["models"][0],
-        json!({"slug":"fast","display_name":"fast","base_instructions":"original instructions","context_window":400_000,"upgrade":null,"future_field":17})
+        json!({"slug":"fast","display_name":"Original (ChatGPT)","visibility":"hide","base_instructions":"original instructions","context_window":400_000,"upgrade":null,"future_field":17})
     );
     let (path, headers, _) = received.recv().await.unwrap();
     assert_eq!(path, "/models?client_version=1.2.3");
@@ -650,7 +650,7 @@ responses:
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(
         body,
-        json!({"models":[{"slug":"custom","display_name":"Company model",
+        json!({"models":[{"slug":"custom","display_name":"Company model (company)",
         "base_instructions":"Deployment instructions","context_window":64000,"upgrade":null}]})
     );
 }

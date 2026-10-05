@@ -11,6 +11,228 @@ fn catalog_request() -> Request<Body> {
         .unwrap()
 }
 
+async fn copilot_catalog_server() -> Server {
+    serve(Router::new()
+        .route("/chatgpt/models", get(|| async { Json(json!({"models": [
+            {"slug": "gpt-6-astra", "display_name": "GPT-6-Astra", "visibility": "list", "context_window": 400_000},
+            {"slug": "gpt-6-sol", "display_name": "GPT-6-Sol", "visibility": "list", "context_window": 64_000}
+        ]})) }))
+        .route("/models", get(|| async { Json(json!({"data": [
+            {"id": "gpt-6-astra", "name": "Different provider spelling", "model_picker_enabled": true,
+             "supported_endpoints": ["/responses"], "capabilities": {"limits": {"max_context_window_tokens": 128_000}}},
+            {"id": "gpt-6-sol", "model_picker_enabled": true, "supported_endpoints": ["/messages"]}
+        ]})) })))
+        .await
+}
+
+#[tokio::test]
+async fn provider_names_are_consistent_and_legacy_aliases_remain_routable_but_hidden() {
+    let catalog = copilot_catalog_server().await;
+    let (router, mut received) = capture(StatusCode::OK, COMPLETED);
+    let upstream = serve(router).await;
+    let config: Config = serde_json::from_value(json!({
+        "providers": {"copilot": {"api_key": uuid::Uuid::new_v4().to_string(), "base_url": catalog.url}},
+        "responses": {
+            "chatgpt_base_url": format!("{}/chatgpt", catalog.url),
+            "upstreams": {"llm-router": {
+                "base_url": upstream.url, "models_url": format!("{}/models", catalog.url), "display_name": "LLM Router",
+            }},
+            "models": {
+                "copilot/gpt-6-astra": {"upstream": "copilot", "model": "gpt-6-astra"},
+                "LLM Router": {"upstream": "llm-router", "model": "gpt-6-astra"},
+                "deployment": {"upstream": "llm-router", "model": "private-deployment", "catalog": {
+                    "display_name": "Private deployment", "visibility": "list", "base_instructions": "deployment instructions",
+                }},
+            },
+        },
+    })).unwrap();
+    let app = crate::make_router(state(config));
+
+    let response = app.clone().oneshot(catalog_request()).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let models = body["models"].as_array().unwrap();
+    let visible: Vec<_> = models
+        .iter()
+        .filter(|m| m["visibility"] == "list")
+        .map(|m| {
+            (
+                m["slug"].as_str().unwrap(),
+                m["display_name"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        visible,
+        [
+            ("copilot/gpt-6-astra", "GPT-6 Astra (Copilot)"),
+            ("deployment", "Private deployment (LLM Router)"),
+            ("gpt-6-astra", "GPT-6 Astra (ChatGPT)"),
+            ("gpt-6-sol", "GPT-6 Sol (ChatGPT)"),
+            ("llm-router/gpt-6-astra", "GPT-6 Astra (LLM Router)"),
+            ("llm-router/gpt-6-sol", "GPT-6 Sol (LLM Router)"),
+        ]
+    );
+    assert_eq!(models[0]["slug"], "LLM Router");
+    assert_eq!(models[0]["visibility"], "hide");
+    assert_eq!(models[0]["display_name"], "GPT-6 Astra (LLM Router)");
+    assert_eq!(models[1]["context_window"], 128_000);
+    assert_eq!(models[3]["context_window"], 400_000);
+
+    let response = app
+        .oneshot(request(
+            &json!({"model": "LLM Router", "input": "legacy session", "stream": true}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+        COMPLETED
+    );
+    let (_, headers, payload) = received.recv().await.unwrap();
+    assert_eq!(payload["model"], "gpt-6-astra");
+    assert!(!headers.contains_key("authorization"));
+}
+
+#[tokio::test]
+async fn copilot_api_keys_enable_discovery_without_an_alias() {
+    let upstream = copilot_catalog_server().await;
+    let config: Config = serde_json::from_value(json!({
+        "providers": {"copilot": {"api_key": uuid::Uuid::new_v4().to_string(), "base_url": upstream.url}},
+        "responses": {"chatgpt_base_url": format!("{}/chatgpt", upstream.url)},
+    })).unwrap();
+
+    let response = crate::make_router(state(config))
+        .oneshot(catalog_request())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let slugs: Vec<_> = body["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["slug"].as_str().unwrap())
+        .collect();
+    assert_eq!(slugs, ["copilot/gpt-6-astra", "gpt-6-astra", "gpt-6-sol"]);
+}
+
+#[tokio::test]
+async fn stored_copilot_accounts_enable_discovery_without_an_alias() {
+    let upstream = copilot_catalog_server().await;
+    let config: Config = serde_json::from_value(json!({
+        "providers": {"copilot": {"base_url": upstream.url}},
+        "responses": {"chatgpt_base_url": format!("{}/chatgpt", upstream.url)},
+    }))
+    .unwrap();
+    let state = state(config);
+    state
+        .auth
+        .save_token(
+            ProviderId::Copilot,
+            byokey_types::OAuthToken::new(uuid::Uuid::new_v4().to_string()).with_client("opencode"),
+        )
+        .await
+        .unwrap();
+
+    let response = crate::make_router(state)
+        .oneshot(catalog_request())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let slugs: Vec<_> = body["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["slug"].as_str().unwrap())
+        .collect();
+    assert_eq!(slugs, ["copilot/gpt-6-astra", "gpt-6-astra", "gpt-6-sol"]);
+}
+
+#[tokio::test]
+async fn disabled_copilot_credentials_do_not_enable_discovery() {
+    let upstream = copilot_catalog_server().await;
+    let config: Config = serde_json::from_value(json!({
+        "providers": {"copilot": {"api_key": uuid::Uuid::new_v4().to_string(), "enabled": false, "base_url": upstream.url}},
+        "responses": {"chatgpt_base_url": format!("{}/chatgpt", upstream.url)},
+    })).unwrap();
+
+    let response = crate::make_router(state(config))
+        .oneshot(catalog_request())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let slugs: Vec<_> = body["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["slug"].as_str().unwrap())
+        .collect();
+    assert_eq!(slugs, ["gpt-6-astra", "gpt-6-sol"]);
+}
+
+#[tokio::test]
+async fn manual_aliases_prefer_visible_entries_without_exposing_hidden_models() {
+    let config: Config = serde_json::from_value(json!({"responses": {
+        "default": "company",
+        "upstreams": {"company": {"base_url": "http://127.0.0.1:1", "display_name": "Company"}},
+        "models": {
+            "alpha": {"upstream": "company", "model": "deployment", "catalog": {
+                "display_name": "GPT-5.5", "visibility": "hide", "base_instructions": "retained instructions",
+            }},
+            "beta": {"upstream": "company", "model": "deployment", "catalog": {
+                "display_name": "GPT-5.5 (Company)", "visibility": "list",
+            }},
+            "gamma": {"upstream": "company", "model": "deployment", "catalog": {
+                "display_name": "GPT-5.5", "visibility": "list",
+            }},
+            "unique": {"upstream": "company", "model": "hidden-deployment", "catalog": {
+                "display_name": "Hidden", "visibility": "hide",
+            }},
+        },
+    }})).unwrap();
+
+    let response = crate::make_router(state(config))
+        .oneshot(catalog_request())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let models = body["models"].as_array().unwrap();
+    let visibility: Vec<_> = models
+        .iter()
+        .map(|m| {
+            (
+                m["slug"].as_str().unwrap(),
+                m["visibility"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        visibility,
+        [
+            ("alpha", "hide"),
+            ("beta", "list"),
+            ("gamma", "hide"),
+            ("unique", "hide")
+        ]
+    );
+    assert_eq!(models[1]["display_name"], "GPT-5.5 (Company)");
+    assert_eq!(models[0]["base_instructions"], "retained instructions");
+}
+
 #[tokio::test]
 async fn custom_catalogs_list_and_route_each_matching_model() {
     let native = serve(Router::new().route(
@@ -76,6 +298,8 @@ async fn custom_catalogs_list_and_route_each_matching_model() {
     assert_eq!(models[1]["context_window"], 64_000);
     assert_eq!(models[1]["base_instructions"], "small instructions");
     assert_eq!(models[1]["upgrade"], Value::Null);
+    assert_eq!(models[2]["display_name"], "Large (ChatGPT)");
+    assert_eq!(models[3]["display_name"], "Small (ChatGPT)");
     assert_eq!(models[3]["upgrade"]["model"], "gpt-large");
     let (path, headers, _) = catalog_requests.recv().await.unwrap();
     assert_eq!(path, "/directory?tenant=5");
@@ -156,9 +380,12 @@ async fn custom_default_discovery_keeps_explicit_aliases_and_uses_the_upstream_n
         ]
     );
     assert_eq!(models[0]["display_name"], "Large (company)");
-    assert_eq!(models[1]["display_name"], "Pinned");
+    assert_eq!(models[0]["visibility"], "hide");
+    assert_eq!(models[1]["display_name"], "Pinned (company)");
+    assert_ne!(models[1]["visibility"], "hide");
     assert_eq!(models[1]["base_instructions"], "deployment instructions");
-    assert_eq!(models[2]["display_name"], "Large");
+    assert_eq!(models[2]["display_name"], "Large (company)");
+    assert_ne!(models[3]["visibility"], "hide");
     assert_eq!(models[3]["base_instructions"], "small instructions");
 }
 
