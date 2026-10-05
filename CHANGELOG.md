@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0](https://github.com/AprilNEA/BYOKEY/compare/v3.0.0...v4.0.0) - 2026-10-03
+
+### Added
+
+- *(proxy)* forward native Codex HTTP endpoints
+- *(proxy)* discover custom Responses models
+- *(proxy)* support upstream tiers and generated request IDs
+- *(proxy)* add a Responses gateway for Codex clients
+- *(cli)* accept `mythos` for Fable and warn about unusable routes
+- [**breaking**] route Claude models to providers with `byokey route`
+- *(cli,config)* apply log.level on reload and reject a filter that hides logs
+- *(auth,provider)* log how long each side lookup takes
+- *(proxy)* name the requested model on every line of a request
+- *(proxy)* correlate a request with Claude Code's ids
+- *(proxy)* log each upstream exchange once, when it ends
+- *(provider)* send the requested effort to Cursor
+- *(types)* name Claude models by family and version
+
+### Fixed
+
+- *(proxy)* stabilize Copilot Responses item IDs
+- *(proxy)* handle live Codex catalogs and untyped SSE responses
+- *(config,cli)* reload a config file that is created or renamed over
+- *(provider,proxy)* start serving before the Copilot client versions arrive
+- *(provider,proxy)* attribute Copilot usage to the account that served it
+- *(proxy)* log a failed request once, at a level that says who failed
+- *(provider)* retry a failed Copilot endpoint lookup within a minute
+- *(proxy)* list the last model catalog when a live one is slow
+
+### Other
+
+- refresh gateway status and Codex setup
+- *(dev)* initialize devenv environment
+- archive the project and point to direct Copilot use ([#120](https://github.com/AprilNEA/BYOKEY/pull/120))
+- *(proxy)* split the Messages handler by upstream
+
 ### Added
 
 - Each request BYOKEY sends upstream is logged once, when it ends, with its outcome (`completed`, `rejected`, `failed` or `abandoned`), the time to the upstream's first byte and in total, the input, output and cache token counts, the stop reason, the keepalives written while the upstream was silent, the upstream's request id and, on Copilot, whether the request was user- or agent-initiated. A stream the client abandons, such as Esc in Claude Code, is now visible; it left no trace before. See the new Logs section of the README.
