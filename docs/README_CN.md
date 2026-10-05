@@ -168,7 +168,25 @@ enable_request_compression = false
 
 选择账户可用的模型。Codex 通过 `/codex/models` 发现模型，无需设置 `model_catalog_url`。此配置使用 HTTP SSE 和本地上下文压缩，不支持 WebSocket 或压缩的 Responses 请求体。
 
-模型名称统一显示为「模型名 (来源)」，例如 `GPT-6 Astra (ChatGPT)`、`GPT-6 Astra (Copilot)` 和 `GPT-6 Astra (LLM Router)`。路由 ID 保持不变。同一上游、同一模型只显示一个可选条目；重复别名保留元数据并标记为隐藏，旧会话仍可继续使用。不同上游和不同部署不会合并。配置 Copilot API Key 或完成 Copilot 登录后即可自动发现模型，不再需要配置占位别名；`providers.copilot.enabled: false` 可禁用该来源。
+模型名称默认显示为「模型名 (来源)」。可通过配置修改展示，不改变路由 ID、指令和能力：
+
+```yaml
+responses:
+  catalog:
+    name_format: "{{ model }} ({{ provider }})"
+    provider_names:
+      chatgpt: ChatGPT
+      copilot: Copilot
+    model_names:
+      gpt-6-astra: GPT-6 Astra
+    hidden_aliases: ["LLM Router"]
+```
+
+`name_format` 使用 MiniJinja 模板，提供纯文本变量 `model` 和 `provider`，支持 `upper`、`replace` 等内置过滤器，不支持模板导入或文件访问。例如 `"{{ provider }} / {{ model }}"` 会将来源放在前面。`provider_names` 仅配置内置来源 `chatgpt` 和 `copilot`；自定义来源继续使用 `responses.upstreams.<name>.display_name`，缺省时使用上游名称。`model_names` 按实际上游模型 ID 覆盖所有来源的模型名，不按别名或 `catalog_model` 匹配。未覆盖的名称保留 ChatGPT 元数据或显式 `catalog.display_name` 的原始拼写，缺少名称时使用模型 ID，不再自动改写连字符或去掉来源后缀。
+
+同一上游、同一模型最多显示一个可选条目，优先选择未隐藏的无前缀 ID，再选择带来源前缀的 ID，最后选择配置别名。`hidden_aliases` 精确匹配列表中的 ID，隐藏一个别名不会隐藏同一模型的其他别名。重复别名和手动隐藏的条目都保留元数据，旧会话仍可继续使用；上游已隐藏的模型不会重新显示。不同上游和不同部署不会合并。配置 Copilot API Key 或完成 Copilot 登录后即可自动发现模型，无需占位别名；`providers.copilot.enabled: false` 可禁用该来源。
+
+配置支持热重载，下次模型目录请求即可使用新配置，但客户端可能需要刷新缓存。模板语法错误、未知变量或校验渲染失败会拒绝配置；热重载失败时保留上一份有效配置并记录错误。实际模型数据导致渲染错误或空名称时，目录请求会明确报错，不会静默回退。
 
 未匹配已有路由的 `/codex/*` 请求使用客户端的 ChatGPT 凭据，转发到 `responses.chatgpt_base_url`，默认值为 `https://chatgpt.com/backend-api/codex`。图片生成和编辑等原生接口不受推理模型所选 Provider 影响。转发不会自动启用客户端功能，也不会改写原生接口的模型别名。完整的模型别名、自定义上游和能力限制说明见[英文版快速开始](../README.md#chatgptapp--codex)。
 

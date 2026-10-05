@@ -164,6 +164,34 @@ mod tests {
         assert_eq!(watcher.load().port, 7777);
     }
 
+    #[test]
+    fn invalid_catalog_templates_leave_the_last_valid_configuration_active() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        write_config(
+            &path,
+            "responses:\n  catalog:\n    name_format: '{{ provider }} / {{ model }}'\n",
+        );
+        let watcher = ConfigWatcher::new(path.clone()).unwrap();
+        let reloads = watcher.subscribe();
+        write_config(
+            &path,
+            "responses:\n  catalog:\n    name_format: '{{ typo }}'\n",
+        );
+
+        let error = watcher.reload().unwrap_err();
+
+        assert!(
+            error.to_string().contains("responses.catalog.name_format"),
+            "{error}"
+        );
+        assert!(!reloads.has_changed().unwrap());
+        assert_eq!(
+            watcher.load().responses.catalog.name_formatter().unwrap()("Astra", "Native").unwrap(),
+            "Native / Astra"
+        );
+    }
+
     /// Wait until `watcher` holds `port`, or fail after a few seconds.
     fn reloaded_to(watcher: &ConfigWatcher, port: u16) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);

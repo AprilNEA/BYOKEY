@@ -206,9 +206,27 @@ responses:
 
 `company-fast` assumes that `my-deployment` serves the same model as `catalog_model`; choose matching metadata for the actual deployment. Export the referenced variables in the **BYOKEY server process**, not just the client. Missing variables fail the request. A configured `Authorization` header overrides `api_key`. `/responses` is appended to each `base_url`; custom upstreams must implement the Responses API themselves.
 
-Set `models_url` to an OpenAI-compatible `{"data":[{"id":"..."}]}` endpoint to discover multiple models without defining each alias. BYOKEY lists every ID that also has ChatGPT Codex metadata as `<upstream>/<model>`, displayed as `<model display name> (<display_name>)`. The provider label defaults to the upstream name. Models without matching metadata need an explicit alias with a complete `catalog`; BYOKEY does not fabricate their instructions or capabilities. A model list does not guarantee current account access or Responses support. The model list URL receives the same configured credentials and headers as the Responses URL, never the client's ChatGPT credentials. Configure only trusted URLs. Catalog errors are returned to the client. Explicit aliases override discovered entries with the same slug. Omit `models_url` to keep manual aliases only.
+Set `models_url` to an OpenAI-compatible `{"data":[{"id":"..."}]}` endpoint to discover multiple models without defining each alias. BYOKEY lists every ID that also has ChatGPT Codex metadata as `<upstream>/<model>`, displayed by default as `<model display name> (<display_name>)`. The provider label defaults to the upstream name. Models without matching metadata need an explicit alias with a complete `catalog`; BYOKEY does not fabricate their instructions or capabilities. A model list does not guarantee current account access or Responses support. The model list URL receives the same configured credentials and headers as the Responses URL, never the client's ChatGPT credentials. Configure only trusted URLs. Catalog errors are returned to the client. Explicit aliases override discovered entries with the same slug. Omit `models_url` to keep manual aliases only.
 
-All catalog entries use `<model name> (<provider>)`, including native models: `GPT-6 Astra (ChatGPT)`, `GPT-6 Astra (Copilot)`, and `GPT-6 Astra (Company)`. Model names come from the shared ChatGPT metadata or an explicit `catalog.display_name`; route IDs stay unchanged. Enabled Copilot credentials, from a stored login or `providers.copilot.api_key`, enable discovery without a model alias. The picker shows one entry per upstream and model, preferring the default provider's unqualified ID, then a provider-prefixed ID, then a configured alias. Duplicate aliases retain their metadata with `visibility: hide`, so existing sessions and explicit model IDs still work. Upstream-hidden models remain hidden.
+All catalog entries default to `<model name> (<provider>)`, including native models. Configure presentation separately from routing:
+
+```yaml
+responses:
+  catalog:
+    name_format: "{{ model }} ({{ provider }})"
+    provider_names:
+      chatgpt: ChatGPT
+      copilot: Copilot
+    model_names:
+      gpt-6-astra: GPT-6 Astra
+    hidden_aliases: ["LLM Router"]
+```
+
+`name_format` uses [MiniJinja](https://docs.rs/minijinja/2.24.0/minijinja/syntax/index.html) with two plain-text variables: `model` and `provider`. For example, `"{{ provider }} / {{ model }}"` puts the source first. Built-in filters such as `upper` and `replace` are available; template imports and filesystem access are not. `provider_names` accepts only `chatgpt` and `copilot`, defaulting to `ChatGPT` and `Copilot`; custom providers use `upstreams.<name>.display_name`, or their upstream name. `model_names` overrides the actual upstream model ID across providers, not an alias or `catalog_model`. Without an override, BYOKEY preserves the shared ChatGPT or explicit `catalog.display_name` verbatim, falling back to the model ID when metadata has no name. It does not rewrite hyphens or strip provider suffixes. Route IDs, instructions and capabilities are unaffected.
+
+Enabled Copilot credentials, from a stored login or `providers.copilot.api_key`, enable discovery without a model alias. The picker shows at most one visible entry per upstream and model, preferring the default provider's unqualified ID, then a provider-prefixed ID, then a configured alias. `hidden_aliases` hides exact catalog slugs before that selection; hiding one alias does not hide other aliases for the same model. Duplicate and explicitly hidden aliases retain their metadata with `visibility: hide`, so existing sessions and explicit model IDs still work. Upstream-hidden models remain hidden.
+
+These settings hot-reload. The next catalog request uses the new settings; the client may need to refresh its cached model list. Syntax errors, unknown variables and failed validation renders reject the configuration. Failed reloads retain the last valid configuration and log the error. Render errors with actual model data fail the catalog request rather than silently substituting a name; names must be nonempty.
 
 `uuid_prefix` generates a fresh lowercase UUID v4 for each upstream request, preceded by the configured prefix. Set an upstream's optional `service_tier` to override the client's top-level `service_tier`, for example `service_tier: fast` when that upstream supports it. Without an override, BYOKEY preserves the client's value. Do not wrap Responses parameters in `extra_body`; send them at the top level.
 

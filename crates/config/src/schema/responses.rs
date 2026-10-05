@@ -1,6 +1,9 @@
 //! Routing for the Responses API, independent of Anthropic model names.
 
+pub mod catalog;
+
 use byokey_types::{ByokError, Result};
+use catalog::ResponsesCatalog;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -25,6 +28,8 @@ pub struct ResponsesConfig {
     pub models: BTreeMap<String, ResponseModel>,
     /// Custom Responses-compatible upstreams. Built-in names are reserved.
     pub upstreams: BTreeMap<String, ResponsesUpstream>,
+    /// Model picker presentation, independent of routing and capabilities.
+    pub catalog: ResponsesCatalog,
 }
 
 impl Default for ResponsesConfig {
@@ -34,6 +39,7 @@ impl Default for ResponsesConfig {
             chatgpt_base_url: chatgpt_base_url(),
             models: BTreeMap::new(),
             upstreams: BTreeMap::new(),
+            catalog: ResponsesCatalog::default(),
         }
     }
 }
@@ -134,6 +140,7 @@ impl ResponsesConfig {
     }
 
     pub(super) fn validate(&self) -> Result<()> {
+        self.catalog.validate()?;
         for name in self.upstreams.keys() {
             if name.is_empty()
                 || name.contains('/')

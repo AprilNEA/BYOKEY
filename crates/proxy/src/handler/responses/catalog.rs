@@ -119,8 +119,12 @@ fn present_models(
     settings: &ResponsesConfig,
     models: &mut BTreeMap<String, Value>,
 ) -> Result<(), ByokError> {
+    let format_name = settings.catalog.name_formatter()?;
     let mut preferred = BTreeMap::new();
-    for (slug, metadata) in models.iter() {
+    for (slug, metadata) in models.iter_mut() {
+        if settings.catalog.hidden_aliases.contains(slug) {
+            metadata["visibility"] = json!("hide");
+        }
         let (upstream, model) = settings.route(slug)?;
         let rank = if slug == model {
             0
@@ -143,21 +147,21 @@ fn present_models(
     for (slug, metadata) in models.iter_mut() {
         let (upstream, model) = settings.route(slug)?;
         let label = match upstream {
-            "chatgpt" => "ChatGPT",
-            "copilot" => "Copilot",
+            "chatgpt" => &settings.catalog.provider_names.chatgpt,
+            "copilot" => &settings.catalog.provider_names.copilot,
             name => settings.upstreams[name]
                 .display_name
                 .as_deref()
                 .unwrap_or(name),
         };
-        let suffix = format!(" ({label})");
-        let name = metadata["display_name"].as_str().unwrap_or(model);
-        let name = name.strip_suffix(&suffix).unwrap_or(name);
-        let name = name.strip_prefix("GPT-").map_or_else(
-            || name.to_owned(),
-            |rest| format!("GPT-{}", rest.replace('-', " ")),
-        );
-        metadata["display_name"] = json!(format!("{name}{suffix}"));
+        let name = settings
+            .catalog
+            .model_names
+            .get(model)
+            .map(String::as_str)
+            .or_else(|| metadata["display_name"].as_str())
+            .unwrap_or(model);
+        metadata["display_name"] = json!(format_name(name, label)?);
         if preferred[&(upstream.to_owned(), model.to_owned())].2 != *slug {
             // Hidden aliases retain metadata for existing sessions and explicit selection.
             metadata["visibility"] = json!("hide");
