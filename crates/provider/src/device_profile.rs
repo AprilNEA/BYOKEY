@@ -134,7 +134,7 @@ mod tests {
         assert_eq!(p.user_agent, DEFAULT_USER_AGENT);
         assert_eq!(p.os, DEFAULT_OS);
         assert_eq!(p.arch, DEFAULT_ARCH);
-        assert!(!p.session_id.is_empty());
+        assert_ne!(p.session_id, "");
         assert_eq!(p.device_id.len(), 64);
     }
 

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Configure Responses model picker names with `responses.catalog`: MiniJinja templates, built-in provider labels, model name overrides, and exact aliases to hide. Valid changes hot-reload; rejected configurations retain the last valid settings.
+- Discover Copilot Responses models from enabled stored credentials or an API key without requiring a model alias.
+
+### Fixed
+
+- Use consistent provider-labelled names for native ChatGPT, Copilot, and custom upstream models. Show at most one visible entry per upstream and model while retaining hidden aliases for existing sessions and explicit routing.
+- Update test assertions for the Rust 1.99 Clippy rules used by CI without changing the asserted conditions.
+
 ## [4.0.0](https://github.com/AprilNEA/BYOKEY/compare/v3.0.0...v4.0.0) - 2026-10-03
 
 ### Added

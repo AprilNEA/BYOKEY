@@ -177,7 +177,7 @@ mod tests {
         assert_eq!(json["object"], "list");
         assert!(json["data"].is_array());
         // Nothing is signed in or keyed, so nothing is usable.
-        assert!(json["data"].as_array().unwrap().is_empty());
+        assert_eq!(json["data"], serde_json::json!([]));
     }
 
     #[tokio::test]
