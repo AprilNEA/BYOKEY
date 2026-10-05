@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.0](https://github.com/AprilNEA/BYOKEY/compare/v4.0.0...v4.1.0) - 2026-10-05
+
+### Added
+
+- *(config)* configure Responses catalog presentation with MiniJinja
+
+### Fixed
+
+- *(proxy)* unify Responses model picker names
+
+### Other
+
+- *(release)* prepare Responses catalog release
+
 ### Added
 
 - Configure Responses model picker names with `responses.catalog`: MiniJinja templates, built-in provider labels, model name overrides, and exact aliases to hide. Valid changes hot-reload; rejected configurations retain the last valid settings.
