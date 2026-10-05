@@ -108,7 +108,7 @@ impl Config {
     }
 }
 
-/// Extract a [`Config`], refusing settings that no longer exist.
+/// Extract a [`Config`] and report obsolete settings.
 #[allow(clippy::result_large_err)]
 fn extract(figment: &figment::Figment) -> Result<Config, figment::Error> {
     if let Ok(backend) = figment.find_value("providers.claude.backend") {
@@ -120,10 +120,10 @@ fn extract(figment: &figment::Figment) -> Result<Config, figment::Error> {
         .into());
     }
     if figment.find_value("providers.copilot.small_model").is_ok() {
-        return Err(
-            "`providers.copilot.small_model` was removed because requests without tools can be normal chat; \
-             remove this setting and set `ANTHROPIC_DEFAULT_HAIKU_MODEL` in Claude Code to select its background model"
-                .into(),
+        // Configuration loads before the server initializes tracing.
+        eprintln!(
+            "warning: `providers.copilot.small_model` is deprecated and ignored. \
+             Remove this setting. Use `ANTHROPIC_DEFAULT_HAIKU_MODEL` in Claude Code to select the background model."
         );
     }
     let config: Config = figment.extract()?;
@@ -188,17 +188,14 @@ providers:
     }
 
     #[test]
-    fn small_model_requires_explicit_client_model_selection() {
-        let err =
-            Config::from_yaml("providers:\n  copilot:\n    small_model: gpt-5-mini\n").unwrap_err();
-        assert!(
-            err.to_string().contains("providers.copilot.small_model"),
-            "{err}"
-        );
-        assert!(
-            err.to_string().contains("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
-            "{err}"
-        );
+    fn legacy_small_model_does_not_block_other_settings() {
+        let config = Config::from_yaml(
+            "port: 9123\nproviders:\n  copilot:\n    small_model: gpt-5-mini\n    enabled: false\n",
+        )
+        .unwrap();
+
+        assert_eq!(config.port, 9123);
+        assert!(!config.providers[&ProviderId::Copilot].enabled);
     }
 
     #[test]

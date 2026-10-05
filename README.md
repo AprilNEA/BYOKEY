@@ -429,9 +429,10 @@ Desktop only recognises those ids, and reads each model's effort levels from
 them.
 
 **Copilot** requests keep the client-selected model, including ordinary chat
-without tools and compaction. The removed `providers.copilot.small_model`
-setting rejects configuration loading with a migration message. Remove it
-and select Claude Code's background model in the client instead:
+without tools and compaction. The deprecated `providers.copilot.small_model`
+setting is still accepted so existing configurations load, but its value is
+ignored and a warning is printed to stderr. Remove the setting and select
+Claude Code's background model in the client instead:
 
 ```sh
 ANTHROPIC_DEFAULT_HAIKU_MODEL=copilot/claude-haiku-4-5 byokey claude start
