@@ -71,7 +71,7 @@ Claude Pro/Max ─┘                            └──  任意 Anthropic Mes
 - **Responses API** — 通过 `/v1/responses` 和 `/codex/responses` 接入 ChatGPT.app / Codex，支持模型别名、自定义上游及 `/codex/models` 模型发现
 - **原生 Codex HTTP 转发** — 未匹配已有路由的 `/codex/*` 请求直接转发到配置的 ChatGPT 后端，包括图片生成和编辑端点；不支持 WebSocket
 - **Anthropic Messages API** — `/v1/messages`、`/v1/messages/count_tokens` 和 `/v1/models`，与 Claude Code、Claude Desktop 的预期一致，包括 `[1m]` 长上下文模型
-- **用 Copilot 跑 Claude** — 走 Copilot 的 Anthropic 格式端点，多账号按剩余配额轮换，Claude Code 的附带请求可改走便宜模型，Copilot 不接受的字段自动剔除
+- **用 Copilot 跑 Claude** — 走 Copilot 的 Anthropic 格式端点，多账号按剩余配额选择，自动剔除不支持的请求字段；模型选择和服务端工具由客户端控制
 - **用 Cursor 跑 Claude** — 通过 Cursor 的 agent 协议使用套餐内的全部模型
 - **Claude Code / Claude Desktop 接入** — `byokey claude start`、`byokey claude inject`、`byokey claude desktop`，`byokey doctor` 一次检查全部
 - **OAuth 登录与 Token 持久化** — 设备码和 PKCE 流程；SQLite 存储于 `~/.byokey/tokens.db`，后台自动刷新
@@ -352,9 +352,6 @@ providers:
   # claude:
   #   api_key: "sk-ant-..."
 
-  copilot:
-    small_model: gpt-5-mini
-
   # cursor.com/dashboard 生成的 `crsr_…` Key，或运行 `byokey login cursor`
   cursor:
     api_key: "crsr_..."
@@ -362,19 +359,30 @@ providers:
 
 所有字段均可选；未指定的 Provider 默认启用，并使用数据库中存储的登录。
 `claude`、`copilot`、`cursor` 之外的 Provider 会被拒绝。
+设置 `providers.<name>.enabled: false` 会隐藏该 Provider 的模型，并以 HTTP 400
+拒绝路由到它的生成和 token 计数请求，包括带 `copilot/` 或 `cursor/` 显式前缀的请求，
+不会自动改走其他 Provider。
 
 `/v1/models` 以 Anthropic 的 id（`claude-opus-5-5`）列出每个 Claude 模型，且只在
 其路由指向的 Provider 提供该模型时列出。Claude Desktop 只认这些 id，并据此显示
 每个模型的 effort 档位。
 
-**Copilot** 按 premium request 计费的套餐每次调用计一次，而 Claude Code 每轮对话
-前后会发出多个不带工具的调用（标题、建议、摘要）。设置
-`providers.copilot.small_model: gpt-5-mini` 可以让这些调用改走便宜的模型；
-compaction 请求仍使用你选择的模型。
+**Copilot** 请求保留客户端选择的模型，包括普通无工具聊天和 compaction。
+`providers.copilot.small_model` 已移除；旧配置会在加载时被拒绝并显示迁移提示。
+删除该配置项，在 Claude Code 客户端选择后台模型：
+
+```sh
+ANTHROPIC_DEFAULT_HAIKU_MODEL=copilot/claude-haiku-4-5 byokey claude start
+```
+
+如需持久保存，将该变量写入 Claude Code 用户设置的 `env` 对象。该变量同时控制
+`haiku` 别名和后台功能，详见 [Claude Code 模型配置](https://code.claude.com/docs/en/model-config#environment-variables)。
+选择你的 Copilot 账号可通过 Messages 端点调用的模型。Claude Desktop 继续使用
+模型选择器中选定的模型。
+
 Copilot 组织可以通过策略关闭 Anthropic 的 `web_search`、`web_fetch` 服务端工具，
-此时 Copilot 会拒绝整个请求。BYOKEY 在第一次被拒时学到这一点，去掉该工具重试，
-之后该账号的请求都不再带它，因此 Claude Code 的 `WebSearch`、`WebFetch` 在这样的
-账号上只是静默无效，而不会让整轮对话失败。
+此时 BYOKEY 返回上游错误，不会删除工具或重试修改后的请求。后续生成和 token 计数
+请求也会保留工具。请在组织策略中启用工具，或在客户端明确禁用对应工具。
 
 Claude Code 或 Claude Desktop 选择的 effort（`output_config.effort`）会传到每个
 Provider。Cursor 把它作为模型的 `effort` 参数，模型不支持的档位会被拒绝，和 Anthropic、

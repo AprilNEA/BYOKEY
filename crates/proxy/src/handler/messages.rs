@@ -25,6 +25,9 @@ use super::normalize::{
 use crate::exchange::Exchange;
 use crate::{AppState, error::ApiError};
 
+#[cfg(test)]
+mod integration_tests;
+
 /// Handles `POST /v1/messages` — Anthropic native format passthrough.
 ///
 /// Authenticates with the Claude provider (API key or OAuth), then forwards
@@ -61,7 +64,7 @@ async fn serve_messages(
     let beta = build_beta_header(&mut body, &headers, long_context.then_some(CONTEXT_1M_BETA));
 
     let config = state.config.load();
-    match route(&config, &mut body) {
+    match route(&config, &mut body)? {
         ProviderId::Cursor => {
             return super::cursor_messages::cursor_messages(&state, body, stream).await;
         }
@@ -227,27 +230,36 @@ impl AnthropicUpstream {
 /// `routes` sends it; any other model goes to `routes.default` (see
 /// [`Routes::fallback`](byokey_config::Routes::fallback)). Cursor knows a
 /// routed Claude model only by Anthropic's undated id, so `body.model`
-/// becomes that id for Cursor.
-pub(super) fn route(config: &byokey_config::Config, body: &mut Value) -> ProviderId {
+/// becomes that id for Cursor. Disabled providers reject requests,
+/// including requests with an explicit provider prefix.
+pub(super) fn route(
+    config: &byokey_config::Config,
+    body: &mut Value,
+) -> Result<ProviderId, ByokError> {
     let model = body
         .get("model")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if let (Some(provider @ (ProviderId::Copilot | ProviderId::Cursor)), bare) =
+    let provider = if let (Some(provider @ (ProviderId::Copilot | ProviderId::Cursor)), bare) =
         byokey_provider::parse_qualified_model(model)
     {
         body["model"] = Value::String(bare.to_owned());
-        return provider;
-    }
-    let routes = &config.routes;
-    let Some(model) = ClaudeModel::from_id(model) else {
-        return routes.fallback().0;
+        provider
+    } else if let Some(model) = ClaudeModel::from_id(model) {
+        let provider = config.routes.provider(model);
+        if provider == ProviderId::Cursor {
+            body["model"] = Value::String(model.to_string());
+        }
+        provider
+    } else {
+        config.routes.fallback().0
     };
-    let provider = routes.provider(model);
-    if provider == ProviderId::Cursor {
-        body["model"] = Value::String(model.to_string());
+    if config.providers.get(&provider).is_some_and(|c| !c.enabled) {
+        return Err(ByokError::UnsupportedProvider(format!(
+            "{provider} is disabled"
+        )));
     }
-    provider
+    Ok(provider)
 }
 
 #[cfg(test)]
@@ -263,7 +275,7 @@ mod tests {
         .unwrap();
         let route = |model: &str| {
             let mut body = json!({"model": model});
-            let provider = route(&config, &mut body);
+            let provider = route(&config, &mut body).unwrap();
             (provider, body["model"].as_str().unwrap().to_owned())
         };
         assert_eq!(route("cursor/opus"), (ProviderId::Cursor, "opus".into()));
@@ -301,7 +313,7 @@ mod tests {
         );
         let unrouted = byokey_config::Config::default();
         assert_eq!(
-            super::route(&unrouted, &mut json!({"model": "claude-sonnet-5"})),
+            super::route(&unrouted, &mut json!({"model": "claude-sonnet-5"})).unwrap(),
             ProviderId::Claude
         );
     }
@@ -315,7 +327,7 @@ mod tests {
 
         let mut body = json!({"model": "copilot/claude-opus-5.5[1m]"});
         assert!(take_long_context_suffix(&mut body));
-        let provider = route(&byokey_config::Config::default(), &mut body);
+        let provider = route(&byokey_config::Config::default(), &mut body).unwrap();
         assert_eq!(provider, ProviderId::Copilot);
         assert_eq!(body["model"], "claude-opus-5.5");
     }

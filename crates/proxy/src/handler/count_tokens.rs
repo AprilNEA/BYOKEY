@@ -16,7 +16,7 @@ use byokey_types::{ByokError, ProviderId};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-use super::copilot::{copilot_request, copilot_upstream, strip_server_tools};
+use super::copilot::{copilot_request, copilot_upstream};
 use super::copilot_messages::strip_copilot_unsupported;
 use super::messages::{AnthropicUpstream, route};
 use super::normalize::{
@@ -45,7 +45,7 @@ async fn serve_count_tokens(
     sanitize_system(&mut body);
     let beta = build_beta_header(&mut body, headers, long_context.then_some(CONTEXT_1M_BETA));
     let config = state.config.load();
-    let resp = match route(&config, &mut body) {
+    let resp = match route(&config, &mut body)? {
         ProviderId::Cursor => {
             return Ok(Json(json!({"input_tokens": estimate(&body)})).into_response());
         }
@@ -53,9 +53,6 @@ async fn serve_count_tokens(
             strip_copilot_unsupported(&mut body);
             let copilot = copilot_upstream(state);
             let creds = copilot.credentials().await?;
-            // Counting is not worth a learning round trip: leave out what
-            // the account is already known to reject.
-            strip_server_tools(&mut body, &creds.rejected_tools());
             let conversation = Conversation::from_messages(&[]);
             copilot_request(
                 &state.http,

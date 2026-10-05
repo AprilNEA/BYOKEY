@@ -1,5 +1,5 @@
-//! GitHub Copilot accounts: credentials, quota-aware account selection, the
-//! model catalog, and what each account's organisation policy rejects.
+//! GitHub Copilot accounts: credentials, quota-aware account selection and
+//! the model catalog.
 //!
 //! Auth: device code flow → GitHub token. `OpenCode` tokens authenticate API
 //! requests directly; VS Code tokens are first exchanged for a short-lived
@@ -24,7 +24,7 @@ use byokey_types::{
 use serde_json::Value;
 use std::{
     cmp::Ordering as CmpOrdering,
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
 };
@@ -83,13 +83,6 @@ const ENDPOINT_RETRY: Duration = Duration::from_mins(1);
 static ENDPOINTS: LazyLock<Mutex<HashMap<String, (Instant, String)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Anthropic server tool types an account's organisation policy rejected,
-/// per credential, so later requests leave them out instead of failing.
-/// Learned from the 400 (see [`CopilotCredentials::reject_tool`]); Copilot
-/// exposes no flag for it up front.
-static REJECTED_TOOLS: LazyLock<Mutex<HashMap<String, HashSet<String>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
 /// Endpoint to exchange a VS Code GitHub token for a short-lived Copilot API token.
 const COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/token";
 
@@ -117,42 +110,6 @@ pub struct CopilotCredentials {
     /// The stored account the requests go out as, which usage is recorded
     /// against; [`DEFAULT_ACCOUNT`] for a configured key.
     pub account_id: String,
-    /// The credential the account was resolved from (a GitHub token or a
-    /// configured key), keying what BYOKEY remembers about the account.
-    credential: String,
-}
-
-impl CopilotCredentials {
-    /// Server tool types this account's policy rejected earlier, by
-    /// `type` prefix (`web_search`, `web_fetch`).
-    ///
-    /// # Panics
-    ///
-    /// Panics if the rejected-tools mutex is poisoned.
-    #[must_use]
-    pub fn rejected_tools(&self) -> HashSet<String> {
-        REJECTED_TOOLS
-            .lock()
-            .unwrap()
-            .get(&self.credential)
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    /// Remember that this account's policy rejects the server tool `kind`
-    /// (`web_search`, `web_fetch`). Returns whether it is news.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the rejected-tools mutex is poisoned.
-    pub fn reject_tool(&self, kind: &str) -> bool {
-        REJECTED_TOOLS
-            .lock()
-            .unwrap()
-            .entry(self.credential.clone())
-            .or_default()
-            .insert(kind.to_owned())
-    }
 }
 
 /// VS Code GitHub token → short-lived Copilot API token.
@@ -329,7 +286,6 @@ impl CopilotUpstream {
                 client: CopilotClient::OpenCode,
                 device: CopilotDevice::for_credential(&token.access_token),
                 account_id: account_id.to_owned(),
-                credential: token.access_token.clone(),
             }),
             CopilotClient::VsCode => {
                 self.exchange_and_cache(&token.access_token, account_id)
@@ -414,7 +370,6 @@ impl CopilotUpstream {
                     client: CopilotClient::VsCode,
                     device: CopilotDevice::for_credential(github_token),
                     account_id: account_id.to_owned(),
-                    credential: github_token.to_owned(),
                 });
             }
         }
@@ -490,7 +445,6 @@ impl CopilotUpstream {
             client: CopilotClient::VsCode,
             device: CopilotDevice::for_credential(github_token),
             account_id: account_id.to_owned(),
-            credential: github_token.to_owned(),
         })
     }
 
@@ -663,7 +617,6 @@ impl CopilotUpstream {
                 client: CopilotClient::default(),
                 device: CopilotDevice::for_credential(key),
                 account_id: DEFAULT_ACCOUNT.to_owned(),
-                credential: key.clone(),
             });
         }
 
@@ -813,7 +766,6 @@ mod tests {
             client: CopilotClient::VsCode,
             device: CopilotDevice::for_credential(github_token),
             account_id: DEFAULT_ACCOUNT.to_owned(),
-            credential: github_token.to_owned(),
         };
         assert!(CopilotUpstream::forget_token(&creds));
         assert!(!TOKEN_CACHE.lock().unwrap().contains_key(github_token));
@@ -932,29 +884,5 @@ mod tests {
             .build();
         let creds = upstream.credentials().await.expect("no network needed");
         assert_eq!(creds.account_id, "work");
-    }
-
-    #[test]
-    fn rejected_tools_are_remembered_per_credential() {
-        let a = CopilotCredentials {
-            token: "t".into(),
-            endpoint: DEFAULT_BASE_URL.into(),
-            client: CopilotClient::OpenCode,
-            device: CopilotDevice::for_credential("gho_a"),
-            account_id: DEFAULT_ACCOUNT.into(),
-            credential: "gho_rejected_tools_a".into(),
-        };
-        let b = CopilotCredentials {
-            credential: "gho_rejected_tools_b".into(),
-            ..a.clone()
-        };
-        assert!(a.rejected_tools().is_empty());
-        assert!(a.reject_tool("web_search"), "first time is news");
-        assert!(!a.reject_tool("web_search"), "second time is not");
-        assert_eq!(a.rejected_tools(), HashSet::from(["web_search".to_owned()]));
-        assert!(
-            b.rejected_tools().is_empty(),
-            "another account is unaffected"
-        );
     }
 }

@@ -1,11 +1,11 @@
 //! `POST /v1/messages` served by Copilot's own Anthropic-format Messages
-//! endpoint: the fields Copilot rejects dropped, incidental requests
-//! optionally on a small model, the rest done by [`send_to_copilot`].
+//! endpoint: unsupported fields are dropped before [`send_to_copilot`].
+//! The client selects the model; requests without tools are not necessarily
+//! background work.
 
 use axum::response::Response;
 use byokey_provider::Conversation;
 use byokey_provider::claude::ANTHROPIC_VERSION;
-use byokey_types::ProviderId;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -43,52 +43,6 @@ fn strip_cache_scope(value: &mut Value) {
     }
 }
 
-/// Claude Code's compaction requests: they carry no tools yet must run on
-/// the model the user chose, since their output replaces the conversation.
-const COMPACTION_PROMPTS: &[&str] = &[
-    "You are a helpful AI assistant tasked with summarizing conversations",
-    "Your task is to create a detailed summary of the conversation so far",
-];
-
-/// Whether a request is one of the incidental calls Claude Code makes
-/// around a turn (a title, a suggestion, a summary): no tools, and not a
-/// compaction. On a per-request Copilot plan each one costs as much as a
-/// real turn, so `providers.copilot.small_model` may serve them instead.
-pub(super) fn is_incidental(body: &Value) -> bool {
-    let has_tools = body
-        .get("tools")
-        .and_then(Value::as_array)
-        .is_some_and(|t| !t.is_empty());
-    if has_tools {
-        return false;
-    }
-    let mut texts = Vec::new();
-    match body.get("system") {
-        Some(Value::String(s)) => texts.push(s.as_str()),
-        Some(Value::Array(blocks)) => {
-            texts.extend(blocks.iter().filter_map(|b| b["text"].as_str()));
-        }
-        _ => {}
-    }
-    if let Some(last) = body
-        .get("messages")
-        .and_then(Value::as_array)
-        .and_then(|m| m.last())
-    {
-        match last.get("content") {
-            Some(Value::String(s)) => texts.push(s.as_str()),
-            Some(Value::Array(blocks)) => {
-                texts.extend(blocks.iter().filter_map(|b| b["text"].as_str()));
-            }
-            _ => {}
-        }
-    }
-    !texts.iter().any(|t| {
-        let t = t.trim_start();
-        COMPACTION_PROMPTS.iter().any(|p| t.starts_with(p))
-    })
-}
-
 /// Route Anthropic-format request to Copilot's native `/v1/messages` endpoint.
 ///
 /// Copilot provides a native Anthropic-compatible Messages API at
@@ -101,18 +55,6 @@ pub(super) async fn copilot_messages(
     beta: &str,
 ) -> Result<Response, ApiError> {
     strip_copilot_unsupported(&mut body);
-    let small_model = state
-        .config
-        .load()
-        .providers
-        .get(&ProviderId::Copilot)
-        .and_then(|c| c.small_model.clone());
-    if let Some(small) = small_model
-        && is_incidental(&body)
-    {
-        tracing::info!(small_model = %small, "serving a tool-less request with the small model");
-        body["model"] = Value::String(small);
-    }
     let messages = body
         .get("messages")
         .and_then(Value::as_array)
@@ -129,7 +71,6 @@ pub(super) async fn copilot_messages(
                 ("anthropic-version", ANTHROPIC_VERSION),
                 ("anthropic-beta", beta),
             ],
-            police_server_tools: true,
         },
     )
     .await
@@ -181,30 +122,5 @@ mod tests {
                 ]
             })
         );
-    }
-
-    #[test]
-    fn incidental_requests_have_no_tools_and_are_not_compactions() {
-        assert!(is_incidental(&json!({
-            "system": "Generate a short title.",
-            "messages": [{"role": "user", "content": "hi"}]
-        })));
-        assert!(is_incidental(&json!({
-            "tools": [],
-            "messages": [{"role": "user", "content": "hi"}]
-        })));
-        assert!(!is_incidental(&json!({
-            "tools": [{"name": "Bash"}],
-            "messages": [{"role": "user", "content": "hi"}]
-        })));
-        assert!(!is_incidental(&json!({
-            "system": [{"type": "text", "text": "You are a helpful AI assistant tasked with summarizing conversations."}],
-            "messages": [{"role": "user", "content": "go"}]
-        })));
-        assert!(!is_incidental(&json!({
-            "messages": [{"role": "user", "content": [
-                {"type": "text", "text": "Your task is to create a detailed summary of the conversation so far."}
-            ]}]
-        })));
     }
 }

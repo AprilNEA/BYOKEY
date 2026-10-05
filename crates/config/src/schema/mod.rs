@@ -119,6 +119,13 @@ fn extract(figment: &figment::Figment) -> Result<Config, figment::Error> {
         )
         .into());
     }
+    if figment.find_value("providers.copilot.small_model").is_ok() {
+        return Err(
+            "`providers.copilot.small_model` was removed because requests without tools can be normal chat; \
+             remove this setting and set `ANTHROPIC_DEFAULT_HAIKU_MODEL` in Claude Code to select its background model"
+                .into(),
+        );
+    }
     let config: Config = figment.extract()?;
     config
         .responses
@@ -176,6 +183,20 @@ providers:
         assert!(
             err.to_string()
                 .contains("byokey route set --default copilot"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn small_model_requires_explicit_client_model_selection() {
+        let err =
+            Config::from_yaml("providers:\n  copilot:\n    small_model: gpt-5-mini\n").unwrap_err();
+        assert!(
+            err.to_string().contains("providers.copilot.small_model"),
+            "{err}"
+        );
+        assert!(
+            err.to_string().contains("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
             "{err}"
         );
     }

@@ -71,7 +71,7 @@ Claude Pro/Max ─┘                            └──  any Anthropic Messag
 - **Responses API** — `/v1/responses` and `/codex/responses` for ChatGPT.app / Codex, with model aliases, custom upstreams, and Codex model discovery at `/codex/models`
 - **Native Codex HTTP forwarding** — unmatched `/codex/*` paths go to the configured ChatGPT backend, including image generation and editing endpoints; no WebSocket support
 - **Anthropic Messages API** — `/v1/messages`, `/v1/messages/count_tokens` and `/v1/models`, as Claude Code and Claude Desktop expect them; `[1m]` long-context ids included
-- **Copilot as a Claude backend** — Copilot's Anthropic-format endpoint, with quota-aware rotation across accounts, a cheaper model for Claude Code's incidental calls, and the request fields Copilot rejects stripped
+- **Copilot as a Claude backend** — Copilot's Anthropic-format endpoint, with quota-aware account selection and unsupported request fields stripped; model selection and server tools stay under client control
 - **Cursor as a Claude backend** — every model on your Cursor plan, driven through Cursor's agent protocol
 - **Claude Code and Claude Desktop wiring** — `byokey claude start`, `byokey claude inject`, `byokey claude desktop`; `byokey doctor` checks it all
 - **OAuth login and token persistence** — device-code and PKCE flows; SQLite at `~/.byokey/tokens.db`, tokens refreshed in the background
@@ -411,9 +411,6 @@ providers:
   # claude:
   #   api_key: "sk-ant-..."
 
-  copilot:
-    small_model: gpt-5-mini
-
   # A `crsr_…` key from cursor.com/dashboard, or `byokey login cursor`
   cursor:
     api_key: "crsr_..."
@@ -422,21 +419,35 @@ providers:
 All fields are optional; unspecified providers are enabled by default and use
 the login stored in the database. Providers other than `claude`, `copilot`
 and `cursor` are rejected in `providers`; Responses custom upstreams belong in `responses.upstreams`.
+Setting `providers.<name>.enabled: false` hides that provider's models and
+rejects Messages and token-count requests routed to it with HTTP 400, including
+explicit `copilot/` or `cursor/` prefixes. Requests do not fall back to another provider.
 
 `/v1/models` lists each Claude model once, under Anthropic's id
 (`claude-opus-5-5`), when the provider its route names offers it. Claude
 Desktop only recognises those ids, and reads each model's effort levels from
 them.
 
-**Copilot** plans that meter premium requests charge one per call, and Claude
-Code makes several tool-less calls around each turn (titles, suggestions,
-summaries). Set `providers.copilot.small_model: gpt-5-mini` to serve those with
-a cheaper model; compaction requests keep the model you chose.
+**Copilot** requests keep the client-selected model, including ordinary chat
+without tools and compaction. The removed `providers.copilot.small_model`
+setting rejects configuration loading with a migration message. Remove it
+and select Claude Code's background model in the client instead:
+
+```sh
+ANTHROPIC_DEFAULT_HAIKU_MODEL=copilot/claude-haiku-4-5 byokey claude start
+```
+
+To persist the choice, set this variable in the `env` object of Claude Code's
+user settings. The variable controls both the `haiku` alias and background
+functionality; see [Claude Code's model configuration](https://code.claude.com/docs/en/model-config#environment-variables).
+Choose a model available to your Copilot account on the Messages endpoint.
+Claude Desktop continues to use the model selected in its picker.
+
 A Copilot organisation can turn off Anthropic's `web_search` and `web_fetch`
-server tools by policy; Copilot then rejects the whole request. BYOKEY learns
-this from the first rejection, retries without the tool, and leaves it out of
-later requests from that account, so Claude Code's `WebSearch` and `WebFetch`
-silently do nothing there instead of failing the turn.
+server tools by policy. BYOKEY returns the upstream error without removing
+tools or retrying a modified request. Later generation and token-count
+requests also retain their tools. Enable the tools in the organisation's
+policy or explicitly disable them in the client.
 
 The effort Claude Code or Claude Desktop picks (`output_config.effort`)
 reaches every provider. Cursor takes it as the model's `effort` parameter and
