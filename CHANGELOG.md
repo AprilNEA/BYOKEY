@@ -9,9 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.2.0](https://github.com/AprilNEA/BYOKEY/compare/v4.1.0...v4.2.0) - 2026-10-06
 
+### Configuration migration required
+
+This release changes the configuration schema without compatibility parsing or automatic migration. Back up and migrate existing configuration files before upgrading. Removed and unknown fields fail to load; a failed hot reload retains the last valid configuration.
+
+- Move root `routes` to `anthropic.routes` and Responses routing to `responses.routes`. Response aliases now contain only `provider` and `model`; rename `upstream` to `provider`.
+- Move `responses.upstreams.<name>` into the shared `providers.<name>` map, and `responses.chatgpt_base_url` to `providers.chatgpt.base_url`.
+- Move catalog provider labels to `providers.<name>.display_name`. Move model names and alias metadata to `providers.<name>.model_overrides.<model>` using `name`, `catalog_model` or `catalog`. Overrides apply to that provider's model, including all aliases.
+- Remove `providers.copilot.small_model`. The 4.1.0 deprecation-only compatibility behavior is removed; automatic model replacement remains disabled. Configure the background model in the Claude client instead.
+
+See the README migration table for all renamed fields. `port`, `host`, `proxy_url`, `log`, `telemetry` and `claude_code` are unchanged.
+
 ### Added
 
-- *(config)* unify provider settings and Claude model labels
+- Share provider connections, explicit environment-variable credentials and model metadata across protocol routes. ChatGPT continues to use client-owned credentials only.
+- Display routed provider names for Claude models while preserving standard Anthropic model IDs. Anthropic and Responses catalogs use independent name formats with the same MiniJinja syntax.
+- Populate Claude Desktop's explicit model list with provider labels and context flags. Relaunch with `byokey claude desktop` after changing routes or labels. Standard IDs preserve Desktop's model-recognition inputs; Effort controls still depend on Desktop recognizing the model.
 
 ## [4.1.0](https://github.com/AprilNEA/BYOKEY/compare/v4.0.0...v4.1.0) - 2026-10-05
 
