@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.3.0](https://github.com/AprilNEA/BYOKEY/compare/v4.2.0...v4.3.0) - 2026-10-06
+
+### Added
+
+- Add `anthropic.catalog.merge_native_1m`, enabled by default. Set the option to `false` to restore an additional 1M picker entry when the upstream advertises support. Existing 4.2.0 configuration files require no migration.
+
+### Fixed
+
+- List native 1M Claude models, including Opus 5.5 and Fable 5/5.1, once by default. Other models retain optional 1M entries when the upstream advertises support. Model IDs, provider labels, Effort recognition and upstream context limits remain unchanged.
+
+After upgrading, quit the BYOKEY Desktop instance and rerun `byokey claude desktop` to refresh the saved model list.
+
 ## [4.2.0](https://github.com/AprilNEA/BYOKEY/compare/v4.1.0...v4.2.0) - 2026-10-06
 
 ### Configuration migration required
