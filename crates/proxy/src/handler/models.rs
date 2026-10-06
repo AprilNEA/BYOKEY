@@ -11,7 +11,8 @@
 //! Anthropic clients (Claude Code, Claude Desktop) send `anthropic-version`
 //! and get Anthropic's list shape; everyone else gets the `OpenAI` one.
 //! Claude Desktop reads `supports_1m` and offers the `<id>[1m]` variant of
-//! such models in its picker.
+//! such models in its picker. Models with a native 1M context keep only their
+//! standard entry; they do not need this opt-in variant.
 //!
 //! Pickers keep list order, so models are listed in lineup order (see
 //! [`lineup`]), dated with their release.
@@ -39,7 +40,7 @@ struct ModelEntry {
     provider: ProviderId,
     display_name: String,
     released: Released,
-    /// The model takes a 1M-token context, selected as `<id>[1m]`.
+    /// Clients should offer an additional `<id>[1m]` context mode.
     supports_1m: bool,
 }
 
@@ -215,7 +216,7 @@ mod tests {
                 provider: ProviderId::Copilot,
                 display_name: "Claude Opus 5.5 · GitHub Copilot".into(),
                 released: Released::from(lineup::released(model("claude-opus-5-5"))),
-                supports_1m: true,
+                supports_1m: false,
             },
             ModelEntry {
                 id: "claude-opus-4-1".into(),
@@ -242,7 +243,7 @@ mod tests {
                         "id": "claude-opus-5-5",
                         "display_name": "Claude Opus 5.5 · GitHub Copilot",
                         "created_at": "2026-09-22T00:00:00Z",
-                        "supports_1m": true,
+                        "supports_1m": false,
                     },
                     {
                         "type": "model",
@@ -332,8 +333,7 @@ mod tests {
             before["data"],
             json!([{
                 "id": "claude-opus-5-5", "object": "model", "created": 1_790_035_200,
-                "owned_by": "copilot", "display_name": "Claude Opus 5.5 · Copilot",
-                "supports_1m": true
+                "owned_by": "copilot", "display_name": "Claude Opus 5.5 · Copilot"
             }])
         );
         assert_eq!(
@@ -393,7 +393,7 @@ providers:
             body["data"][0]["display_name"],
             "GITHUB / Opus <{{ provider }}>"
         );
-        assert_eq!(body["data"][0]["supports_1m"], true);
+        assert_eq!(body["data"][0]["supports_1m"], false);
         assert_eq!(body["data"][1]["id"], "claude-haiku-4-5");
         assert_eq!(
             body["data"][1]["display_name"],

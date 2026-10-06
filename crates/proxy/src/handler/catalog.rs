@@ -13,7 +13,7 @@
 
 use byokey_config::{Config, Routes};
 use byokey_provider::{CopilotModel, CursorModel, CursorUpstream, all_models};
-use byokey_types::{ClaudeModel, ProviderId};
+use byokey_types::{ClaudeFamily as Family, ClaudeModel, ProviderId};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -39,7 +39,7 @@ static CURSOR_CATALOG: Mutex<Vec<CursorModel>> = Mutex::new(Vec::new());
 pub(crate) struct Offer {
     /// The provider's name for the model, when it gives one.
     pub name: Option<String>,
-    /// The model takes a 1M-token context, selected as `<id>[1m]`.
+    /// Clients should offer an additional `<id>[1m]` context mode.
     pub supports_1m: bool,
 }
 
@@ -118,11 +118,20 @@ impl Catalog {
         }
         if let Some(models) = copilot {
             let offers = models.into_iter().filter(|m| m.messages).filter_map(|m| {
+                let model = ClaudeModel::from_id(&m.id)?;
+                // These models default to 1M; an opt-in picker entry would duplicate them.
+                // https://platform.claude.com/docs/en/build-with-claude/context-windows
+                let native_1m = matches!(
+                    (model.family, model.version),
+                    (Family::Fable, (5, 0 | 1))
+                        | (Family::Opus, (4, 6..=8) | (5, 0 | 5))
+                        | (Family::Sonnet, (4, 6) | (5, 0 | 5))
+                );
                 let offer = Offer {
                     name: Some(m.name),
-                    supports_1m: m.context_window >= Some(LONG_CONTEXT_TOKENS),
+                    supports_1m: !native_1m && m.context_window >= Some(LONG_CONTEXT_TOKENS),
                 };
-                Some((ClaudeModel::from_id(&m.id)?, offer))
+                Some((model, offer))
             });
             providers.insert(ProviderId::Copilot, first_spelling(offers));
         }
@@ -273,7 +282,7 @@ mod tests {
             ["claude-opus-5-5", "claude-haiku-4-5"],
             "not variants, models off /v1/messages, or other vendors'"
         );
-        assert!(copilot[&model("claude-opus-5-5")].supports_1m);
+        assert!(!copilot[&model("claude-opus-5-5")].supports_1m);
         assert!(!copilot[&model("claude-haiku-4-5")].supports_1m);
         assert_eq!(
             catalog.models()[&model("claude-opus-5-5")],
@@ -284,6 +293,49 @@ mod tests {
             None,
             "a provider that may not be used offers nothing"
         );
+    }
+
+    #[test]
+    fn default_1m_models_do_not_offer_extra_context_variants() {
+        let ids = [
+            "claude-fable-5.1",
+            "claude-fable-5",
+            "claude-opus-5.5",
+            "claude-opus-5",
+            "claude-opus-4.8",
+            "claude-opus-4.7",
+            "claude-opus-4.6",
+            "claude-sonnet-5.5",
+            "claude-sonnet-5",
+            "claude-sonnet-4.6",
+        ];
+        let models = ids.map(|id| copilot(id, true, Some(1_000_000))).into();
+
+        let catalog = Catalog::new(false, Some(models), None);
+        let offers = catalog.offers(ProviderId::Copilot).unwrap();
+
+        assert_eq!(offers.len(), ids.len());
+        assert!(offers.values().all(|offer| !offer.supports_1m));
+    }
+
+    #[test]
+    fn other_models_offer_context_variants_only_when_the_upstream_supports_them() {
+        let catalog = Catalog::new(
+            false,
+            Some(vec![
+                copilot("claude-sonnet-4.5", true, Some(1_000_000)),
+                copilot("claude-opus-4.5", true, Some(999_999)),
+                copilot("claude-opus-6", true, Some(1_000_000)),
+                copilot("claude-haiku-4.5", true, None),
+            ]),
+            None,
+        );
+        let offers = catalog.offers(ProviderId::Copilot).unwrap();
+
+        assert!(offers[&model("claude-sonnet-4-5")].supports_1m);
+        assert!(!offers[&model("claude-opus-4-5")].supports_1m);
+        assert!(offers[&model("claude-opus-6")].supports_1m);
+        assert!(!offers[&model("claude-haiku-4-5")].supports_1m);
     }
 
     #[test]

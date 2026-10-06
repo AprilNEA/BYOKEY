@@ -387,8 +387,11 @@ keeping its other settings. Override the target with `--settings <FILE>`.
 third-party mode against BYOKEY, next to the official one, whose profile is
 never modified. Before launch, the command fetches BYOKEY's routed models
 and writes an explicit `inferenceModels` list. Each entry keeps its standard
-Anthropic ID and 1M-context flag, with a provider-labelled `labelOverride`
-such as `Claude Opus 5.5 · Copilot`. This preserves Desktop's effort
+Anthropic ID, with a provider-labelled `labelOverride` such as
+`Claude Opus 5.5 · Copilot`. Models documented as native 1M, including
+Opus 5.5 and Fable 5/5.1, appear once without an additional `1M` entry.
+Other models retain the optional 1M entry when the upstream advertises support.
+This changes the picker, not the upstream model's context limit, and preserves Desktop's effort
 recognition without adding provider prefixes to model IDs; Desktop's Effort
 control is not guaranteed for model IDs Desktop does not recognize. After changing
 routes, display settings or available models, quit the BYOKEY Desktop instance and run the

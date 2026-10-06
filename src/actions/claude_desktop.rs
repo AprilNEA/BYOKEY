@@ -321,7 +321,8 @@ mod tests {
             axum::routing::get(|| async {
                 axum::Json(json!({"data": [
                     {"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6 · Cursor"},
-                    {"id": "claude-opus-5-5", "display_name": "Claude Opus 5.5 · GitHub Copilot", "supports_1m": true}
+                    {"id": "claude-opus-5-5", "display_name": "Claude Opus 5.5 · GitHub Copilot", "supports_1m": false},
+                    {"id": "claude-sonnet-4-5", "display_name": "Claude Sonnet 4.5 · Copilot", "supports_1m": true}
                 ]}))
             }),
         );
@@ -339,7 +340,8 @@ mod tests {
             entry["inferenceModels"],
             json!([
                 {"name": "claude-sonnet-4-6", "labelOverride": "Claude Sonnet 4.6 · Cursor", "supports1m": false},
-                {"name": "claude-opus-5-5", "labelOverride": "Claude Opus 5.5 · GitHub Copilot", "supports1m": true}
+                {"name": "claude-opus-5-5", "labelOverride": "Claude Opus 5.5 · GitHub Copilot", "supports1m": false},
+                {"name": "claude-sonnet-4-5", "labelOverride": "Claude Sonnet 4.5 · Copilot", "supports1m": true}
             ])
         );
     }
