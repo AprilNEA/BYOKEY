@@ -63,7 +63,7 @@ impl Catalog {
             let upstream = super::copilot::copilot_upstream(state);
             Some(
                 last_or(ProviderId::Copilot, &COPILOT_CATALOG, async move {
-                    upstream.models().await
+                    upstream?.models().await
                 })
                 .await,
             )
@@ -74,15 +74,19 @@ impl Catalog {
             }
             let api_key = config
                 .providers
-                .get(&ProviderId::Cursor)
-                .and_then(|c| c.api_key.clone());
-            let upstream = CursorUpstream::builder()
-                .http(state.http.clone())
-                .auth(state.auth.clone())
-                .maybe_api_key(api_key)
-                .build();
+                .get("cursor")
+                .and_then(|c| c.api_key.as_ref())
+                .map(byokey_config::ConfigValue::resolve)
+                .transpose();
+            let http = state.http.clone();
+            let auth = state.auth.clone();
             Some(
                 last_or(ProviderId::Cursor, &CURSOR_CATALOG, async move {
+                    let upstream = CursorUpstream::builder()
+                        .http(http)
+                        .auth(auth)
+                        .maybe_api_key(api_key?)
+                        .build();
                     upstream.models().await
                 })
                 .await,
@@ -178,7 +182,7 @@ fn first_spelling(
 
 /// Whether `provider` may be used: enabled, and signed in or keyed.
 async fn usable(state: &AppState, config: &Config, provider: ProviderId) -> bool {
-    let pc = config.providers.get(&provider);
+    let pc = config.providers.get(&provider.to_string());
     if pc.is_some_and(|c| !c.enabled) {
         return false;
     }

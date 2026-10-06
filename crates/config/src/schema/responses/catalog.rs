@@ -1,18 +1,8 @@
 //! Presentation settings for the Codex model catalog.
 
-use byokey_types::{ByokError, Result};
-use minijinja::{Environment, UndefinedBehavior, context};
+use byokey_types::Result;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::LazyLock,
-};
-
-static NAME_ENVIRONMENT: LazyLock<Environment<'static>> = LazyLock::new(|| {
-    let mut environment = Environment::new();
-    environment.set_undefined_behavior(UndefinedBehavior::Strict);
-    environment
-});
+use std::collections::BTreeSet;
 
 /// Model picker names and visibility, independent of inference routing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,10 +10,6 @@ static NAME_ENVIRONMENT: LazyLock<Environment<'static>> = LazyLock::new(|| {
 pub struct ResponsesCatalog {
     /// Plain-text `MiniJinja` template with `model` and `provider` variables.
     pub name_format: String,
-    /// Display names for the built-in providers.
-    pub provider_names: ProviderNames,
-    /// Display name overrides keyed by the actual upstream model ID, not the alias.
-    pub model_names: BTreeMap<String, String>,
     /// Exact catalog slugs to hide without removing their metadata or routing.
     pub hidden_aliases: BTreeSet<String>,
 }
@@ -32,28 +18,7 @@ impl Default for ResponsesCatalog {
     fn default() -> Self {
         Self {
             name_format: "{{ model }} ({{ provider }})".into(),
-            provider_names: ProviderNames::default(),
-            model_names: BTreeMap::new(),
             hidden_aliases: BTreeSet::new(),
-        }
-    }
-}
-
-/// Built-in provider labels. Custom upstreams use their `display_name` instead.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct ProviderNames {
-    /// Label for client-owned `ChatGPT` subscriptions.
-    pub chatgpt: String,
-    /// Label for GitHub Copilot models.
-    pub copilot: String,
-}
-
-impl Default for ProviderNames {
-    fn default() -> Self {
-        Self {
-            chatgpt: "ChatGPT".into(),
-            copilot: "Copilot".into(),
         }
     }
 }
@@ -64,45 +29,11 @@ impl ResponsesCatalog {
     /// # Errors
     /// Rejects invalid syntax and unknown variables. The formatter rejects render errors and empty names.
     pub fn name_formatter(&self) -> Result<impl Fn(&str, &str) -> Result<String> + '_> {
-        let template_error =
-            |error| ByokError::Config(format!("responses.catalog.name_format: {error}"));
-        let template = NAME_ENVIRONMENT
-            .template_from_str(&self.name_format)
-            .map_err(template_error)?;
-        for variable in template.undeclared_variables(false) {
-            if !matches!(variable.as_str(), "model" | "provider") {
-                return Err(ByokError::Config(format!(
-                    "responses.catalog.name_format: unknown variable {variable}; use model or provider"
-                )));
-            }
-        }
-        Ok(move |model: &str, provider: &str| {
-            let name = template
-                .render(context! { model, provider })
-                .map_err(template_error)?;
-            if name.trim().is_empty() {
-                return Err(ByokError::Config(
-                    "responses.catalog.name_format must render a nonempty name".into(),
-                ));
-            }
-            Ok(name)
-        })
+        crate::schema::catalog::name_formatter(&self.name_format, "responses.catalog.name_format")
     }
 
     pub(super) fn validate(&self) -> Result<()> {
         self.name_formatter()?("model", "provider")?;
-        if self.provider_names.chatgpt.trim().is_empty()
-            || self.provider_names.copilot.trim().is_empty()
-            || self
-                .model_names
-                .iter()
-                .any(|(id, name)| id.trim().is_empty() || name.trim().is_empty())
-        {
-            return Err(ByokError::Config(
-                "responses.catalog provider names, model IDs and model names must be nonempty"
-                    .into(),
-            ));
-        }
         Ok(())
     }
 }
@@ -118,8 +49,9 @@ mod tests {
 responses:
   catalog:
     name_format: '{{ provider | upper }} — {{ model }}'
-    provider_names:
-      copilot: GitHub
+providers:
+  copilot:
+    display_name: GitHub
 ",
         )
         .unwrap();
@@ -128,8 +60,8 @@ responses:
         let name = catalog.name_formatter().unwrap()("GPT-6-Astra <{{ model }}>", "r&d").unwrap();
 
         assert_eq!(name, "R&D — GPT-6-Astra <{{ model }}>");
-        assert_eq!(catalog.provider_names.chatgpt, "ChatGPT");
-        assert_eq!(catalog.provider_names.copilot, "GitHub");
+        assert_eq!(config.provider_name("chatgpt"), "ChatGPT");
+        assert_eq!(config.provider_name("copilot"), "GitHub");
     }
 
     #[test]

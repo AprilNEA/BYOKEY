@@ -7,7 +7,7 @@ pub mod schema;
 pub mod watcher;
 
 pub use schema::{
-    ClaudeCodeConfig, Config, LogConfig, LogFormat, ProviderConfig, RouteSource, Routes,
-    TelemetryConfig,
+    ClaudeCodeConfig, Config, ConfigValue, LogConfig, LogFormat, ModelOverride, ProviderConfig,
+    RouteSource, Routes, TelemetryConfig,
 };
 pub use watcher::ConfigWatcher;

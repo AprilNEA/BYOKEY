@@ -52,8 +52,10 @@ pub(crate) async fn cursor_messages(
     let config = state.config.load();
     let api_key = config
         .providers
-        .get(&byokey_types::ProviderId::Cursor)
-        .and_then(|c| c.api_key.clone());
+        .get("cursor")
+        .and_then(|c| c.api_key.as_ref())
+        .map(byokey_config::ConfigValue::resolve)
+        .transpose()?;
     let cursor = CursorUpstream::builder()
         .http(state.http.clone())
         .auth(state.auth.clone())

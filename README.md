@@ -176,69 +176,74 @@ enable_request_compression = false
 
 Use a model available to your account. With a ChatGPT login, Codex discovers the catalog at `base_url/models`. Leave `model_catalog_url` unset: explicitly configured catalog URLs have a 1 MiB limit, which a combined multi-provider catalog can exceed. This setup uses HTTP SSE and local compaction; WebSocket transport and compressed Responses request bodies are not supported. Keep web search disabled until the selected upstream supports the client's search tools.
 
-Unmatched `/codex/*` HTTP paths, including `images/generations` and `images/edits`, go directly to `responses.chatgpt_base_url` (default `https://chatgpt.com/backend-api/codex`) with the client's ChatGPT credentials. This fallback is independent of the selected inference provider. It preserves the method, path suffix, query, body bytes, upstream status and end-to-end headers; cookies and connection-specific request headers are removed. Request and response bodies stream without JSON parsing or automatic decompression. Redirects and retries are disabled. Native requests are logged but do not contribute to Responses token usage statistics. The fallback does not enable client-side features or translate model aliases for native endpoints.
+Unmatched `/codex/*` HTTP paths, including `images/generations` and `images/edits`, go directly to `providers.chatgpt.base_url` (default `https://chatgpt.com/backend-api/codex`) with the client's ChatGPT credentials. This fallback is independent of the selected inference provider. It preserves the method, path suffix, query, body bytes, upstream status and end-to-end headers; cookies and connection-specific request headers are removed. Request and response bodies stream without JSON parsing or automatic decompression. Redirects and retries are disabled. Native requests are logged but do not contribute to Responses token usage statistics. The fallback does not enable client-side features or translate model aliases for native endpoints.
 
 With no Responses configuration, inference requests go to ChatGPT. To add Copilot and a custom gateway, sign in with `byokey login copilot` and merge the following into the BYOKEY config passed to `serve --config`:
 
 ```yaml
+providers:
+  company:
+    base_url: https://gateway.example.com/team/v1
+    models_url: https://gateway.example.com/team/v1/models
+    display_name: Company
+    api_key: { env: COMPANY_API_KEY }
+    headers:
+      X-Tenant: engineering
+      X-Special-Token: { env: COMPANY_GATEWAY_TOKEN }
+      X-Request-UID: { uuid_prefix: "byokey-" }
+    model_overrides:
+      my-deployment:
+        catalog_model: gpt-5.4-mini
+
 responses:
-  default: chatgpt
-  models:
-    copilot-fast:
-      upstream: copilot
-      model: gpt-5.4-mini
-      catalog_model: gpt-5.4-mini
-    company-fast:
-      upstream: company
-      model: my-deployment
-      catalog_model: gpt-5.4-mini
-  upstreams:
-    company:
-      base_url: https://gateway.example.com/team/v1
-      models_url: https://gateway.example.com/team/v1/models
-      display_name: Company
-      api_key: { env: COMPANY_API_KEY }
-      headers:
-        X-Tenant: engineering
-        X-Special-Token: { env: COMPANY_GATEWAY_TOKEN }
-        X-Request-UID: { uuid_prefix: "byokey-" }
+  routes:
+    default: chatgpt
+    models:
+      copilot-fast: { provider: copilot, model: gpt-5.4-mini }
+      company-fast: { provider: company, model: my-deployment }
 ```
 
-`company-fast` assumes that `my-deployment` serves the same model as `catalog_model`; choose matching metadata for the actual deployment. Export the referenced variables in the **BYOKEY server process**, not just the client. Missing variables fail the request. A configured `Authorization` header overrides `api_key`. `/responses` is appended to each `base_url`; custom upstreams must implement the Responses API themselves.
+`providers` is one flat map for both protocols. `claude`, `copilot`, `cursor` and `chatgpt` are reserved built-in names; any other name defines a custom Responses provider and requires `base_url`. Connection settings and model metadata belong to the provider, so a route alias holds only `provider` and the `model` ID sent to it.
 
-Set `models_url` to an OpenAI-compatible `{"data":[{"id":"..."}]}` endpoint to discover multiple models without defining each alias. BYOKEY lists every ID that also has ChatGPT Codex metadata as `<upstream>/<model>`, displayed by default as `<model display name> (<display_name>)`. The provider label defaults to the upstream name. Models without matching metadata need an explicit alias with a complete `catalog`; BYOKEY does not fabricate their instructions or capabilities. A model list does not guarantee current account access or Responses support. The model list URL receives the same configured credentials and headers as the Responses URL, never the client's ChatGPT credentials. Configure only trusted URLs. Catalog errors are returned to the client. Explicit aliases override discovered entries with the same slug. Omit `models_url` to keep manual aliases only.
+`api_key` and header values accept a literal string or an explicit environment reference `{ env: NAME }`; BYOKEY never interprets a literal string as a variable or command. Export the referenced variables in the **BYOKEY server process**, not just the client. Missing variables fail the request. A configured `Authorization` header overrides `api_key`. `models_url`, `headers` and `service_tier` are accepted only on custom providers. `/responses` is appended to each `base_url`; custom providers must implement the Responses API themselves.
+
+`providers.<name>.model_overrides` is keyed by the actual model ID sent to that provider, never by an alias. Each entry may set `name` (display name), `catalog_model` (a ChatGPT Codex catalog slug whose metadata matches this model) or `catalog` (a complete Codex ModelInfo object). Without `catalog_model` or `catalog`, the model borrows the ChatGPT catalog entry with the same ID. In the example, `company-fast` assumes that `my-deployment` serves the same model as `gpt-5.4-mini`; choose matching metadata for the actual deployment.
+
+Set `models_url` to an OpenAI-compatible `{"data":[{"id":"..."}]}` endpoint to discover multiple models without defining each alias. BYOKEY lists every ID that also has ChatGPT Codex metadata as `<provider>/<model>`, displayed by default as `<model display name> (<display_name>)`. The provider label defaults to the provider name. Models without matching metadata need a complete `model_overrides.<model>.catalog`; BYOKEY does not fabricate their instructions or capabilities. A model list does not guarantee current account access or Responses support. The model list URL receives the same configured credentials and headers as the Responses URL, never the client's ChatGPT credentials. Configure only trusted URLs. Catalog errors are returned to the client. Explicit aliases override discovered entries with the same slug. Omit `models_url` to keep manual aliases only.
 
 All catalog entries default to `<model name> (<provider>)`, including native models. Configure presentation separately from routing:
 
 ```yaml
+providers:
+  copilot:
+    display_name: GitHub Copilot
+    model_overrides:
+      gpt-6-astra:
+        name: GPT-6 Astra
+
 responses:
   catalog:
     name_format: "{{ model }} ({{ provider }})"
-    provider_names:
-      chatgpt: ChatGPT
-      copilot: Copilot
-    model_names:
-      gpt-6-astra: GPT-6 Astra
     hidden_aliases: ["LLM Router"]
 ```
 
-`name_format` uses [MiniJinja](https://docs.rs/minijinja/2.24.0/minijinja/syntax/index.html) with two plain-text variables: `model` and `provider`. For example, `"{{ provider }} / {{ model }}"` puts the source first. Built-in filters such as `upper` and `replace` are available; template imports and filesystem access are not. `provider_names` accepts only `chatgpt` and `copilot`, defaulting to `ChatGPT` and `Copilot`; custom providers use `upstreams.<name>.display_name`, or their upstream name. `model_names` overrides the actual upstream model ID across providers, not an alias or `catalog_model`. Without an override, BYOKEY preserves the shared ChatGPT or explicit `catalog.display_name` verbatim, falling back to the model ID when metadata has no name. It does not rewrite hyphens or strip provider suffixes. Route IDs, instructions and capabilities are unaffected.
+`name_format` uses [MiniJinja](https://docs.rs/minijinja/2.24.0/minijinja/syntax/index.html) with two plain-text variables: `model` and `provider`. For example, `"{{ provider }} / {{ model }}"` puts the source first. Built-in filters such as `upper` and `replace` are available; template imports and filesystem access are not. `providers.<name>.display_name` sets the provider label in both the Responses and Anthropic catalogs. The labels default to `ChatGPT`, `Copilot`, `Claude (Anthropic)` and `Cursor`; a custom provider defaults to its name. `model_overrides.<model ID>.name` renames that provider's actual model ID, not an alias or `catalog_model`. Without an override, BYOKEY preserves the shared ChatGPT or explicit `catalog.display_name` verbatim, falling back to the model ID when metadata has no name. It does not rewrite hyphens or strip provider suffixes. Route IDs, instructions and capabilities are unaffected.
 
-Enabled Copilot credentials, from a stored login or `providers.copilot.api_key`, enable discovery without a model alias. The picker shows at most one visible entry per upstream and model, preferring the default provider's unqualified ID, then a provider-prefixed ID, then a configured alias. `hidden_aliases` hides exact catalog slugs before that selection; hiding one alias does not hide other aliases for the same model. Duplicate and explicitly hidden aliases retain their metadata with `visibility: hide`, so existing sessions and explicit model IDs still work. Upstream-hidden models remain hidden.
+Enabled Copilot credentials, from a stored login or `providers.copilot.api_key`, enable discovery without a model alias. The picker shows at most one visible entry per provider and model, preferring the default provider's unqualified ID, then a provider-prefixed ID, then a configured alias. `hidden_aliases` hides exact catalog slugs before that selection; hiding one alias does not hide other aliases for the same model. Duplicate and explicitly hidden aliases retain their metadata with `visibility: hide`, so existing sessions and explicit model IDs still work. Upstream-hidden models remain hidden.
 
 These settings hot-reload. The next catalog request uses the new settings; the client may need to refresh its cached model list. Syntax errors, unknown variables and failed validation renders reject the configuration. Failed reloads retain the last valid configuration and log the error. Render errors with actual model data fail the catalog request rather than silently substituting a name; names must be nonempty.
 
-`uuid_prefix` generates a fresh lowercase UUID v4 for each upstream request, preceded by the configured prefix. Set an upstream's optional `service_tier` to override the client's top-level `service_tier`, for example `service_tier: fast` when that upstream supports it. Without an override, BYOKEY preserves the client's value. Do not wrap Responses parameters in `extra_body`; send them at the top level.
+`uuid_prefix` generates a fresh lowercase UUID v4 for each upstream request, preceded by the configured prefix. Set a custom provider's optional `service_tier` to override the client's top-level `service_tier`, for example `service_tier: fast` when that upstream supports it. Without an override, BYOKEY preserves the client's value. Do not wrap Responses parameters in `extra_body`; send them at the top level.
 
-Select a provider-labelled model in the client, or set a model ID such as `copilot-fast` or `company-fast` explicitly. Exact aliases take priority, followed by `chatgpt/<model>`, `copilot/<model>` or `<upstream>/<model>`, followed by `responses.default` for unqualified names. Copilot models must advertise `/responses`; BYOKEY does not translate Chat Completions or Anthropic requests on this path. Copilot uses BYOKEY's stored accounts or `providers.copilot.api_key`, never the client's ChatGPT credential.
+Select a provider-labelled model in the client, or set a model ID such as `copilot-fast` or `company-fast` explicitly. Exact aliases take priority, followed by `chatgpt/<model>`, `copilot/<model>` or `<provider>/<model>`, followed by `responses.routes.default` for unqualified names. Copilot models must advertise `/responses`; BYOKEY does not translate Chat Completions or Anthropic requests on this path. Copilot uses BYOKEY's stored accounts or `providers.copilot.api_key`, never the client's ChatGPT credential.
 
-Copilot can change an output item's ID between stream events. BYOKEY retains the first ID for each output index so Codex updates one message instead of displaying a duplicate. Response IDs and tool `call_id` values remain unchanged. ChatGPT and custom upstreams retain their original stream payloads.
+Copilot can change an output item's ID between stream events. BYOKEY retains the first ID for each output index so Codex updates one message instead of displaying a duplicate. Response IDs and tool `call_id` values remain unchanged. ChatGPT and custom providers retain their original stream payloads.
 
-The catalog borrows actual ChatGPT model metadata, including instructions and capabilities. When `model_messages.instructions_template` is present, BYOKEY omits the ignored legacy `base_instructions` copy to reduce catalog size. An alias needs a matching `catalog_model`, or a complete Codex ModelInfo object under `catalog`. A missing match is an error. A custom default with complete catalog objects, no `models_url`, and no enabled Copilot credentials or routes needs no ChatGPT catalog access; otherwise catalog discovery needs the client's ChatGPT login. Alias upgrades are disabled so the client does not migrate an alias to a different route. The existing `/v1/models`, `byokey route`, and TUI route list remain Anthropic-only.
+The catalog borrows actual ChatGPT model metadata, including instructions and capabilities. When `model_messages.instructions_template` is present, BYOKEY omits the ignored legacy `base_instructions` copy to reduce catalog size. Each routed model needs a ChatGPT catalog entry with its ID or its `catalog_model`, or a complete Codex ModelInfo object in `model_overrides.<model>.catalog`. A missing match is an error. A custom default with complete catalog objects, no `models_url`, and no enabled Copilot credentials or routes needs no ChatGPT catalog access; otherwise catalog discovery needs the client's ChatGPT login. Alias upgrades are disabled so the client does not migrate an alias to a different route. The existing `/v1/models`, `byokey route`, and TUI route list remain Anthropic-only.
 
 Send `Reply with exactly: gateway-ok` and check the gateway log for the intended upstream and model. Then test a tool call and a follow-up. Upstream errors and `retry-after` are preserved. Normal Responses streams end with `response.completed`; failed, incomplete and truncated streams are recorded as failures, while client cancellation is recorded as `abandoned`.
 
-Keep the listener on `127.0.0.1`. BYOKEY has no inbound authentication for its stored Copilot/custom credentials; do not expose this port to an untrusted network. Only the configured ChatGPT backend receives the client's ChatGPT auth headers; configure only a trusted `responses.chatgpt_base_url`. Redirects are not followed. Responses routes are excluded from `BYOKEY_DUMP`, and their request headers are removed from Sentry events.
+Keep the listener on `127.0.0.1`. BYOKEY has no inbound authentication for its stored Copilot/custom credentials; do not expose this port to an untrusted network. Only the configured ChatGPT backend receives the client's ChatGPT auth headers; configure only a trusted `providers.chatgpt.base_url`. The client owns ChatGPT login and refresh, so `providers.chatgpt` rejects `api_key` and `headers`. Redirects are not followed. Responses routes are excluded from `BYOKEY_DUMP`, and their request headers are removed from Sentry events.
 
 Local logs and usage records retain account identifiers. Local error logs can contain text quoted by the upstream. Account identifiers and upstream error text are removed from Sentry event fields, trace data and breadcrumbs.
 
@@ -351,7 +356,7 @@ that route. The target is one of:
 A model's route beats its family's, which beats the default; without any, the
 model goes to Anthropic. Claude Code's incidental requests (titles,
 summaries) use the Haiku model, so `--family haiku` decides where those go.
-The routes are saved to the config file, which the running server reloads,
+The routes are saved to `anthropic.routes` in the config file, which the running server reloads,
 also when `byokey route` creates it. `byokey route set` warns when the
 provider is not signed in, and `byokey doctor` checks every routed provider.
 
@@ -379,10 +384,20 @@ model discovery, which lists the Claude models your routes serve in `/model`.
 keeping its other settings. Override the target with `--settings <FILE>`.
 
 **`byokey claude desktop`** — Opens a second Claude Desktop in its
-third-party mode against BYOKEY, with models discovered from BYOKEY, next to
-the official one, whose profile is never modified. While the BYOKEY instance
-runs it can switch Desktop's saved mode, so a cold launch from the Dock may
-open it instead of the official one; the command warns about this. macOS only.
+third-party mode against BYOKEY, next to the official one, whose profile is
+never modified. Before launch, the command fetches BYOKEY's routed models
+and writes an explicit `inferenceModels` list. Each entry keeps its standard
+Anthropic ID and 1M-context flag, with a provider-labelled `labelOverride`
+such as `Claude Opus 5.5 · Copilot`. This preserves Desktop's effort
+recognition without adding provider prefixes to model IDs; Desktop's Effort
+control is not guaranteed for model IDs Desktop does not recognize. After changing
+routes, display settings or available models, quit the BYOKEY Desktop instance and run the
+command again to refresh its list and labels. Server-side routes still
+hot-reload; labels describe the routes at the last launch through this command.
+If the catalog request fails or lists no models, Desktop settings stay unchanged.
+While the BYOKEY instance runs it can switch Desktop's saved mode, so a cold
+launch from the Dock may open it instead of the official one; the command
+warns about this. macOS only.
 
 All three accept `--url <URL>` to use a BYOKEY other than the configured one.
 
@@ -396,16 +411,6 @@ Create a config file (JSON or YAML, e.g. `~/.config/byokey/settings.json`) and p
 port: 8018
 host: 127.0.0.1
 
-# Which provider serves each Claude model; `byokey route` edits this.
-# A model's route beats its family's, which beats the default. Without
-# any, models go to Anthropic.
-routes:
-  default: copilot
-  families:
-    opus: cursor
-  models:
-    claude-opus-5-5: copilot
-
 providers:
   # Use Anthropic with a raw API key instead of a login
   # claude:
@@ -413,26 +418,55 @@ providers:
 
   # A `crsr_…` key from cursor.com/dashboard, or `byokey login cursor`
   cursor:
-    api_key: "crsr_..."
+    api_key: { env: CURSOR_API_KEY }
+
+anthropic:
+  # Which provider serves each Claude model; `byokey route` edits this.
+  # A model's route beats its family's, which beats the default. Without
+  # any, models go to Anthropic.
+  routes:
+    default: copilot
+    families:
+      opus: cursor
+    models:
+      claude-opus-5-5: copilot
 ```
 
 All fields are optional; unspecified providers are enabled by default and use
-the login stored in the database. Providers other than `claude`, `copilot`
-and `cursor` are rejected in `providers`; Responses custom upstreams belong in `responses.upstreams`.
+the login stored in the database. Unknown fields fail configuration loading. `providers` is the single provider map for both protocols; see [ChatGPT.app / Codex](#chatgptapp--codex) for custom Responses providers. Anthropic routes accept only `claude`, `copilot` and `cursor`.
 Setting `providers.<name>.enabled: false` hides that provider's models and
 rejects Messages and token-count requests routed to it with HTTP 400, including
 explicit `copilot/` or `cursor/` prefixes. Requests do not fall back to another provider.
 
 `/v1/models` lists each Claude model once, under Anthropic's id
-(`claude-opus-5-5`), when the provider its route names offers it. Claude
-Desktop only recognises those ids, and reads each model's effort levels from
-them.
+(`claude-opus-5-5`), when the provider its route names offers it. Display
+names identify the routed provider. Standard IDs preserve Claude Desktop's
+model and effort recognition; provider labels do not change request routing.
+
+Provider and model display names live under `providers`; the Claude client name format in `anthropic.catalog` is independent of `responses.catalog`:
+
+```yaml
+providers:
+  claude:
+    display_name: Anthropic
+  copilot:
+    display_name: GitHub Copilot
+    model_overrides:
+      claude-opus-5-5:
+        name: Opus 5.5
+
+anthropic:
+  catalog:
+    name_format: "{{ model }} · {{ provider }}"
+```
+
+`name_format` reuses the Responses catalog's MiniJinja syntax and validation, with the plain-text variables `model` and `provider`. Filters work here too: `"{{ provider | upper }} / {{ model }}"` puts the provider first. The default format is `"{{ model }} · {{ provider }}"`. `providers.<name>.display_name` is shared with the Responses catalog; labels default to `Claude (Anthropic)`, `Copilot` and `Cursor`. Anthropic `model_overrides` keys are canonical standard Anthropic IDs such as `claude-opus-5-5`, not provider-prefixed IDs or the provider's own spelling such as `claude-opus-5.5`. The override applies when that provider serves the model. Without an override, the model keeps its standard friendly name. These settings change only `display_name` and Desktop's `labelOverride`, not IDs, routing, effort or context capabilities. Each model still appears once, labelled with its routed provider.
+
+The server hot-reloads these settings. Invalid templates or empty names reject configuration loading; failed reloads retain the last valid configuration. A template that fails with actual model data fails the catalog request rather than substituting a name. After changing display settings, quit the BYOKEY Desktop instance and rerun `byokey claude desktop` to refresh its saved labels.
 
 **Copilot** requests keep the client-selected model, including ordinary chat
-without tools and compaction. The deprecated `providers.copilot.small_model`
-setting is still accepted so existing configurations load, but its value is
-ignored and a warning is printed to stderr. Remove the setting and select
-Claude Code's background model in the client instead:
+without tools and compaction. Select Claude Code's background model in the
+client:
 
 ```sh
 ANTHROPIC_DEFAULT_HAIKU_MODEL=copilot/claude-haiku-4-5 byokey claude start
@@ -460,6 +494,25 @@ does not list. Name them as `cursor/<model>`, so
 `byokey claude start --model cursor/claude-opus-5-5-low-fast` runs Claude Code
 on Cursor; `copilot/<model>` does the same for Copilot. A prefix overrides the
 routes for that request.
+
+### Migrating from the previous configuration
+
+BYOKEY does not migrate configuration files automatically. Legacy and unknown fields fail configuration loading, and a failed hot reload keeps the last valid configuration. Edit the file by hand:
+
+| Previous setting | Current setting |
+| --- | --- |
+| `routes` (root) | `anthropic.routes` |
+| `responses.default` | `responses.routes.default` |
+| `responses.models.<alias>` with `upstream`, `model` | `responses.routes.models.<alias>` with `provider`, `model` |
+| `catalog_model` or `catalog` on an alias | `providers.<provider>.model_overrides.<model>.catalog_model` or `.catalog` |
+| `responses.upstreams.<name>` | `providers.<name>` (requires `base_url`) |
+| `responses.chatgpt_base_url` | `providers.chatgpt.base_url` |
+| `responses.catalog.provider_names`, `anthropic.catalog.provider_names` | `providers.<name>.display_name` |
+| `responses.catalog.model_names`, `anthropic.catalog.model_names` | `providers.<provider>.model_overrides.<model>.name` |
+| `providers.claude.backend` | `anthropic.routes.default` |
+| `providers.copilot.small_model` | Remove; set `ANTHROPIC_DEFAULT_HAIKU_MODEL` in the client |
+
+`port`, `host`, `proxy_url`, `log`, `telemetry` and `claude_code` are unchanged.
 
 ## Logs
 

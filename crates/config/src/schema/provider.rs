@@ -1,24 +1,35 @@
+use byokey_types::{ByokError, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::BTreeMap;
 
 fn default_true() -> bool {
     true
 }
 
-/// Configuration for a single provider.
+/// Connection and model metadata shared by all routes to a provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct ProviderConfig {
-    /// A static credential used instead of the stored login: an Anthropic
-    /// API key, a Copilot API bearer token, or a Cursor `crsr_…` key.
-    #[serde(default)]
-    pub api_key: Option<String>,
+    /// Credential used instead of a stored login or for a custom Responses provider.
+    /// `ChatGPT` credentials must come from the client, not this field.
+    pub api_key: Option<ConfigValue>,
     /// Custom base URL for the provider API (overrides the default endpoint).
-    /// Only the origin (scheme + host + optional port) should be specified;
-    /// paths are appended per request. Example: `https://my-proxy.example.com`
-    #[serde(default)]
+    /// Claude, Copilot and Cursor use an origin; `ChatGPT` and custom Responses
+    /// providers accept a path prefix. Request paths are appended to this URL.
     pub base_url: Option<String>,
     /// Whether this provider is enabled (defaults to `true`).
-    #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Provider label used by both protocol catalogs.
+    pub display_name: Option<String>,
+    /// Sparse metadata overrides keyed by the provider's model ID.
+    pub model_overrides: BTreeMap<String, ModelOverride>,
+    /// Model discovery URL for a custom Responses provider.
+    pub models_url: Option<String>,
+    /// Custom Responses headers; Authorization overrides `api_key`.
+    pub headers: BTreeMap<String, ConfigValue>,
+    /// Custom Responses service tier; absent preserves the client's value.
+    pub service_tier: Option<String>,
 }
 
 impl Default for ProviderConfig {
@@ -26,8 +37,122 @@ impl Default for ProviderConfig {
         Self {
             api_key: None,
             base_url: None,
-            enabled: true,
+            enabled: default_true(),
+            display_name: None,
+            model_overrides: BTreeMap::new(),
+            models_url: None,
+            headers: BTreeMap::new(),
+            service_tier: None,
         }
+    }
+}
+
+/// Metadata patches applied after discovery, independent of route aliases.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ModelOverride {
+    /// Display name, without changing the requested model ID.
+    pub name: Option<String>,
+    /// Codex catalog model whose metadata matches this provider model.
+    pub catalog_model: Option<String>,
+    /// Complete Codex metadata instead of borrowing the `ChatGPT` catalog.
+    pub catalog: Option<Value>,
+}
+
+/// An explicit literal, environment reference, or generated header value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum ConfigValue {
+    /// A literal value; never interpreted as an environment variable or command.
+    Literal(String),
+    /// Read the named environment variable from the server process.
+    Environment {
+        /// Environment variable name.
+        env: String,
+    },
+    /// Generate a UUID v4 each time the value is resolved.
+    Uuid {
+        /// Prefix before the lowercase, hyphenated UUID.
+        uuid_prefix: String,
+    },
+}
+
+impl ConfigValue {
+    /// Resolve a value without including credentials in errors.
+    ///
+    /// # Errors
+    /// Returns an error if the referenced environment variable is unavailable.
+    pub fn resolve(&self) -> Result<String> {
+        match self {
+            Self::Literal(value) => Ok(value.clone()),
+            Self::Environment { env } => std::env::var(env).map_err(|_| {
+                ByokError::Config(format!("environment variable {env} is unavailable"))
+            }),
+            Self::Uuid { uuid_prefix } => Ok(format!("{uuid_prefix}{}", uuid::Uuid::new_v4())),
+        }
+    }
+}
+
+impl ProviderConfig {
+    pub(super) fn validate(&self, name: &str) -> Result<()> {
+        let path = format!("providers.{name}");
+        if name.trim().is_empty() || name.contains('/') {
+            return Err(ByokError::Config(format!("invalid provider name: {name}")));
+        }
+        let builtin = matches!(name, "claude" | "copilot" | "cursor" | "chatgpt");
+        if !builtin
+            && self
+                .base_url
+                .as_deref()
+                .is_none_or(|url| url.trim().is_empty())
+        {
+            return Err(ByokError::Config(format!("{path}.base_url is required")));
+        }
+        if name == "chatgpt" && self.api_key.is_some() {
+            return Err(ByokError::Config(format!(
+                "{path} uses client-owned credentials"
+            )));
+        }
+        if builtin
+            && (self.models_url.is_some()
+                || !self.headers.is_empty()
+                || self.service_tier.is_some())
+        {
+            return Err(ByokError::Config(format!(
+                "{path}: models_url, headers and service_tier require a custom Responses provider"
+            )));
+        }
+        if self
+            .display_name
+            .as_ref()
+            .is_some_and(|label| label.trim().is_empty())
+        {
+            return Err(ByokError::Config(format!(
+                "{path}.display_name must be nonempty"
+            )));
+        }
+        for (id, model) in &self.model_overrides {
+            if id.trim().is_empty()
+                || model
+                    .name
+                    .as_ref()
+                    .is_some_and(|label| label.trim().is_empty())
+            {
+                return Err(ByokError::Config(format!(
+                    "{path}.model_overrides IDs and names must be nonempty"
+                )));
+            }
+            if model
+                .catalog
+                .as_ref()
+                .is_some_and(|value| !value.is_object())
+            {
+                return Err(ByokError::Config(format!(
+                    "{path}.model_overrides.{id}.catalog must be an object"
+                )));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -35,7 +160,6 @@ impl Default for ProviderConfig {
 mod tests {
     use super::*;
     use crate::schema::Config;
-    use byokey_types::ProviderId;
 
     #[test]
     fn test_provider_config_default() {
@@ -53,8 +177,11 @@ providers:
     enabled: true
 "#;
         let c = Config::from_yaml(yaml).unwrap();
-        let claude = c.providers.get(&ProviderId::Claude).unwrap();
-        assert_eq!(claude.api_key.as_deref(), Some("sk-ant-test"));
+        let claude = c.providers.get("claude").unwrap();
+        assert_eq!(
+            claude.api_key.as_ref().unwrap().resolve().unwrap(),
+            "sk-ant-test"
+        );
         assert!(claude.enabled);
     }
 
@@ -66,18 +193,72 @@ providers:
     enabled: false
 ";
         let c = Config::from_yaml(yaml).unwrap();
-        let cursor = c.providers.get(&ProviderId::Cursor).unwrap();
+        let cursor = c.providers.get("cursor").unwrap();
         assert!(!cursor.enabled);
         assert!(cursor.api_key.is_none());
     }
 
     #[test]
-    fn unknown_providers_are_rejected() {
+    fn custom_providers_require_a_base_url() {
         let yaml = r"
 providers:
   codex:
     enabled: false
 ";
         assert!(Config::from_yaml(yaml).is_err());
+    }
+
+    #[test]
+    fn credentials_use_explicit_references_without_falling_back_to_literals() {
+        let config = Config::from_yaml(
+            r"
+providers:
+  claude:
+    api_key: { env: PATH }
+  cursor:
+    api_key: { env: BYOKEY_TEST_MISSING_KEY_9FC65 }
+  copilot:
+    api_key: PATH
+",
+        )
+        .unwrap();
+        assert_eq!(
+            config.providers["claude"]
+                .api_key
+                .as_ref()
+                .unwrap()
+                .resolve()
+                .unwrap(),
+            std::env::var("PATH").unwrap()
+        );
+        assert!(
+            config.providers["cursor"]
+                .api_key
+                .as_ref()
+                .unwrap()
+                .resolve()
+                .unwrap_err()
+                .to_string()
+                .contains("BYOKEY_TEST_MISSING_KEY_9FC65")
+        );
+        assert_eq!(
+            config.providers["copilot"]
+                .api_key
+                .as_ref()
+                .unwrap()
+                .resolve()
+                .unwrap(),
+            "PATH"
+        );
+    }
+
+    #[test]
+    fn chatgpt_auth_cannot_come_from_server_configuration() {
+        for settings in [
+            "api_key: server-key",
+            "headers: { Authorization: server-key }",
+        ] {
+            assert!(Config::from_yaml(&format!("providers:\n  chatgpt:\n    {settings}")).is_err());
+        }
     }
 }

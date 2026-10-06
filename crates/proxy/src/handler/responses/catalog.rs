@@ -5,7 +5,8 @@ use axum::{
     extract::{OriginalUri, State},
     http::HeaderMap,
 };
-use byokey_config::schema::responses::ResponsesConfig;
+use byokey_config::Config;
+use byokey_provider::CopilotModel;
 use byokey_types::{ByokError, ProviderId};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -21,9 +22,10 @@ pub(crate) async fn models(
 ) -> Result<Json<Value>, ApiError> {
     let config = state.config.load_full();
     let settings = &config.responses;
-    let copilot_config = config.providers.get(&ProviderId::Copilot);
+    let routes = &settings.routes;
+    let copilot_config = config.providers.get("copilot");
     let requires_copilot =
-        settings.default == "copilot" || settings.models.values().any(|m| m.upstream == "copilot");
+        routes.default == "copilot" || routes.models.values().any(|m| m.provider == "copilot");
     let copilot_enabled = copilot_config.is_none_or(|c| c.enabled);
     if requires_copilot && !copilot_enabled {
         return Err(ByokError::UnsupportedProvider("copilot is disabled".into()).into());
@@ -36,27 +38,31 @@ pub(crate) async fn models(
                     .list_accounts(ProviderId::Copilot)
                     .await?
                     .is_empty()));
-    let needs_catalog = settings.default == "chatgpt"
+    let needs_catalog = routes.default == "chatgpt"
         || uses_copilot
-        || settings
-            .models
+        || routes.models.values().any(|route| {
+            config
+                .model_override(&route.provider, &route.model)
+                .is_none_or(|m| m.catalog.is_none())
+        })
+        || config
+            .providers
             .values()
-            .any(|model| model.catalog.is_none())
-        || settings.upstreams.values().any(|u| u.models_url.is_some());
+            .any(|p| p.enabled && p.models_url.is_some());
     let originals = if needs_catalog {
-        fetch_catalog(
-            &state.http,
-            &settings.chatgpt_base_url,
-            uri.query(),
-            headers,
-        )
-        .await?
+        if config.providers.get("chatgpt").is_some_and(|p| !p.enabled) {
+            return Err(ByokError::UnsupportedProvider(
+                "chatgpt is disabled; Codex metadata requires the ChatGPT catalog".into(),
+            )
+            .into());
+        }
+        fetch_catalog(&state.http, config.chatgpt_base_url(), uri.query(), headers).await?
     } else {
         BTreeMap::new()
     };
 
     let copilot = if uses_copilot {
-        copilot_upstream(&state)
+        copilot_upstream(&state)?
             .models()
             .await?
             .into_iter()
@@ -67,15 +73,22 @@ pub(crate) async fn models(
         BTreeMap::new()
     };
     let mut output = BTreeMap::new();
-    for (slug, metadata) in &originals {
-        if settings.default == "chatgpt" {
-            output.insert(slug.clone(), metadata.clone());
+    if routes.default == "chatgpt" {
+        for slug in originals.keys() {
+            if let Some(metadata) = model_metadata(&config, &originals, "chatgpt", slug) {
+                let mut metadata = metadata.clone();
+                metadata["slug"] = json!(slug);
+                output.insert(slug.clone(), metadata);
+            }
         }
-        if let Some(model) = copilot.get(slug) {
+    }
+    for (slug, model) in &copilot {
+        if let Some(metadata) = model_metadata(&config, &originals, "copilot", slug) {
             let mut metadata = metadata.clone();
             metadata["upgrade"] = Value::Null;
             cap_context(&mut metadata, model.context_window);
-            if settings.default == "copilot" {
+            if routes.default == "copilot" {
+                metadata["slug"] = json!(slug);
                 output.insert(slug.clone(), metadata.clone());
             }
             let alias = format!("copilot/{slug}");
@@ -83,20 +96,30 @@ pub(crate) async fn models(
             output.insert(alias, metadata);
         }
     }
-    add_custom_models(&state.http, settings, &originals, &mut output).await?;
-    for (alias, route) in &settings.models {
-        let source = route.catalog_model.as_deref().unwrap_or(&route.model);
-        let mut metadata = route
-            .catalog
-            .as_ref()
-            .or_else(|| originals.get(source))
+    add_custom_models(&state.http, &config, &originals, &mut output).await?;
+    add_aliases(&config, &originals, &copilot, &mut output)?;
+    present_models(&config, &mut output)?;
+    Ok(Json(
+        json!({"models": output.into_values().collect::<Vec<_>>()}),
+    ))
+}
+
+fn add_aliases(
+    config: &Config,
+    originals: &BTreeMap<String, Value>,
+    copilot: &BTreeMap<String, CopilotModel>,
+    output: &mut BTreeMap<String, Value>,
+) -> Result<(), ByokError> {
+    for (alias, route) in &config.responses.routes.models {
+        config.response_route(alias)?;
+        let mut metadata = model_metadata(config, originals, &route.provider, &route.model)
             .cloned()
             .ok_or_else(|| {
                 ByokError::Config(format!(
-                    "alias {alias} needs catalog metadata or a valid catalog_model"
+                    "providers.{}.model_overrides.{} needs catalog metadata or a valid catalog_model for alias {alias}", route.provider, route.model
                 ))
             })?;
-        if route.upstream == "copilot" {
+        if route.provider == "copilot" {
             let model = copilot.get(&route.model).ok_or_else(|| {
                 ByokError::UnsupportedModel(format!(
                     "{} does not support Copilot /responses",
@@ -109,23 +132,18 @@ pub(crate) async fn models(
         metadata["upgrade"] = Value::Null;
         output.insert(alias.clone(), metadata);
     }
-    present_models(settings, &mut output)?;
-    Ok(Json(
-        json!({"models": output.into_values().collect::<Vec<_>>()}),
-    ))
+    Ok(())
 }
 
-fn present_models(
-    settings: &ResponsesConfig,
-    models: &mut BTreeMap<String, Value>,
-) -> Result<(), ByokError> {
+fn present_models(config: &Config, models: &mut BTreeMap<String, Value>) -> Result<(), ByokError> {
+    let settings = &config.responses;
     let format_name = settings.catalog.name_formatter()?;
     let mut preferred = BTreeMap::new();
     for (slug, metadata) in models.iter_mut() {
         if settings.catalog.hidden_aliases.contains(slug) {
             metadata["visibility"] = json!("hide");
         }
-        let (upstream, model) = settings.route(slug)?;
+        let (upstream, model) = config.response_route(slug)?;
         let rank = if slug == model {
             0
         } else if *slug == format!("{upstream}/{model}") {
@@ -145,20 +163,11 @@ fn present_models(
             .or_insert(candidate);
     }
     for (slug, metadata) in models.iter_mut() {
-        let (upstream, model) = settings.route(slug)?;
-        let label = match upstream {
-            "chatgpt" => &settings.catalog.provider_names.chatgpt,
-            "copilot" => &settings.catalog.provider_names.copilot,
-            name => settings.upstreams[name]
-                .display_name
-                .as_deref()
-                .unwrap_or(name),
-        };
-        let name = settings
-            .catalog
-            .model_names
-            .get(model)
-            .map(String::as_str)
+        let (upstream, model) = config.response_route(slug)?;
+        let label = config.provider_name(upstream);
+        let name = config
+            .model_override(upstream, model)
+            .and_then(|patch| patch.name.as_deref())
             .or_else(|| metadata["display_name"].as_str())
             .unwrap_or(model);
         metadata["display_name"] = json!(format_name(name, label)?);
@@ -182,7 +191,7 @@ fn present_models(
 
 async fn add_custom_models(
     http: &reqwest::Client,
-    settings: &ResponsesConfig,
+    config: &Config,
     originals: &BTreeMap<String, Value>,
     output: &mut BTreeMap<String, Value>,
 ) -> Result<(), ApiError> {
@@ -195,7 +204,7 @@ async fn add_custom_models(
         data: Vec<Model>,
     }
 
-    for (name, upstream) in &settings.upstreams {
+    for (name, upstream) in config.providers.iter().filter(|(_, p)| p.enabled) {
         let Some(url) = &upstream.models_url else {
             continue;
         };
@@ -211,12 +220,13 @@ async fn add_custom_models(
         }
         let models: ModelList = response.json().await.map_err(ByokError::from)?;
         for model in models.data {
-            let Some(metadata) = originals.get(&model.id) else {
+            let Some(metadata) = model_metadata(config, originals, name, &model.id) else {
                 continue;
             };
             let mut metadata = metadata.clone();
             metadata["upgrade"] = Value::Null;
-            if settings.default == *name {
+            if config.responses.routes.default == *name {
+                metadata["slug"] = json!(model.id);
                 output.insert(model.id.clone(), metadata.clone());
             }
             let alias = format!("{name}/{}", model.id);
@@ -225,6 +235,21 @@ async fn add_custom_models(
         }
     }
     Ok(())
+}
+
+fn model_metadata<'a>(
+    config: &'a Config,
+    originals: &'a BTreeMap<String, Value>,
+    provider: &str,
+    model: &str,
+) -> Option<&'a Value> {
+    let patch = config.model_override(provider, model);
+    patch.and_then(|p| p.catalog.as_ref()).or_else(|| {
+        let source = patch
+            .and_then(|p| p.catalog_model.as_deref())
+            .unwrap_or(model);
+        originals.get(source)
+    })
 }
 
 fn cap_context(metadata: &mut Value, limit: Option<u64>) {

@@ -49,7 +49,7 @@ Anthropic Messages request  (Claude Code, Claude Desktop, …)
     │
     ▼
 byokey-proxy  (axum HTTP server)
-    │  `copilot/` or `cursor/` prefix, else `routes`: the model's, its family's, the default; else Anthropic
+    │  `copilot/` or `cursor/` prefix, else `anthropic.routes`: the model's, its family's, the default; else Anthropic
     ▼
 byokey-provider  (Copilot credentials + catalog, Cursor agent client, Claude headers)
     │  get OAuth token (or api_key)
@@ -96,14 +96,14 @@ CLI entry point: `src/main.rs` (package = `byokey`, bin = `byokey`).
 | `POST` | `/byokey.*.*Service/{Method}` | ConnectRPC management API (status, accounts, usage) |
 
 A `copilot/` or `cursor/` prefix on the `model` field picks the provider for
-one request; otherwise `routes.models` does for that Claude model, then
-`routes.families` for its family, then `routes.default`, and without any the
+one request; otherwise `anthropic.routes.models` does for that Claude model, then
+`anthropic.routes.families` for its family, then `anthropic.routes.default`, and without any the
 request goes to Anthropic.
 `byokey route` edits the routes and lists them through the management API.
 
-Responses routing is separate: an exact `responses.models` alias takes priority over an upstream prefix and `responses.default`. The client owns ChatGPT credentials and refresh. Copilot reuses stored accounts, while custom upstreams use configured credentials. The Responses forwarder preserves JSON and SSE bytes and accounts for Responses terminal events; do not reuse the Anthropic terminal-event parser. HTTP mock tests in `crates/proxy/src/handler/responses/` cover credential isolation, model capabilities, aliases, errors and stream cancellation.
+Responses routing is separate: an exact `responses.routes.models` alias takes priority over a provider prefix and `responses.routes.default`. Each alias names a `provider` and its `model`. The shared `providers` map owns connections, credentials, display names and model metadata overrides. The client owns ChatGPT credentials and refresh. Copilot reuses stored accounts, while custom providers use configured credentials. The Responses forwarder preserves JSON and SSE bytes and accounts for Responses terminal events; do not reuse the Anthropic terminal-event parser. HTTP mock tests in `crates/proxy/src/handler/responses/` cover credential isolation, model capabilities, aliases, errors and stream cancellation.
 
-Native Codex forwarding in `handler/responses/passthrough.rs` always uses `responses.chatgpt_base_url`, without model routing or body parsing. Keep its HTTP client separate: automatic decompression would change the forwarded bytes and headers. Both clients use the proxy and connection settings from `http.rs`. `AppState::new` returns a `Result` because it builds the native client. The native client disables redirects and retries; it streams bodies without Responses event parsing or token accounting. Tests cover raw bytes, encoded paths, credential isolation, errors, redirects and streaming cancellation.
+Native Codex forwarding in `handler/responses/passthrough.rs` always uses `providers.chatgpt.base_url`, without model routing or body parsing. Keep its HTTP client separate: automatic decompression would change the forwarded bytes and headers. Both clients use the proxy and connection settings from `http.rs`. `AppState::new` returns a `Result` because it builds the native client. The native client disables redirects and retries; it streams bodies without Responses event parsing or token accounting. Tests cover raw bytes, encoded paths, credential isolation, errors, redirects and streaming cancellation.
 
 ### Daemon and control socket
 

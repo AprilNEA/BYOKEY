@@ -73,8 +73,8 @@ async fn serve_messages(
     }
 
     // Default: passthrough to Anthropic API.
-    let provider_cfg = config.providers.get(&ProviderId::Claude);
-    let api_key = provider_cfg.and_then(|pc| pc.api_key.clone());
+    let provider_cfg = config.providers.get("claude");
+    let api_key = provider_cfg.and_then(|pc| pc.api_key.as_ref());
     let is_oauth = api_key.is_none();
 
     // Resolve stable device fingerprint from the profile cache.
@@ -170,11 +170,11 @@ impl AnthropicUpstream {
         profile: &byokey_provider::device_profile::DeviceProfile,
         beta: &str,
     ) -> Result<Self, ApiError> {
-        let provider_cfg = config.providers.get(&ProviderId::Claude);
+        let provider_cfg = config.providers.get("claude");
         let (credential, account_id) =
-            if let Some(key) = provider_cfg.and_then(|pc| pc.api_key.clone()) {
+            if let Some(key) = provider_cfg.and_then(|pc| pc.api_key.as_ref()) {
                 (
-                    Credential::ApiKey(key),
+                    Credential::ApiKey(key.resolve()?),
                     byokey_types::DEFAULT_ACCOUNT.to_string(),
                 )
             } else {
@@ -246,15 +246,19 @@ pub(super) fn route(
         body["model"] = Value::String(bare.to_owned());
         provider
     } else if let Some(model) = ClaudeModel::from_id(model) {
-        let provider = config.routes.provider(model);
+        let provider = config.anthropic.routes.provider(model);
         if provider == ProviderId::Cursor {
             body["model"] = Value::String(model.to_string());
         }
         provider
     } else {
-        config.routes.fallback().0
+        config.anthropic.routes.fallback().0
     };
-    if config.providers.get(&provider).is_some_and(|c| !c.enabled) {
+    if config
+        .providers
+        .get(&provider.to_string())
+        .is_some_and(|c| !c.enabled)
+    {
         return Err(ByokError::UnsupportedProvider(format!(
             "{provider} is disabled"
         )));
@@ -270,7 +274,7 @@ mod tests {
     #[test]
     fn a_prefix_beats_the_routes_and_is_stripped() {
         let config = byokey_config::Config::from_yaml(
-            "routes:\n  default: copilot\n  families:\n    sonnet: claude\n  models:\n    claude-opus-5-5: cursor\n",
+            "anthropic:\n  routes:\n    default: copilot\n    families:\n      sonnet: claude\n    models:\n      claude-opus-5-5: cursor\n",
         )
         .unwrap();
         let route = |model: &str| {

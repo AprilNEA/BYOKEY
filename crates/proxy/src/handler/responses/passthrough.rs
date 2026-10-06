@@ -19,9 +19,12 @@ pub(crate) async fn passthrough(
     let (parts, body) = request.into_parts();
     require_chatgpt_auth(&parts.headers)?;
     let config = state.config.load_full();
+    if config.providers.get("chatgpt").is_some_and(|p| !p.enabled) {
+        return Err(ByokError::UnsupportedProvider("chatgpt is disabled".into()).into());
+    }
     let mut url = reqwest::Url::parse(&format!(
         "{}/",
-        config.responses.chatgpt_base_url.trim_end_matches('/')
+        config.chatgpt_base_url().trim_end_matches('/')
     ))
     .map_err(|e| ByokError::Config(format!("invalid ChatGPT backend URL: {e}")))?;
     let root = url.path().to_owned();

@@ -18,12 +18,13 @@
 //! third-party mode; the command warns about this.
 
 use anyhow::{Context as _, Result, bail};
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use super::claude::{Target, ensure_reachable, write_atomic};
+use super::claude::{Target, write_atomic};
 
 const APP: &str = "/Applications/Claude.app";
 const BUNDLE_ID: &str = "com.anthropic.claudefordesktop";
@@ -40,7 +41,7 @@ pub struct DesktopArgs {
     target: Target,
 }
 
-pub fn desktop(args: DesktopArgs) -> Result<()> {
+pub async fn desktop(args: DesktopArgs) -> Result<()> {
     if !cfg!(target_os = "macos") {
         bail!("`byokey claude desktop` supports macOS only");
     }
@@ -48,17 +49,17 @@ pub fn desktop(args: DesktopArgs) -> Result<()> {
         bail!("Claude Desktop is not installed at {APP}");
     }
     let url = args.target.resolve()?.url;
-    ensure_reachable(&url)?;
     let profile = profile_dir()?;
     if third_party_running(&profile) {
         bail!("a BYOKEY Claude Desktop is already open; quit it to open one with new settings");
     }
+    let gateway = gateway_config(&url).await?;
     // Undo a `3p` the previous BYOKEY instance wrote back, whatever happens next.
     set_mode(&profile, DeploymentMode::Official)?;
     let log = log_path()?;
     let offset = std::fs::metadata(&log).map_or(0, |m| m.len());
 
-    write_profile(&profile, &url)?;
+    write_profile(&profile, &gateway)?;
     let launched = launch(&log, offset);
     // Whatever happened, try to keep a normal launch official.
     set_mode(&profile, DeploymentMode::Official)?;
@@ -125,21 +126,62 @@ fn log_path() -> Result<PathBuf> {
     Ok(home()?.join("Library/Logs/Claude-3p/main.log"))
 }
 
-/// The gateway configuration Claude Desktop reads in third-party mode.
-fn gateway_config(url: &str) -> Value {
-    json!({
+/// Snapshot the routed catalog before writing any Desktop settings.
+async fn gateway_config(url: &str) -> Result<Value> {
+    #[derive(Deserialize)]
+    struct Catalog {
+        data: Vec<Model>,
+    }
+
+    #[derive(Deserialize)]
+    struct Model {
+        id: String,
+        display_name: String,
+        #[serde(default)]
+        supports_1m: bool,
+    }
+
+    let catalog = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()?
+        .get(format!("{}/v1/models", url.trim_end_matches('/')))
+        .send()
+        .await
+        .with_context(|| format!("fetch BYOKEY models at {url}; start it with `byokey start`"))?
+        .error_for_status()?
+        .json::<Catalog>()
+        .await
+        .context("read BYOKEY model catalog")?;
+    if catalog.data.is_empty() {
+        bail!("BYOKEY lists no routed Claude models; check `byokey route` and provider logins");
+    }
+    // Desktop can ignore discovery's display_name for recognized ids.
+    // labelOverride changes the label without changing effort recognition.
+    let models: Vec<Value> = catalog
+        .data
+        .into_iter()
+        .map(|model| {
+            json!({
+                "name": model.id,
+                "labelOverride": model.display_name,
+                "supports1m": model.supports_1m,
+            })
+        })
+        .collect();
+    Ok(json!({
         "inferenceProvider": "gateway",
         "inferenceGatewayBaseUrl": url,
         "inferenceCredentialKind": "static",
         // BYOKEY ignores client credentials, but the gateway needs one.
         "inferenceGatewayApiKey": "byokey",
         "inferenceGatewayAuthScheme": "bearer",
-        "modelDiscoveryEnabled": true,
-    })
+        "modelDiscoveryEnabled": false,
+        "inferenceModels": models,
+    }))
 }
 
 /// Point `profile`'s config library at BYOKEY, keeping other entries.
-fn write_profile(profile: &Path, url: &str) -> Result<()> {
+fn write_profile(profile: &Path, gateway: &Value) -> Result<()> {
     let library = profile.join("configLibrary");
     let meta_path = library.join("_meta.json");
     let mut meta = read_object(&meta_path)?;
@@ -153,10 +195,7 @@ fn write_profile(profile: &Path, url: &str) -> Result<()> {
     }
     meta.insert("appliedId".into(), ENTRY_ID.into());
 
-    write_json(
-        &library.join(format!("{ENTRY_ID}.json")),
-        &gateway_config(url),
-    )?;
+    write_json(&library.join(format!("{ENTRY_ID}.json")), gateway)?;
     write_json(&meta_path, &Value::Object(meta))?;
     set_mode(profile, DeploymentMode::ThirdParty)
 }
@@ -268,6 +307,72 @@ fn third_party_running(profile: &Path) -> bool {
 mod tests {
     use super::*;
 
+    async fn serve(app: axum::Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{address}")
+    }
+
+    #[tokio::test]
+    async fn profile_preserves_routed_names_ids_order_and_context() {
+        let app = axum::Router::new().route(
+            "/gateway/v1/models",
+            axum::routing::get(|| async {
+                axum::Json(json!({"data": [
+                    {"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6 · Cursor"},
+                    {"id": "claude-opus-5-5", "display_name": "Claude Opus 5.5 · GitHub Copilot", "supports_1m": true}
+                ]}))
+            }),
+        );
+        let url = format!("{}/gateway/", serve(app).await);
+        let dir = tempfile::tempdir().unwrap();
+
+        let gateway = gateway_config(&url).await.unwrap();
+        write_profile(dir.path(), &gateway).unwrap();
+
+        let entry =
+            read_object(&dir.path().join(format!("configLibrary/{ENTRY_ID}.json"))).unwrap();
+        assert_eq!(entry["inferenceGatewayBaseUrl"], url);
+        assert_eq!(entry["modelDiscoveryEnabled"], false);
+        assert_eq!(
+            entry["inferenceModels"],
+            json!([
+                {"name": "claude-sonnet-4-6", "labelOverride": "Claude Sonnet 4.6 · Cursor", "supports1m": false},
+                {"name": "claude-opus-5-5", "labelOverride": "Claude Opus 5.5 · GitHub Copilot", "supports1m": true}
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn catalog_http_errors_prevent_desktop_configuration() {
+        let app = axum::Router::new().route(
+            "/v1/models",
+            axum::routing::get(|| async { axum::http::StatusCode::SERVICE_UNAVAILABLE }),
+        );
+        let url = serve(app).await;
+
+        let error = gateway_config(&url).await.unwrap_err();
+
+        assert_eq!(
+            error.downcast_ref::<reqwest::Error>().unwrap().status(),
+            Some(reqwest::StatusCode::SERVICE_UNAVAILABLE)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_catalog_prevents_desktop_configuration() {
+        let app = axum::Router::new().route(
+            "/v1/models",
+            axum::routing::get(|| async { axum::Json(json!({"data": []})) }),
+        );
+        let url = serve(app).await;
+
+        let error = gateway_config(&url).await.unwrap_err();
+
+        assert!(error.to_string().contains("no routed Claude models"));
+    }
+
     #[test]
     fn profile_points_the_config_library_at_byokey_and_keeps_other_entries() {
         let dir = tempfile::tempdir().unwrap();
@@ -284,8 +389,16 @@ mod tests {
         )
         .unwrap();
 
-        write_profile(dir.path(), "http://127.0.0.1:8018").unwrap();
-        write_profile(dir.path(), "http://127.0.0.1:9000").unwrap();
+        write_profile(
+            dir.path(),
+            &json!({"inferenceGatewayBaseUrl": "http://127.0.0.1:8018"}),
+        )
+        .unwrap();
+        write_profile(
+            dir.path(),
+            &json!({"inferenceGatewayBaseUrl": "http://127.0.0.1:9000"}),
+        )
+        .unwrap();
 
         let meta = read_object(&library.join("_meta.json")).unwrap();
         assert_eq!(meta["appliedId"], ENTRY_ID);
@@ -311,7 +424,11 @@ mod tests {
             DesktopState::Unconfigured
         );
 
-        write_profile(dir.path(), "http://127.0.0.1:8018").unwrap();
+        write_profile(
+            dir.path(),
+            &json!({"inferenceGatewayBaseUrl": "http://127.0.0.1:8018"}),
+        )
+        .unwrap();
         assert_eq!(
             inspect(dir.path(), true).unwrap(),
             DesktopState::Applied {

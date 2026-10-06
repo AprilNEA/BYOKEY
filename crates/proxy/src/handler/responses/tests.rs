@@ -6,11 +6,9 @@ use axum::{
     routing::get,
 };
 use byokey_auth::AuthManager;
-use byokey_config::{
-    Config, ProviderConfig,
-    schema::responses::{ConfigValue, ResponseModel},
-};
+use byokey_config::{Config, ConfigValue, ProviderConfig, schema::responses::ResponseModel};
 use byokey_store::InMemoryTokenStore;
+use byokey_types::ProviderId;
 use serde_json::json;
 use tokio::sync::mpsc;
 use tower::ServiceExt as _;
@@ -87,6 +85,26 @@ fn state(config: Config) -> Arc<AppState> {
     .unwrap()
 }
 
+fn chatgpt_config(base_url: impl Into<String>) -> Config {
+    let mut config = Config::default();
+    config.providers.insert(
+        "chatgpt".into(),
+        ProviderConfig {
+            base_url: Some(base_url.into()),
+            ..Default::default()
+        },
+    );
+    config
+}
+
+fn copilot_provider(base_url: &str) -> ProviderConfig {
+    ProviderConfig {
+        api_key: Some(ConfigValue::Literal(uuid::Uuid::new_v4().to_string())),
+        base_url: Some(base_url.to_owned()),
+        ..Default::default()
+    }
+}
+
 fn request(body: &Value) -> Request<Body> {
     Request::builder()
         .method("POST")
@@ -108,8 +126,7 @@ const COMPLETED: &str = "data: {\"type\":\"response.completed\",\"response\":{\"
 async fn chatgpt_keeps_auth_and_unknown_request_fields_and_counts_responses_usage() {
     let (router, mut received) = capture(StatusCode::OK, COMPLETED);
     let upstream = serve(router).await;
-    let mut config = Config::default();
-    config.responses.chatgpt_base_url = format!("{}/backend-api/codex/", upstream.url);
+    let config = chatgpt_config(format!("{}/backend-api/codex/", upstream.url));
     let state = state(config);
     let body = json!({"model":"chatgpt/gpt-example", "stream":true,
         "input":[{"type":"function_call_output","call_id":"call-opaque","output":"42"}],
@@ -149,8 +166,7 @@ async fn chatgpt_keeps_auth_and_unknown_request_fields_and_counts_responses_usag
 async fn chatgpt_streams_without_content_type_still_forward_sse_and_record_usage() {
     let upstream =
         serve(Router::new().fallback(|| async { Response::new(Body::from(COMPLETED)) })).await;
-    let mut config = Config::default();
-    config.responses.chatgpt_base_url = upstream.url.clone();
+    let config = chatgpt_config(upstream.url.clone());
     let state = state(config);
 
     let response = crate::make_router(state.clone())
@@ -180,8 +196,7 @@ async fn non_streaming_requests_without_content_type_still_forward_json() {
     const BODY: &str = r#"{"status":"completed","usage":{"input_tokens":17,"output_tokens":3}}"#;
     let upstream =
         serve(Router::new().fallback(|| async { Response::new(Body::from(BODY)) })).await;
-    let mut config = Config::default();
-    config.responses.chatgpt_base_url = upstream.url.clone();
+    let config = chatgpt_config(upstream.url.clone());
     let state = state(config);
 
     let response = crate::make_router(state.clone())
@@ -208,14 +223,11 @@ async fn custom_upstreams_replace_credentials_and_resolve_environment_headers() 
     let (router, mut received) = capture(StatusCode::OK, COMPLETED);
     let upstream = serve(router).await;
     let mut config = Config::default();
-    config.responses.upstreams.insert(
+    config.providers.insert(
         "company".into(),
-        ResponsesUpstream {
-            base_url: format!("{}/team/v1", upstream.url),
-            models_url: None,
-            display_name: None,
+        ProviderConfig {
+            base_url: Some(format!("{}/team/v1", upstream.url)),
             api_key: Some(ConfigValue::Literal("company-key".into())),
-            service_tier: None,
             headers: [
                 (
                     "X-Special".into(),
@@ -227,15 +239,14 @@ async fn custom_upstreams_replace_credentials_and_resolve_environment_headers() 
                 ),
             ]
             .into(),
+            ..Default::default()
         },
     );
-    config.responses.models.insert(
+    config.responses.routes.models.insert(
         "fast-alias".into(),
         ResponseModel {
-            upstream: "company".into(),
+            provider: "company".into(),
             model: "vendor/gpt-fast".into(),
-            catalog_model: None,
-            catalog: None,
         },
     );
     let response = crate::make_router(state(config))
@@ -268,9 +279,8 @@ async fn custom_upstreams_replace_credentials_and_resolve_environment_headers() 
 async fn custom_upstreams_apply_the_service_tier_and_generate_fresh_request_headers() {
     let (router, mut received) = capture(StatusCode::OK, COMPLETED);
     let upstream = serve(router).await;
-    let config: Config = serde_json::from_value(json!({"responses": {
-        "models": {"Company Model": {"upstream": "company", "model": "gpt-example"}},
-        "upstreams": {"company": {
+    let config: Config = serde_json::from_value(json!({
+        "providers": {"company": {
             "base_url": format!("{}/openai/v1", upstream.url),
             "service_tier": "fast",
             "headers": {
@@ -279,7 +289,10 @@ async fn custom_upstreams_apply_the_service_tier_and_generate_fresh_request_head
                 "x-request-uid": {"uuid_prefix": "request-"},
             },
         }},
-    }}))
+        "responses": {"routes": {
+            "models": {"Company Model": {"provider": "company", "model": "gpt-example"}},
+        }},
+    }))
     .unwrap();
     let router = crate::make_router(state(config));
 
@@ -336,8 +349,7 @@ async fn upstream_auth_errors_are_returned_without_retry_or_rewriting() {
     const ERROR: &str = "{ \"error\": {\"message\":\"expired\",\"code\":\"token_expired\"} }";
     let (router, mut received) = capture(StatusCode::UNAUTHORIZED, ERROR);
     let upstream = serve(router).await;
-    let mut config = Config::default();
-    config.responses.chatgpt_base_url = upstream.url.clone();
+    let config = chatgpt_config(upstream.url.clone());
     let state = state(config);
     let response = crate::make_router(state.clone())
         .oneshot(request(&json!({"model":"gpt-example","input":"hi"})))
@@ -368,9 +380,9 @@ async fn copilot_uses_its_own_credential_and_marks_tool_results_as_agent_request
     let key = uuid::Uuid::new_v4().to_string();
     let mut config = Config::default();
     config.providers.insert(
-        ProviderId::Copilot,
+        "copilot".into(),
         ProviderConfig {
-            api_key: Some(key.clone()),
+            api_key: Some(ConfigValue::Literal(key.clone())),
             base_url: Some(upstream.url.clone()),
             ..Default::default()
         },
@@ -417,14 +429,9 @@ async fn copilot_streaming_and_completed_messages_have_the_same_identity() {
     ))
     .await;
     let mut config = Config::default();
-    config.providers.insert(
-        ProviderId::Copilot,
-        ProviderConfig {
-            api_key: Some(uuid::Uuid::new_v4().to_string()),
-            base_url: Some(upstream.url.clone()),
-            ..Default::default()
-        },
-    );
+    config
+        .providers
+        .insert("copilot".into(), copilot_provider(&upstream.url));
 
     let response = crate::make_router(state(config))
         .oneshot(request(
@@ -463,15 +470,12 @@ async fn aliases_keep_catalog_capabilities_but_disable_upstream_migrations() {
         r#"{"models":[{"slug":"gpt-original","display_name":"Original","base_instructions":"original instructions","context_window":400000,"upgrade":{"model":"outside-gateway"},"future_field":17}]}"#,
     );
     let upstream = serve(router).await;
-    let mut config = Config::default();
-    config.responses.chatgpt_base_url = upstream.url.clone();
-    config.responses.models.insert(
+    let mut config = chatgpt_config(upstream.url.clone());
+    config.responses.routes.models.insert(
         "fast".into(),
         ResponseModel {
-            upstream: "chatgpt".into(),
+            provider: "chatgpt".into(),
             model: "gpt-original".into(),
-            catalog_model: None,
-            catalog: None,
         },
     );
     let response = crate::make_router(state(config))
@@ -519,15 +523,12 @@ async fn aliased_catalogs_fit_codex_limits_without_losing_canonical_or_legacy_in
         }),
     ))
     .await;
-    let mut config = Config::default();
-    config.responses.chatgpt_base_url = upstream.url.clone();
-    config.responses.models.insert(
+    let mut config = chatgpt_config(upstream.url.clone());
+    config.responses.routes.models.insert(
         "alias".into(),
         ResponseModel {
-            upstream: "chatgpt".into(),
+            provider: "chatgpt".into(),
             model: "modern".into(),
-            catalog_model: None,
-            catalog: None,
         },
     );
 
@@ -606,8 +607,7 @@ async fn redirects_do_not_disclose_credentials_to_a_second_server() {
         async move { (StatusCode::TEMPORARY_REDIRECT, [("location", destination)]) }
     }))
     .await;
-    let mut config = Config::default();
-    config.responses.chatgpt_base_url = redirect.url.clone();
+    let config = chatgpt_config(redirect.url.clone());
     let response = crate::make_router(state(config))
         .oneshot(request(&json!({"model":"gpt-example","input":"hi"})))
         .await
@@ -617,22 +617,96 @@ async fn redirects_do_not_disclose_credentials_to_a_second_server() {
 }
 
 #[tokio::test]
+async fn disabled_providers_block_responses_and_native_codex_before_forwarding() {
+    let (router, mut received) = capture(StatusCode::OK, COMPLETED);
+    let upstream = serve(router).await;
+    let mut config = chatgpt_config(upstream.url.clone());
+    config.providers.get_mut("chatgpt").unwrap().enabled = false;
+    config.providers.insert(
+        "company".into(),
+        ProviderConfig {
+            base_url: Some(upstream.url.clone()),
+            enabled: false,
+            ..Default::default()
+        },
+    );
+    let app = crate::make_router(state(config));
+
+    for model in ["chatgpt/gpt-example", "company/deployment"] {
+        let response = app
+            .clone()
+            .oneshot(request(&json!({"model":model,"input":"hi"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("is disabled"));
+    }
+    let native = app
+        .oneshot(
+            Request::builder()
+                .uri("/codex/future")
+                .header("authorization", "Bearer client-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(native.status(), StatusCode::BAD_REQUEST);
+    assert!(received.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn missing_provider_credentials_do_not_fall_back_to_client_auth() {
+    let (router, mut received) = capture(StatusCode::OK, COMPLETED);
+    let upstream = serve(router).await;
+    let config = Config::from_yaml(&format!(
+        r"
+providers:
+  copilot:
+    base_url: {}
+    api_key: {{ env: BYOKEY_TEST_MISSING_KEY_9FC65 }}
+",
+        upstream.url
+    ))
+    .unwrap();
+
+    let response = crate::make_router(state(config))
+        .oneshot(request(
+            &json!({"model":"copilot/gpt-example","input":"hi"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(
+        String::from_utf8_lossy(&body)
+            .contains("environment variable BYOKEY_TEST_MISSING_KEY_9FC65 is unavailable")
+    );
+    assert!(received.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn explicit_custom_catalogs_work_without_chatgpt_credentials() {
     let config = Config::from_yaml(
         r"
+providers:
+  company:
+    base_url: https://example.com/v1
+    model_overrides:
+      deployment:
+        catalog:
+          display_name: Company model
+          base_instructions: Deployment instructions
+          context_window: 64000
 responses:
-  default: company
-  upstreams:
-    company:
-      base_url: https://example.com/v1
-  models:
-    custom:
-      upstream: company
-      model: deployment
-      catalog:
-        display_name: Company model
-        base_instructions: Deployment instructions
-        context_window: 64000
+  routes:
+    default: company
+    models:
+      custom:
+        provider: company
+        model: deployment
 ",
     )
     .unwrap();
@@ -668,17 +742,11 @@ async fn copilot_catalogs_cap_context_without_inflating_smaller_models() {
             {"id":"gpt-large","model_picker_enabled":true,"supported_endpoints":["/responses"],
              "capabilities":{"limits":{"max_context_window_tokens":128_000}}}
         ]})) }))).await;
-    let mut config = Config::default();
-    config.responses.default = "copilot".into();
-    config.responses.chatgpt_base_url = format!("{}/chatgpt", upstream.url);
-    config.providers.insert(
-        ProviderId::Copilot,
-        ProviderConfig {
-            api_key: Some(uuid::Uuid::new_v4().to_string()),
-            base_url: Some(upstream.url.clone()),
-            ..Default::default()
-        },
-    );
+    let mut config = chatgpt_config(format!("{}/chatgpt", upstream.url));
+    config.responses.routes.default = "copilot".into();
+    config
+        .providers
+        .insert("copilot".into(), copilot_provider(&upstream.url));
     let response = crate::make_router(state(config))
         .oneshot(
             Request::builder()

@@ -5,7 +5,7 @@ use axum::{
     response::Response,
 };
 use byokey_auth::AuthManager;
-use byokey_config::{Config, ProviderConfig};
+use byokey_config::{Config, ConfigValue, ProviderConfig};
 use byokey_store::InMemoryTokenStore;
 use byokey_types::ProviderId;
 use serde_json::{Value, json};
@@ -59,11 +59,11 @@ impl Upstream {
 
     fn config(&self) -> Config {
         let mut config = Config::default();
-        config.routes.default = Some(ProviderId::Copilot);
+        config.anthropic.routes.default = Some(ProviderId::Copilot);
         config.providers.insert(
-            ProviderId::Copilot,
+            ProviderId::Copilot.to_string(),
             ProviderConfig {
-                api_key: Some(uuid::Uuid::new_v4().to_string()),
+                api_key: Some(ConfigValue::Literal(uuid::Uuid::new_v4().to_string())),
                 base_url: Some(self.url.clone()),
                 ..Default::default()
             },
@@ -105,39 +105,39 @@ async fn disabled_routes_reject_generation_and_counting_before_authentication() 
         (ProviderId::Claude, "", "claude-opus-5-5"),
         (
             ProviderId::Copilot,
-            "routes:\n  default: copilot",
+            "anthropic:\n  routes:\n    default: copilot",
             "unknown-model",
         ),
         (
             ProviderId::Cursor,
-            "routes:\n  default: cursor",
+            "anthropic:\n  routes:\n    default: cursor",
             "claude-opus-5-5",
         ),
         (
             ProviderId::Copilot,
-            "routes:\n  families:\n    opus: copilot",
+            "anthropic:\n  routes:\n    families:\n      opus: copilot",
             "claude-opus-5-5",
         ),
         (
             ProviderId::Cursor,
-            "routes:\n  models:\n    claude-opus-5-5: cursor",
+            "anthropic:\n  routes:\n    models:\n      claude-opus-5-5: cursor",
             "claude-opus-5-5[1m]",
         ),
         (
             ProviderId::Copilot,
-            "routes:\n  default: cursor",
+            "anthropic:\n  routes:\n    default: cursor",
             "copilot/claude-opus-5.5",
         ),
         (
             ProviderId::Cursor,
-            "routes:\n  default: copilot",
+            "anthropic:\n  routes:\n    default: copilot",
             "cursor/claude-opus-5-5",
         ),
     ];
     for (provider, routes, model) in cases {
         let mut config = Config::from_yaml(routes).unwrap();
         config.providers.insert(
-            provider,
+            provider.to_string(),
             ProviderConfig {
                 enabled: false,
                 ..Default::default()
@@ -191,11 +191,7 @@ async fn disabling_a_keyed_provider_on_reload_stops_upstream_requests() {
     upstream.received.try_recv().unwrap();
 
     let mut disabled = config;
-    disabled
-        .providers
-        .get_mut(&ProviderId::Copilot)
-        .unwrap()
-        .enabled = false;
+    disabled.providers.get_mut("copilot").unwrap().enabled = false;
     state.config.store(Arc::new(disabled));
     let response = app
         .clone()
@@ -213,16 +209,10 @@ async fn disabling_a_keyed_provider_on_reload_stops_upstream_requests() {
 }
 
 #[tokio::test]
-async fn copilot_preserves_the_model_despite_a_legacy_small_model_setting() {
+async fn copilot_preserves_the_requested_model() {
     let mut upstream =
         Upstream::start(StatusCode::OK, r#"{"content":[],"stop_reason":"end_turn"}"#).await;
-    let mut config = Config::from_yaml(
-        "routes:\n  default: copilot\nproviders:\n  copilot:\n    small_model: gpt-5-mini\n",
-    )
-    .unwrap();
-    let provider = config.providers.get_mut(&ProviderId::Copilot).unwrap();
-    provider.api_key = Some(uuid::Uuid::new_v4().to_string());
-    provider.base_url = Some(upstream.url.clone());
+    let config = upstream.config();
     let app = crate::make_router(state(config));
     let body = json!({"model": "claude-opus-5-5", "max_tokens": 16, "tools": [],
         "messages": [{"role": "user", "content": "Explain ownership."}]});

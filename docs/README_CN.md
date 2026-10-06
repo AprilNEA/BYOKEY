@@ -171,24 +171,28 @@ enable_request_compression = false
 模型名称默认显示为「模型名 (来源)」。可通过配置修改展示，不改变路由 ID、指令和能力：
 
 ```yaml
+providers:
+  copilot:
+    display_name: GitHub Copilot
+    model_overrides:
+      gpt-6-astra:
+        name: GPT-6 Astra
+
 responses:
   catalog:
     name_format: "{{ model }} ({{ provider }})"
-    provider_names:
-      chatgpt: ChatGPT
-      copilot: Copilot
-    model_names:
-      gpt-6-astra: GPT-6 Astra
     hidden_aliases: ["LLM Router"]
 ```
 
-`name_format` 使用 MiniJinja 模板，提供纯文本变量 `model` 和 `provider`，支持 `upper`、`replace` 等内置过滤器，不支持模板导入或文件访问。例如 `"{{ provider }} / {{ model }}"` 会将来源放在前面。`provider_names` 仅配置内置来源 `chatgpt` 和 `copilot`；自定义来源继续使用 `responses.upstreams.<name>.display_name`，缺省时使用上游名称。`model_names` 按实际上游模型 ID 覆盖所有来源的模型名，不按别名或 `catalog_model` 匹配。未覆盖的名称保留 ChatGPT 元数据或显式 `catalog.display_name` 的原始拼写，缺少名称时使用模型 ID，不再自动改写连字符或去掉来源后缀。
+`providers` 是两种协议共用的扁平 Provider 表。`claude`、`copilot`、`cursor`、`chatgpt` 是保留的内置名称；其他名称定义自定义 Responses Provider，必须设置 `base_url`。连接设置和模型元数据都写在 Provider 下，`responses.routes.models` 中的别名只包含 `provider` 和发送给该 Provider 的 `model`。`api_key` 接受字面量字符串或显式环境变量引用 `{ env: NAME }`，字面量不会被解释为变量或命令。ChatGPT 凭据由客户端持有，`providers.chatgpt` 不接受 `api_key` 和 `headers`。
 
-同一上游、同一模型最多显示一个可选条目，优先选择未隐藏的无前缀 ID，再选择带来源前缀的 ID，最后选择配置别名。`hidden_aliases` 精确匹配列表中的 ID，隐藏一个别名不会隐藏同一模型的其他别名。重复别名和手动隐藏的条目都保留元数据，旧会话仍可继续使用；上游已隐藏的模型不会重新显示。不同上游和不同部署不会合并。配置 Copilot API Key 或完成 Copilot 登录后即可自动发现模型，无需占位别名；`providers.copilot.enabled: false` 可禁用该来源。
+`name_format` 使用 MiniJinja 模板，提供纯文本变量 `model` 和 `provider`，支持 `upper`、`replace` 等内置过滤器，不支持模板导入或文件访问。例如 `"{{ provider }} / {{ model }}"` 会将来源放在前面。`providers.<name>.display_name` 同时用于 Responses 和 Anthropic 目录，默认名称为 `ChatGPT`、`Copilot`、`Claude (Anthropic)` 和 `Cursor`，自定义 Provider 默认使用其名称。`providers.<name>.model_overrides` 以发送给该 Provider 的实际模型 ID 为键，不按别名或 `catalog_model` 匹配；每项可设置 `name`（显示名称）、`catalog_model`（元数据相符的 ChatGPT Codex 目录模型）或 `catalog`（完整的 Codex 元数据）。未设置 `catalog_model` 或 `catalog` 时，使用 ChatGPT 目录中同 ID 的元数据。未覆盖的名称保留 ChatGPT 元数据或显式 `catalog.display_name` 的原始拼写，缺少名称时使用模型 ID，不再自动改写连字符或去掉来源后缀。
+
+同一 Provider、同一模型最多显示一个可选条目，优先选择未隐藏的无前缀 ID，再选择带来源前缀的 ID，最后选择配置别名。`hidden_aliases` 精确匹配列表中的 ID，隐藏一个别名不会隐藏同一模型的其他别名。重复别名和手动隐藏的条目都保留元数据，旧会话仍可继续使用；上游已隐藏的模型不会重新显示。不同上游和不同部署不会合并。配置 Copilot API Key 或完成 Copilot 登录后即可自动发现模型，无需占位别名；`providers.copilot.enabled: false` 可禁用该来源。
 
 配置支持热重载，下次模型目录请求即可使用新配置，但客户端可能需要刷新缓存。模板语法错误、未知变量或校验渲染失败会拒绝配置；热重载失败时保留上一份有效配置并记录错误。实际模型数据导致渲染错误或空名称时，目录请求会明确报错，不会静默回退。
 
-未匹配已有路由的 `/codex/*` 请求使用客户端的 ChatGPT 凭据，转发到 `responses.chatgpt_base_url`，默认值为 `https://chatgpt.com/backend-api/codex`。图片生成和编辑等原生接口不受推理模型所选 Provider 影响。转发不会自动启用客户端功能，也不会改写原生接口的模型别名。完整的模型别名、自定义上游和能力限制说明见[英文版快速开始](../README.md#chatgptapp--codex)。
+未匹配已有路由的 `/codex/*` 请求使用客户端的 ChatGPT 凭据，转发到 `providers.chatgpt.base_url`，默认值为 `https://chatgpt.com/backend-api/codex`。图片生成和编辑等原生接口不受推理模型所选 Provider 影响。转发不会自动启用客户端功能，也不会改写原生接口的模型别名。完整的模型别名、自定义上游和能力限制说明见[英文版快速开始](../README.md#chatgptapp--codex)。
 
 保持监听地址为 `127.0.0.1`，且只配置可信的上游地址。BYOKEY 不为已存储的 Copilot 或自定义上游凭据提供入站鉴权，不要向不可信网络暴露端口。
 
@@ -304,7 +308,7 @@ Options:
 
 模型路由优先于系列路由，系列路由优先于默认；都没有时模型走 Anthropic。Claude Code
 的附带请求（标题、摘要）用的是 Haiku，所以 `--family haiku` 决定它们的去向。路由保存在
-配置文件里，运行中的服务器会自动重新加载，配置文件由 `byokey route` 新建时也一样。
+配置文件的 `anthropic.routes` 中，运行中的服务器会自动重新加载，配置文件由 `byokey route` 新建时也一样。
 Provider 未登录时 `byokey route set` 会给出提醒，`byokey doctor` 会检查所有被路由到的 Provider。
 
 **`byokey service <install|uninstall|start|stop|status>`** — 将 byokey
@@ -322,7 +326,13 @@ Windows 上使用 SCM。`install` 接受与 `serve` 相同的选项；未指定 
 `--settings <FILE>` 指定目标文件。
 
 **`byokey claude desktop`** — 在官方 Claude Desktop 旁边再开一个第三方模式的实例，
-改用 BYOKEY，模型从 BYOKEY 发现，官方 profile 不会被改动。BYOKEY 实例运行期间可能
+改用 BYOKEY，官方 profile 不会被改动。启动前读取 BYOKEY 的模型目录，将标准模型 ID、
+1M 上下文标志和显示名称写入 `inferenceModels`，显示名称使用 `labelOverride`，例如
+「Claude Opus 5.5 · Copilot」。标准 ID 保留 Desktop 识别 effort 的依据；
+对于 Desktop 无法识别的模型 ID，不保证 Effort 控件可用。
+修改路由、显示设置或可用模型后，退出 BYOKEY Desktop 实例，再运行此命令刷新列表和名称；
+服务器路由仍会热重载，Desktop 标签反映上次通过此命令启动时的路由。
+目录请求失败或没有可用模型时，不修改 Desktop 设置。BYOKEY 实例运行期间可能
 改写 Desktop 保存的模式，官方 Desktop 关着时从 Dock 冷启动可能会打开 BYOKEY 那个，
 命令运行时会给出警告。仅支持 macOS。
 
@@ -338,15 +348,6 @@ Windows 上使用 SCM。`install` 接受与 `serve` 相同的选项；未指定 
 port: 8018
 host: 127.0.0.1
 
-# 每个 Claude 模型由哪个 Provider 提供；`byokey route` 会编辑这里。
-# 模型路由优先于系列路由，系列路由优先于 default；都没有时模型走 Anthropic。
-routes:
-  default: copilot
-  families:
-    opus: cursor
-  models:
-    claude-opus-5-5: copilot
-
 providers:
   # 直接用原始 API Key 走 Anthropic，替代登录
   # claude:
@@ -354,22 +355,52 @@ providers:
 
   # cursor.com/dashboard 生成的 `crsr_…` Key，或运行 `byokey login cursor`
   cursor:
-    api_key: "crsr_..."
+    api_key: { env: CURSOR_API_KEY }
+
+anthropic:
+  # 每个 Claude 模型由哪个 Provider 提供；`byokey route` 会编辑这里。
+  # 模型路由优先于系列路由，系列路由优先于 default；都没有时模型走 Anthropic。
+  routes:
+    default: copilot
+    families:
+      opus: cursor
+    models:
+      claude-opus-5-5: copilot
 ```
 
-所有字段均可选；未指定的 Provider 默认启用，并使用数据库中存储的登录。
-`claude`、`copilot`、`cursor` 之外的 Provider 会被拒绝。
+所有字段均可选；未指定的 Provider 默认启用，并使用数据库中存储的登录。未知字段会使配置加载失败。
+`providers` 是两种协议共用的 Provider 表，自定义 Responses Provider 见[英文版快速开始](../README.md#chatgptapp--codex)；Anthropic 路由只接受 `claude`、`copilot`、`cursor`。
 设置 `providers.<name>.enabled: false` 会隐藏该 Provider 的模型，并以 HTTP 400
 拒绝路由到它的生成和 token 计数请求，包括带 `copilot/` 或 `cursor/` 显式前缀的请求，
 不会自动改走其他 Provider。
 
 `/v1/models` 以 Anthropic 的 id（`claude-opus-5-5`）列出每个 Claude 模型，且只在
-其路由指向的 Provider 提供该模型时列出。Claude Desktop 只认这些 id，并据此显示
-每个模型的 effort 档位。
+其路由指向的 Provider 提供该模型时列出，每个模型只列一次。显示名称标明路由选中的
+Provider，标准 ID 保留 Claude Desktop 识别模型和 effort 的依据；显示名称不改变路由。
+
+Provider 和模型的显示名称写在 `providers` 下；Claude 客户端的名称格式通过 `anthropic.catalog` 配置，与 `responses.catalog` 相互独立：
+
+```yaml
+providers:
+  claude:
+    display_name: Anthropic
+  copilot:
+    display_name: GitHub Copilot
+    model_overrides:
+      claude-opus-5-5:
+        name: Opus 5.5
+
+anthropic:
+  catalog:
+    name_format: "{{ model }} · {{ provider }}"
+```
+
+`name_format` 复用 Responses 目录的 MiniJinja 语法和校验，支持 `model`、`provider` 两个纯文本变量及过滤器。例如 `"{{ provider | upper }} / {{ model }}"` 会把 Provider 名称大写并放在前面。默认格式为 `"{{ model }} · {{ provider }}"`。`providers.<name>.display_name` 与 Responses 目录共用，默认名称为 `Claude (Anthropic)`、`Copilot` 和 `Cursor`。Anthropic 的 `model_overrides` 以标准 Anthropic ID（如 `claude-opus-5-5`）为键，不使用 Provider 前缀或 Provider 自己的写法（如 `claude-opus-5.5`），在该 Provider 提供此模型时生效；未覆盖的模型保留标准友好名称。这些设置仅影响 `display_name` 和 Desktop 的 `labelOverride`，不改变模型 ID、路由、effort 或上下文能力。
+
+服务器会热重载这些设置。无效模板或空名称会使配置加载失败；重载失败时保留上次有效配置。模板在实际模型数据上渲染失败时，目录请求直接报错，不替换成默认名称。修改显示设置后，退出 BYOKEY Desktop 实例，再运行 `byokey claude desktop` 刷新已保存的标签。
 
 **Copilot** 请求保留客户端选择的模型，包括普通无工具聊天和 compaction。
-`providers.copilot.small_model` 已弃用；旧配置仍可加载，但该值会被忽略，并向 stderr
-输出弃用警告。删除该配置项，在 Claude Code 客户端选择后台模型：
+在 Claude Code 客户端选择后台模型：
 
 ```sh
 ANTHROPIC_DEFAULT_HAIKU_MODEL=copilot/claude-haiku-4-5 byokey claude start
@@ -392,6 +423,25 @@ Copilot 的行为一致。
 `gpt-5.6-sol-low-fast` 这类变体，`/v1/models` 不会列出它们。以 `cursor/<model>`
 指定，例如 `byokey claude start --model cursor/claude-opus-5-5-low-fast` 就会让
 Claude Code 走 Cursor；`copilot/<model>` 对 Copilot 同理。前缀会覆盖该请求的路由。
+
+### 从旧配置迁移
+
+BYOKEY 不会自动迁移配置文件。旧字段和未知字段都会使配置加载失败；热重载失败时保留上次有效配置。请手动修改：
+
+| 旧配置 | 新配置 |
+| --- | --- |
+| 根级 `routes` | `anthropic.routes` |
+| `responses.default` | `responses.routes.default` |
+| `responses.models.<alias>`（`upstream`、`model`） | `responses.routes.models.<alias>`（`provider`、`model`） |
+| 别名上的 `catalog_model` 或 `catalog` | `providers.<provider>.model_overrides.<model>.catalog_model` 或 `.catalog` |
+| `responses.upstreams.<name>` | `providers.<name>`（必须设置 `base_url`） |
+| `responses.chatgpt_base_url` | `providers.chatgpt.base_url` |
+| `responses.catalog.provider_names`、`anthropic.catalog.provider_names` | `providers.<name>.display_name` |
+| `responses.catalog.model_names`、`anthropic.catalog.model_names` | `providers.<provider>.model_overrides.<model>.name` |
+| `providers.claude.backend` | `anthropic.routes.default` |
+| `providers.copilot.small_model` | 删除；在客户端设置 `ANTHROPIC_DEFAULT_HAIKU_MODEL` |
+
+`port`、`host`、`proxy_url`、`log`、`telemetry` 和 `claude_code` 保持不变。
 
 ## 日志
 

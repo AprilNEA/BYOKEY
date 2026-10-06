@@ -197,7 +197,7 @@ async fn account(
     config: &byokey_config::Config,
     provider: ProviderId,
 ) -> Option<Outcome> {
-    let pc = config.providers.get(&provider);
+    let pc = config.providers.get(&provider.to_string());
     if pc.is_some_and(|c| !c.enabled) {
         return None;
     }
@@ -225,7 +225,7 @@ async fn account(
 
 /// Whether every provider a route names can serve requests.
 async fn routes(auth: &AuthManager, config: &byokey_config::Config) -> Outcome {
-    let r = &config.routes;
+    let r = &config.anthropic.routes;
     let routed: std::collections::BTreeSet<ProviderId> = r
         .default
         .into_iter()

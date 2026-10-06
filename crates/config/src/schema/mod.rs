@@ -1,3 +1,5 @@
+pub mod anthropic;
+mod catalog;
 pub mod claude_code;
 pub mod provider;
 pub mod responses;
@@ -5,13 +7,13 @@ pub mod routes;
 pub mod runtime;
 
 pub use claude_code::ClaudeCodeConfig;
-pub use provider::ProviderConfig;
+pub use provider::{ConfigValue, ModelOverride, ProviderConfig};
 pub use routes::{RouteSource, Routes};
 pub use runtime::{LogConfig, LogFormat, TelemetryConfig};
 
-use byokey_types::ProviderId;
+use byokey_types::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 fn default_port() -> u16 {
     8018
@@ -22,6 +24,7 @@ fn default_host() -> String {
 
 /// Top-level application configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     /// Listen port (defaults to 8018).
     #[serde(default = "default_port")]
@@ -31,10 +34,10 @@ pub struct Config {
     pub host: String,
     /// Provider configuration map.
     #[serde(default)]
-    pub providers: HashMap<ProviderId, ProviderConfig>,
-    /// Which provider serves each Anthropic model.
+    pub providers: BTreeMap<String, ProviderConfig>,
+    /// Anthropic model catalog presentation for Claude clients.
     #[serde(default)]
-    pub routes: Routes,
+    pub anthropic: anthropic::AnthropicConfig,
     /// Responses API routing for ChatGPT.app and Codex.
     #[serde(default)]
     pub responses: responses::ResponsesConfig,
@@ -58,8 +61,8 @@ impl Default for Config {
         Self {
             port: default_port(),
             host: default_host(),
-            providers: HashMap::new(),
-            routes: Routes::default(),
+            providers: BTreeMap::new(),
+            anthropic: anthropic::AnthropicConfig::default(),
             responses: responses::ResponsesConfig::default(),
             claude_code: ClaudeCodeConfig::default(),
             proxy_url: None,
@@ -70,13 +73,55 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Provider label shared by the Anthropic and Responses catalogs.
+    #[must_use]
+    pub fn provider_name<'a>(&'a self, name: &'a str) -> &'a str {
+        self.providers
+            .get(name)
+            .and_then(|p| p.display_name.as_deref())
+            .unwrap_or(match name {
+                "chatgpt" => "ChatGPT",
+                "copilot" => "Copilot",
+                "claude" => "Claude (Anthropic)",
+                "cursor" => "Cursor",
+                _ => name,
+            })
+    }
+
+    /// Sparse metadata for one provider model, not a client alias.
+    #[must_use]
+    pub fn model_override(&self, provider: &str, model: &str) -> Option<&ModelOverride> {
+        self.providers.get(provider)?.model_overrides.get(model)
+    }
+
+    /// Trusted `ChatGPT` backend root for Responses and native Codex requests.
+    #[must_use]
+    pub fn chatgpt_base_url(&self) -> &str {
+        self.providers
+            .get("chatgpt")
+            .and_then(|p| p.base_url.as_deref())
+            .unwrap_or("https://chatgpt.com/backend-api/codex")
+    }
+
+    /// Validate provider definitions and protocol settings without resolving credentials.
+    ///
+    /// # Errors
+    /// Returns an error for invalid provider metadata, templates, or route targets.
+    pub fn validate(&self) -> Result<()> {
+        for (name, provider) in &self.providers {
+            provider.validate(name)?;
+        }
+        self.anthropic.catalog.validate()?;
+        self.validate_responses()
+    }
+
     /// Parses configuration from a YAML string, merged with defaults.
     ///
     /// # Errors
     ///
     /// Returns a [`figment::Error`] if the YAML is invalid or extraction fails.
     #[allow(clippy::result_large_err)]
-    pub fn from_yaml(yaml: &str) -> Result<Self, figment::Error> {
+    pub fn from_yaml(yaml: &str) -> std::result::Result<Self, figment::Error> {
         use figment::{
             Figment,
             providers::{Format as _, Serialized, Yaml},
@@ -93,7 +138,7 @@ impl Config {
     ///
     /// Returns a [`figment::Error`] if the file cannot be read or parsed.
     #[allow(clippy::result_large_err)]
-    pub fn from_file(path: &std::path::Path) -> Result<Self, figment::Error> {
+    pub fn from_file(path: &std::path::Path) -> std::result::Result<Self, figment::Error> {
         use figment::{
             Figment,
             providers::{Format as _, Json, Serialized, Yaml},
@@ -108,27 +153,11 @@ impl Config {
     }
 }
 
-/// Extract a [`Config`] and report obsolete settings.
+/// Extract and validate configuration before making the snapshot available.
 #[allow(clippy::result_large_err)]
-fn extract(figment: &figment::Figment) -> Result<Config, figment::Error> {
-    if let Ok(backend) = figment.find_value("providers.claude.backend") {
-        let provider = backend.as_str().unwrap_or("<provider>");
-        return Err(format!(
-            "`providers.claude.backend` was replaced by `routes.default`; \
-             run `byokey route set --default {provider}`"
-        )
-        .into());
-    }
-    if figment.find_value("providers.copilot.small_model").is_ok() {
-        // Configuration loads before the server initializes tracing.
-        eprintln!(
-            "warning: `providers.copilot.small_model` is deprecated and ignored. \
-             Remove this setting. Use `ANTHROPIC_DEFAULT_HAIKU_MODEL` in Claude Code to select the background model."
-        );
-    }
+fn extract(figment: &figment::Figment) -> std::result::Result<Config, figment::Error> {
     let config: Config = figment.extract()?;
     config
-        .responses
         .validate()
         .map_err(|e| figment::Error::from(e.to_string()))?;
     Ok(config)
@@ -178,24 +207,24 @@ providers:
     }
 
     #[test]
-    fn the_removed_claude_backend_names_its_replacement() {
-        let err = Config::from_yaml("providers:\n  claude:\n    backend: copilot\n").unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("byokey route set --default copilot"),
-            "{err}"
-        );
-    }
-
-    #[test]
-    fn legacy_small_model_does_not_block_other_settings() {
-        let config = Config::from_yaml(
-            "port: 9123\nproviders:\n  copilot:\n    small_model: gpt-5-mini\n    enabled: false\n",
-        )
-        .unwrap();
-
-        assert_eq!(config.port, 9123);
-        assert!(!config.providers[&ProviderId::Copilot].enabled);
+    fn obsolete_settings_are_rejected_without_conversion() {
+        for yaml in [
+            "routes: { default: copilot }",
+            "providers: { claude: { backend: copilot } }",
+            "providers: { copilot: { small_model: gpt-5-mini } }",
+            "responses: { default: copilot }",
+            "responses: { models: {} }",
+            "responses: { upstreams: {} }",
+            "responses: { chatgpt_base_url: 'https://example.com' }",
+            "responses: { catalog: { model_names: {} } }",
+            "anthropic: { catalog: { provider_names: {} } }",
+        ] {
+            let error = Config::from_yaml(yaml).unwrap_err();
+            assert!(
+                error.to_string().contains("unknown field"),
+                "{yaml}: {error}"
+            );
+        }
     }
 
     #[test]

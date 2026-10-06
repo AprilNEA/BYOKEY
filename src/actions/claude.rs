@@ -66,11 +66,11 @@ pub struct InjectArgs {
     settings: Option<PathBuf>,
 }
 
-pub fn cmd_claude(action: ClaudeAction) -> Result<()> {
+pub async fn cmd_claude(action: ClaudeAction) -> Result<()> {
     match action {
         ClaudeAction::Start(args) => start(args),
         ClaudeAction::Inject(args) => inject(args),
-        ClaudeAction::Desktop(args) => super::claude_desktop::desktop(args),
+        ClaudeAction::Desktop(args) => super::claude_desktop::desktop(args).await,
     }
 }
 

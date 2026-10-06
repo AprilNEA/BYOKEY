@@ -11,6 +11,7 @@ pub enum LogFormat {
 
 /// Logging configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LogConfig {
     /// Output format: text (default) or json.
     #[serde(default)]
@@ -56,6 +57,7 @@ fn default_telemetry_sample_rate() -> f32 {
 ///
 /// Users can opt out completely by setting `telemetry.disabled: true`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TelemetryConfig {
     /// Explicit opt-out. When `true`, Sentry is never initialized, even if
     /// a DSN is present in the env, config, or compile-time defaults.

@@ -60,11 +60,13 @@ async fn image_generation_uses_chatgpt_even_with_a_custom_default() {
     let native = serve(router).await;
     let (router, mut other_requests) = capture_raw(StatusCode::OK, &[], b"wrong upstream");
     let other = serve(router).await;
-    let config = serde_json::from_value(json!({"responses": {
-        "default": "company",
-        "chatgpt_base_url": format!("{}/backend-api/codex/", native.url),
-        "upstreams": {"company": {"base_url": other.url, "api_key": "company-key"}}
-    }}))
+    let config = serde_json::from_value(json!({
+        "providers": {
+            "chatgpt": {"base_url": format!("{}/backend-api/codex/", native.url)},
+            "company": {"base_url": other.url, "api_key": "company-key"},
+        },
+        "responses": {"routes": {"default": "company"}},
+    }))
     .unwrap();
     let mut request = native_request(
         Method::POST,
@@ -145,8 +147,7 @@ async fn unknown_endpoints_preserve_methods_encoded_paths_and_compressed_bytes()
         GZIP,
     );
     let native = serve(router).await;
-    let mut config = Config::default();
-    config.responses.chatgpt_base_url = format!("{}/backend-api/codex", native.url);
+    let config = chatgpt_config(format!("{}/backend-api/codex", native.url));
     let mut request = native_request(Method::PATCH, "/codex/future/item%2Fone?x=%26", GZIP);
     request
         .headers_mut()
@@ -189,8 +190,7 @@ async fn upstream_auth_failures_return_unchanged_without_retry() {
         b"refresh the client login",
     );
     let native = serve(router).await;
-    let mut config = Config::default();
-    config.responses.chatgpt_base_url = native.url.clone();
+    let config = chatgpt_config(native.url.clone());
 
     let response = crate::make_router(state(config))
         .oneshot(native_request(
@@ -222,8 +222,7 @@ async fn native_redirects_do_not_receive_a_second_request() {
         b"redirect body",
     );
     let native = serve(router).await;
-    let mut config = Config::default();
-    config.responses.chatgpt_base_url = native.url.clone();
+    let config = chatgpt_config(native.url.clone());
 
     let response = crate::make_router(state(config))
         .oneshot(native_request(Method::GET, "/codex/future", Body::empty()))
@@ -244,8 +243,7 @@ async fn native_redirects_do_not_receive_a_second_request() {
 async fn native_requests_require_the_clients_login() {
     let (router, mut received) = capture_raw(StatusCode::OK, &[], b"unexpected request");
     let native = serve(router).await;
-    let mut config = Config::default();
-    config.responses.chatgpt_base_url = native.url.clone();
+    let config = chatgpt_config(native.url.clone());
 
     let response = crate::make_router(state(config))
         .oneshot(
@@ -266,8 +264,7 @@ async fn native_requests_require_the_clients_login() {
 async fn paths_outside_codex_do_not_reach_chatgpt() {
     let (router, mut received) = capture_raw(StatusCode::OK, &[], b"unexpected request");
     let native = serve(router).await;
-    let mut config = Config::default();
-    config.responses.chatgpt_base_url = native.url.clone();
+    let config = chatgpt_config(native.url.clone());
 
     let response = crate::make_router(state(config))
         .oneshot(native_request(
@@ -286,8 +283,7 @@ async fn paths_outside_codex_do_not_reach_chatgpt() {
 async fn encoded_parent_paths_cannot_escape_the_configured_backend() {
     let (router, mut received) = capture_raw(StatusCode::OK, &[], b"unexpected request");
     let native = serve(router).await;
-    let mut config = Config::default();
-    config.responses.chatgpt_base_url = format!("{}/backend-api/codex", native.url);
+    let config = chatgpt_config(format!("{}/backend-api/codex", native.url));
 
     let response = crate::make_router(state(config))
         .oneshot(native_request(
@@ -308,9 +304,9 @@ async fn codex_responses_keeps_model_routing_instead_of_using_the_fallback() {
     let native = serve(router).await;
     let (router, mut received) = capture(StatusCode::OK, COMPLETED);
     let company = serve(router).await;
-    let config = serde_json::from_value(json!({"responses": {
-        "chatgpt_base_url": native.url,
-        "upstreams": {"company": {"base_url": company.url, "api_key": "company-key"}}
+    let config = serde_json::from_value(json!({"providers": {
+        "chatgpt": {"base_url": native.url},
+        "company": {"base_url": company.url, "api_key": "company-key"},
     }}))
     .unwrap();
     let mut request = request(&json!({"model":"company/deployment", "input":"hi", "stream":true}));
@@ -349,8 +345,7 @@ async fn native_responses_stream_unchanged_and_close_when_the_client_leaves() {
         }
     }))
     .await;
-    let mut config = Config::default();
-    config.responses.chatgpt_base_url = native.url.clone();
+    let config = chatgpt_config(native.url.clone());
     let response = timeout(
         Duration::from_secs(2),
         crate::make_router(state(config)).oneshot(native_request(
@@ -391,8 +386,7 @@ async fn native_uploads_reach_the_backend_before_the_body_finishes() {
         }
     }))
     .await;
-    let mut config = Config::default();
-    config.responses.chatgpt_base_url = native.url.clone();
+    let config = chatgpt_config(native.url.clone());
     let (tx, rx) = mpsc::channel::<Result<Bytes, io::Error>>(2);
     tx.send(Ok(Bytes::from_static(b"first upload chunk")))
         .await

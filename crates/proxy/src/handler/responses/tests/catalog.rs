@@ -30,22 +30,27 @@ async fn provider_names_are_consistent_and_legacy_aliases_remain_routable_but_hi
     let catalog = copilot_catalog_server().await;
     let (router, mut received) = capture(StatusCode::OK, COMPLETED);
     let upstream = serve(router).await;
+    let names = json!({"gpt-6-astra": {"name": "GPT-6 Astra"}, "gpt-6-sol": {"name": "GPT-6 Sol"}});
     let config: Config = serde_json::from_value(json!({
-        "providers": {"copilot": {"api_key": uuid::Uuid::new_v4().to_string(), "base_url": catalog.url}},
-        "responses": {
-            "chatgpt_base_url": format!("{}/chatgpt", catalog.url),
-            "catalog": {"model_names": {"gpt-6-astra": "GPT-6 Astra", "gpt-6-sol": "GPT-6 Sol"}},
-            "upstreams": {"llm-router": {
+        "providers": {
+            "chatgpt": {"base_url": format!("{}/chatgpt", catalog.url), "model_overrides": names},
+            "copilot": {"api_key": uuid::Uuid::new_v4().to_string(), "base_url": catalog.url, "model_overrides": names},
+            "llm-router": {
                 "base_url": upstream.url, "models_url": format!("{}/models", catalog.url), "display_name": "LLM Router",
-            }},
-            "models": {
-                "copilot/gpt-6-astra": {"upstream": "copilot", "model": "gpt-6-astra"},
-                "LLM Router": {"upstream": "llm-router", "model": "gpt-6-astra"},
-                "deployment": {"upstream": "llm-router", "model": "private-deployment", "catalog": {
-                    "display_name": "Private deployment", "visibility": "list", "base_instructions": "deployment instructions",
-                }},
+                "model_overrides": {
+                    "gpt-6-astra": {"name": "GPT-6 Astra"},
+                    "gpt-6-sol": {"name": "GPT-6 Sol"},
+                    "private-deployment": {"catalog": {
+                        "display_name": "Private deployment", "visibility": "list", "base_instructions": "deployment instructions",
+                    }},
+                },
             },
         },
+        "responses": {"routes": {"models": {
+            "copilot/gpt-6-astra": {"provider": "copilot", "model": "gpt-6-astra"},
+            "LLM Router": {"provider": "llm-router", "model": "gpt-6-astra"},
+            "deployment": {"provider": "llm-router", "model": "private-deployment"},
+        }}},
     })).unwrap();
     let app = crate::make_router(state(config));
 
@@ -98,12 +103,95 @@ async fn provider_names_are_consistent_and_legacy_aliases_remain_routable_but_hi
 }
 
 #[tokio::test]
+async fn provider_overrides_apply_to_discovered_models_and_every_alias_of_that_provider() {
+    let catalog = copilot_catalog_server().await;
+    let (router, mut received) = capture(StatusCode::OK, COMPLETED);
+    let router = serve(router.route(
+        "/models",
+        get(|| async { Json(json!({"data": [{"id": "vendor-astra"}]})) }),
+    ))
+    .await;
+    let config: Config = serde_json::from_value(json!({
+        "providers": {
+            "chatgpt": {
+                "base_url": format!("{}/chatgpt", catalog.url),
+                "model_overrides": {"gpt-6-astra": {"name": "Astra Native"}},
+            },
+            "copilot": {
+                "api_key": uuid::Uuid::new_v4().to_string(), "base_url": catalog.url,
+                "model_overrides": {"gpt-6-astra": {"name": "Astra Copilot"}},
+            },
+            "llm-router": {
+                "base_url": router.url, "models_url": format!("{}/models", router.url), "display_name": "LLM Router",
+                "model_overrides": {"vendor-astra": {"name": "Astra Router", "catalog_model": "gpt-6-astra"}},
+            },
+        },
+        "responses": {"routes": {"models": {
+            "router-fast": {"provider": "llm-router", "model": "vendor-astra"},
+            "router-pinned": {"provider": "llm-router", "model": "vendor-astra"},
+        }}},
+    }))
+    .unwrap();
+    let app = crate::make_router(state(config));
+
+    let response = app.clone().oneshot(catalog_request()).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let models = body["models"].as_array().unwrap();
+    let presented: Vec<_> = models
+        .iter()
+        .map(|m| {
+            (
+                m["slug"].as_str().unwrap(),
+                m["display_name"].as_str().unwrap(),
+                m["visibility"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        presented,
+        [
+            ("copilot/gpt-6-astra", "Astra Copilot (Copilot)", "list"),
+            ("gpt-6-astra", "Astra Native (ChatGPT)", "list"),
+            ("gpt-6-sol", "GPT-6-Sol (ChatGPT)", "list"),
+            (
+                "llm-router/vendor-astra",
+                "Astra Router (LLM Router)",
+                "list"
+            ),
+            ("router-fast", "Astra Router (LLM Router)", "hide"),
+            ("router-pinned", "Astra Router (LLM Router)", "hide"),
+        ]
+    );
+    for model in &models[3..] {
+        assert_eq!(model["context_window"], 400_000, "{}", model["slug"]);
+    }
+
+    let response = app
+        .oneshot(request(
+            &json!({"model": "router-pinned", "input": "hi", "stream": true}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+        COMPLETED
+    );
+    let (path, _, payload) = received.recv().await.unwrap();
+    assert_eq!(path, "/responses");
+    assert_eq!(payload["model"], "vendor-astra");
+}
+
+#[tokio::test]
 async fn copilot_api_keys_enable_discovery_without_an_alias() {
     let upstream = copilot_catalog_server().await;
-    let config: Config = serde_json::from_value(json!({
-        "providers": {"copilot": {"api_key": uuid::Uuid::new_v4().to_string(), "base_url": upstream.url}},
-        "responses": {"chatgpt_base_url": format!("{}/chatgpt", upstream.url)},
-    })).unwrap();
+    let config: Config = serde_json::from_value(json!({"providers": {
+        "chatgpt": {"base_url": format!("{}/chatgpt", upstream.url)},
+        "copilot": {"api_key": uuid::Uuid::new_v4().to_string(), "base_url": upstream.url},
+    }}))
+    .unwrap();
 
     let response = crate::make_router(state(config))
         .oneshot(catalog_request())
@@ -128,10 +216,10 @@ async fn copilot_api_keys_enable_discovery_without_an_alias() {
 #[tokio::test]
 async fn stored_copilot_accounts_enable_discovery_without_an_alias() {
     let upstream = copilot_catalog_server().await;
-    let config: Config = serde_json::from_value(json!({
-        "providers": {"copilot": {"base_url": upstream.url}},
-        "responses": {"chatgpt_base_url": format!("{}/chatgpt", upstream.url)},
-    }))
+    let config: Config = serde_json::from_value(json!({"providers": {
+        "chatgpt": {"base_url": format!("{}/chatgpt", upstream.url)},
+        "copilot": {"base_url": upstream.url},
+    }}))
     .unwrap();
     let state = state(config);
     state
@@ -163,10 +251,10 @@ async fn stored_copilot_accounts_enable_discovery_without_an_alias() {
 #[tokio::test]
 async fn disabled_copilot_credentials_do_not_enable_discovery() {
     let upstream = copilot_catalog_server().await;
-    let config: Config = serde_json::from_value(json!({
-        "providers": {"copilot": {"api_key": uuid::Uuid::new_v4().to_string(), "enabled": false, "base_url": upstream.url}},
-        "responses": {"chatgpt_base_url": format!("{}/chatgpt", upstream.url)},
-    })).unwrap();
+    let config: Config = serde_json::from_value(json!({"providers": {
+        "chatgpt": {"base_url": format!("{}/chatgpt", upstream.url)},
+        "copilot": {"api_key": uuid::Uuid::new_v4().to_string(), "enabled": false, "base_url": upstream.url},
+    }})).unwrap();
 
     let response = crate::make_router(state(config))
         .oneshot(catalog_request())
@@ -187,25 +275,27 @@ async fn disabled_copilot_credentials_do_not_enable_discovery() {
 
 #[tokio::test]
 async fn manual_aliases_prefer_visible_entries_without_exposing_hidden_models() {
-    let config: Config = serde_json::from_value(json!({"responses": {
-        "default": "company",
-        "catalog": {"model_names": {"deployment": "GPT-5.5"}},
-        "upstreams": {"company": {"base_url": "http://127.0.0.1:1", "display_name": "Company"}},
-        "models": {
-            "alpha": {"upstream": "company", "model": "deployment", "catalog": {
-                "display_name": "GPT-5.5", "visibility": "hide", "base_instructions": "retained instructions",
+    let config: Config = serde_json::from_value(json!({
+        "providers": {"company": {
+            "base_url": "http://127.0.0.1:1",
+            "display_name": "Company",
+            "model_overrides": {
+                "deployment": {"name": "GPT-5.5", "catalog": {
+                    "display_name": "Deployment", "visibility": "list", "base_instructions": "retained instructions",
+                }},
+                "hidden-deployment": {"catalog": {"display_name": "Hidden", "visibility": "hide"}},
+            },
+        }},
+        "responses": {
+            "routes": {"default": "company", "models": {
+                "alpha": {"provider": "company", "model": "deployment"},
+                "beta": {"provider": "company", "model": "deployment"},
+                "gamma": {"provider": "company", "model": "deployment"},
+                "unique": {"provider": "company", "model": "hidden-deployment"},
             }},
-            "beta": {"upstream": "company", "model": "deployment", "catalog": {
-                "display_name": "GPT-5.5 (Company)", "visibility": "list",
-            }},
-            "gamma": {"upstream": "company", "model": "deployment", "catalog": {
-                "display_name": "GPT-5.5", "visibility": "list",
-            }},
-            "unique": {"upstream": "company", "model": "hidden-deployment", "catalog": {
-                "display_name": "Hidden", "visibility": "hide",
-            }},
+            "catalog": {"hidden_aliases": ["alpha"]},
         },
-    }})).unwrap();
+    })).unwrap();
 
     let response = crate::make_router(state(config))
         .oneshot(catalog_request())
@@ -241,26 +331,32 @@ async fn manual_aliases_prefer_visible_entries_without_exposing_hidden_models() 
 #[tokio::test]
 async fn catalog_settings_format_names_and_hide_ids_without_changing_routes() {
     let catalog = copilot_catalog_server().await;
+    let astra = json!({"gpt-6-astra": {"name": "Astra <Fast>"}});
     let config: Config = serde_json::from_value(json!({
-        "providers": {"copilot": {"api_key": uuid::Uuid::new_v4().to_string(), "base_url": catalog.url}},
-        "responses": {
-            "chatgpt_base_url": format!("{}/chatgpt", catalog.url),
-            "catalog": {
-                "name_format": "{{ provider }} / {{ model }}",
-                "provider_names": {"chatgpt": "Native & Direct"},
-                "model_names": {"gpt-6-astra": "Astra <Fast>"},
-                "hidden_aliases": ["gpt-6-astra", "llm-router/gpt-6-sol", "LLM Router"],
+        "providers": {
+            "chatgpt": {
+                "base_url": format!("{}/chatgpt", catalog.url),
+                "display_name": "Native & Direct",
+                "model_overrides": astra,
             },
-            "upstreams": {"llm-router": {
+            "copilot": {"api_key": uuid::Uuid::new_v4().to_string(), "base_url": catalog.url, "model_overrides": astra},
+            "llm-router": {
                 "base_url": catalog.url, "models_url": format!("{}/models", catalog.url), "display_name": "LLM Router",
-            }},
-            "models": {
-                "native-alias": {"upstream": "chatgpt", "model": "gpt-6-astra"},
-                "LLM Router": {"upstream": "llm-router", "model": "gpt-6-astra"},
+                "model_overrides": astra,
             },
         },
+        "responses": {
+            "catalog": {
+                "name_format": "{{ provider }} / {{ model }}",
+                "hidden_aliases": ["gpt-6-astra", "llm-router/gpt-6-sol", "LLM Router"],
+            },
+            "routes": {"models": {
+                "native-alias": {"provider": "chatgpt", "model": "gpt-6-astra"},
+                "LLM Router": {"provider": "llm-router", "model": "gpt-6-astra"},
+            }},
+        },
     })).unwrap();
-    let original_route = config.responses.route("LLM Router").unwrap();
+    let original_route = config.response_route("LLM Router").unwrap();
     assert_eq!(original_route, ("llm-router", "gpt-6-astra"));
 
     let response = crate::make_router(state(config))
@@ -323,15 +419,15 @@ async fn custom_catalogs_list_and_route_each_matching_model() {
     let catalog = serve(router).await;
     let (router, mut response_requests) = capture(StatusCode::OK, COMPLETED);
     let upstream = serve(router).await;
-    let config: Config = serde_json::from_value(json!({"responses": {
-        "chatgpt_base_url": native.url,
-        "upstreams": {"company": {
+    let config: Config = serde_json::from_value(json!({"providers": {
+        "chatgpt": {"base_url": native.url},
+        "company": {
             "base_url": format!("{}/deployment", upstream.url),
             "models_url": format!("{}/directory?tenant=5", catalog.url),
             "display_name": "Company Gateway",
             "api_key": "company-key",
             "headers": {"x-tenant": "engineering"},
-        }},
+        },
     }}))
     .unwrap();
     let app = crate::make_router(state(config));
@@ -417,15 +513,21 @@ async fn custom_default_discovery_keeps_explicit_aliases_and_uses_the_upstream_n
         get(|| async { Json(json!({"data": [{"id": "gpt-small"}, {"id": "gpt-large"}]})) }),
     ))
     .await;
-    let config: Config = serde_json::from_value(json!({"responses": {
-        "default": "company",
-        "chatgpt_base_url": native.url,
-        "upstreams": {"company": {"base_url": upstream.url, "models_url": format!("{}/models", upstream.url)}},
-        "models": {"company/gpt-small": {
-            "upstream": "company", "model": "deployment",
-            "catalog": {"display_name": "Pinned", "base_instructions": "deployment instructions"},
+    let config: Config = serde_json::from_value(json!({
+        "providers": {
+            "chatgpt": {"base_url": native.url},
+            "company": {
+                "base_url": upstream.url, "models_url": format!("{}/models", upstream.url),
+                "model_overrides": {"deployment": {
+                    "catalog": {"display_name": "Pinned", "base_instructions": "deployment instructions"},
+                }},
+            },
+        },
+        "responses": {"routes": {
+            "default": "company",
+            "models": {"company/gpt-small": {"provider": "company", "model": "deployment"}},
         }},
-    }})).unwrap();
+    })).unwrap();
 
     let response = crate::make_router(state(config))
         .oneshot(catalog_request())
@@ -463,10 +565,11 @@ async fn custom_catalog_failures_are_not_hidden_as_an_empty_model_list() {
         serve(Router::new().route("/models", get(|| async { Json(json!({"models": []})) }))).await;
     let (router, _requests) = capture(StatusCode::TOO_MANY_REQUESTS, ERROR);
     let upstream = serve(router).await;
-    let config: Config = serde_json::from_value(json!({"responses": {
-        "chatgpt_base_url": native.url,
-        "upstreams": {"company": {"base_url": upstream.url, "models_url": format!("{}/models", upstream.url)}},
-    }})).unwrap();
+    let config: Config = serde_json::from_value(json!({"providers": {
+        "chatgpt": {"base_url": native.url},
+        "company": {"base_url": upstream.url, "models_url": format!("{}/models", upstream.url)},
+    }}))
+    .unwrap();
 
     let response = crate::make_router(state(config))
         .oneshot(catalog_request())

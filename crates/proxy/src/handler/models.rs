@@ -1,9 +1,10 @@
 //! `GET /v1/models`: the Anthropic models `/v1/messages` serves.
 //!
 //! Each model is listed once, under Anthropic's id, when the provider its
-//! route names offers it (see [`super::catalog`]): Claude Desktop recognises
-//! only those ids, and reads a model's effort levels and description from
-//! them. Which provider serves a model is set with `byokey route`; a
+//! route names offers it (see [`super::catalog`]). Standard ids preserve
+//! Claude Desktop's effort recognition; display names identify the routed
+//! provider. `byokey claude desktop` uses these names as `labelOverride`.
+//! Which provider serves a model is set with `byokey route`; a
 //! `copilot/` or `cursor/` prefix still picks one per request, for models
 //! this list leaves out.
 //!
@@ -23,14 +24,14 @@ use axum::{
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
-use byokey_config::Routes;
-use byokey_types::ProviderId;
+use byokey_config::Config;
+use byokey_types::{ByokError, ProviderId};
 use serde::{Serialize, Serializer};
 use std::sync::Arc;
 use time::{Date, OffsetDateTime};
 
 use super::catalog::Catalog;
-use crate::AppState;
+use crate::{AppState, error::ApiError};
 
 /// A listed model.
 struct ModelEntry {
@@ -153,29 +154,46 @@ impl From<Vec<ModelEntry>> for OpenAiList {
 }
 
 /// Handles `GET /v1/models`. See the module documentation.
-pub async fn list_models(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+pub async fn list_models(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
     let config = state.config.load();
     let catalog = Catalog::fetch(&state, &config).await;
-    let models = listed(&catalog, &config.routes);
-    if headers.contains_key("anthropic-version") {
+    let anthropic = headers.contains_key("anthropic-version");
+    let models = listed(&catalog, &config).map_err(|error| {
+        let error = ApiError::new(error);
+        if anthropic { error.anthropic() } else { error }
+    })?;
+    Ok(if anthropic {
         Json(AnthropicList::from(models)).into_response()
     } else {
         Json(OpenAiList::from(models)).into_response()
-    }
+    })
 }
 
-/// The models `routes` serve, in lineup order, named as Anthropic names them.
-fn listed(catalog: &Catalog, routes: &Routes) -> Vec<ModelEntry> {
-    let mut served = catalog.routed(routes);
+/// Routed models in lineup order, with provider-scoped display names.
+fn listed(catalog: &Catalog, config: &Config) -> Result<Vec<ModelEntry>, ByokError> {
+    let format_name = config.anthropic.catalog.name_formatter()?;
+    let mut served = catalog.routed(&config.anthropic.routes);
     lineup::sort(&mut served, |(m, _, _)| *m);
     served
         .into_iter()
-        .map(|(model, provider, offer)| ModelEntry {
-            id: model.to_string(),
-            provider,
-            display_name: model.display_name(),
-            released: Released::from(lineup::released(model)),
-            supports_1m: offer.supports_1m,
+        .map(|(model, provider, offer)| {
+            let id = model.to_string();
+            let provider_id = provider.to_string();
+            let name = config
+                .model_override(&provider_id, &id)
+                .and_then(|patch| patch.name.clone())
+                .unwrap_or_else(|| model.display_name());
+            let label = config.provider_name(&provider_id);
+            Ok(ModelEntry {
+                id,
+                provider,
+                display_name: format_name(&name, label)?,
+                released: Released::from(lineup::released(model)),
+                supports_1m: offer.supports_1m,
+            })
         })
         .collect()
 }
@@ -183,6 +201,10 @@ fn listed(catalog: &Catalog, routes: &Routes) -> Vec<ModelEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{Router, body::to_bytes, http::StatusCode, routing::get};
+    use byokey_auth::AuthManager;
+    use byokey_config::Config;
+    use byokey_store::InMemoryTokenStore;
     use serde_json::{Value, json};
 
     fn entries() -> Vec<ModelEntry> {
@@ -191,14 +213,14 @@ mod tests {
             ModelEntry {
                 id: "claude-opus-5-5".into(),
                 provider: ProviderId::Copilot,
-                display_name: model("claude-opus-5-5").display_name(),
+                display_name: "Claude Opus 5.5 · GitHub Copilot".into(),
                 released: Released::from(lineup::released(model("claude-opus-5-5"))),
                 supports_1m: true,
             },
             ModelEntry {
                 id: "claude-opus-4-1".into(),
                 provider: ProviderId::Claude,
-                display_name: model("claude-opus-4-1").display_name(),
+                display_name: "Claude Opus 4.1 · Claude (Anthropic)".into(),
                 released: Released::from(lineup::released(model("claude-opus-4-1"))),
                 supports_1m: false,
             },
@@ -218,14 +240,14 @@ mod tests {
                     {
                         "type": "model",
                         "id": "claude-opus-5-5",
-                        "display_name": "Claude Opus 5.5",
+                        "display_name": "Claude Opus 5.5 · GitHub Copilot",
                         "created_at": "2026-09-22T00:00:00Z",
                         "supports_1m": true,
                     },
                     {
                         "type": "model",
                         "id": "claude-opus-4-1",
-                        "display_name": "Claude Opus 4.1",
+                        "display_name": "Claude Opus 4.1 · Claude (Anthropic)",
                         "created_at": "1970-01-01T00:00:00Z",
                         "supports_1m": false,
                     },
@@ -241,5 +263,187 @@ mod tests {
             .collect();
         assert_eq!(created, [&json!(1_790_035_200), &json!(0)]);
         assert_eq!(openai["data"][0]["owned_by"], "copilot");
+        assert_eq!(openai["data"][0]["id"], "claude-opus-5-5");
+        assert_eq!(
+            openai["data"][0]["display_name"],
+            "Claude Opus 5.5 · GitHub Copilot"
+        );
+    }
+
+    async fn state() -> (Config, Arc<AppState>) {
+        let upstream = Router::new().route(
+            "/models",
+            get(|| async {
+                Json(json!({"data": [{
+                    "id": "claude-opus-5.5", "name": "Upstream spelling",
+                    "model_picker_enabled": true, "supported_endpoints": ["/v1/messages"],
+                    "capabilities": {"limits": {"max_context_window_tokens": 1_000_000}}
+                }]}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+        let config: Config = serde_json::from_value(json!({
+            "anthropic": {"routes": {"default": "copilot"}},
+            "providers": {
+                "claude": {"api_key": "test-anthropic-key"},
+                "copilot": {"api_key": uuid::Uuid::new_v4().to_string(), "base_url": url}
+            }
+        }))
+        .unwrap();
+        let http = reqwest::Client::new();
+        let state = AppState::new(
+            Arc::new(arc_swap::ArcSwap::from_pointee(config.clone())),
+            Arc::new(AuthManager::new(
+                Arc::new(InMemoryTokenStore::new()),
+                http.clone(),
+            )),
+            http,
+            None,
+        )
+        .unwrap();
+        (config, state)
+    }
+
+    #[tokio::test]
+    async fn route_changes_update_the_provider_label_without_changing_the_model_id() {
+        let (mut config, state) = state().await;
+        let list = || async {
+            let response = list_models(State(state.clone()), HeaderMap::new())
+                .await
+                .unwrap();
+            serde_json::from_slice::<Value>(
+                &to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+            )
+            .unwrap()
+        };
+        let before = list().await;
+
+        config
+            .anthropic
+            .routes
+            .models
+            .insert("claude-opus-5-5".parse().unwrap(), ProviderId::Claude);
+        state.config.store(Arc::new(config));
+        let after = list().await;
+
+        assert_eq!(
+            before["data"],
+            json!([{
+                "id": "claude-opus-5-5", "object": "model", "created": 1_790_035_200,
+                "owned_by": "copilot", "display_name": "Claude Opus 5.5 · Copilot",
+                "supports_1m": true
+            }])
+        );
+        assert_eq!(
+            after["data"],
+            json!([{
+                "id": "claude-opus-5-5", "object": "model", "created": 1_790_035_200,
+                "owned_by": "claude", "display_name": "Claude Opus 5.5 · Claude (Anthropic)"
+            }])
+        );
+    }
+
+    #[tokio::test]
+    async fn templates_customize_names_without_changing_ids_or_context() {
+        let (mut config, state) = state().await;
+        let presentation = Config::from_yaml(
+            r"
+anthropic:
+  catalog:
+    name_format: '{{ provider | upper }} / {{ model }}'
+providers:
+  copilot:
+    display_name: GitHub
+    model_overrides:
+      claude-opus-5-5:
+        name: 'Opus <{{ provider }}>'
+",
+        )
+        .unwrap();
+        config.anthropic.catalog = presentation.anthropic.catalog;
+        let copilot = config.providers.get_mut("copilot").unwrap();
+        copilot
+            .display_name
+            .clone_from(&presentation.providers["copilot"].display_name);
+        copilot
+            .model_overrides
+            .clone_from(&presentation.providers["copilot"].model_overrides);
+        config.responses.catalog.name_format = "Responses only".into();
+        config
+            .anthropic
+            .routes
+            .models
+            .insert("claude-haiku-4-5".parse().unwrap(), ProviderId::Claude);
+        state.config.store(Arc::new(config));
+
+        let headers = HeaderMap::from_iter([(
+            "anthropic-version".parse().unwrap(),
+            "2023-06-01".parse().unwrap(),
+        )]);
+        let response = list_models(State(state), headers).await.unwrap();
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+
+        assert_eq!(body["data"].as_array().unwrap().len(), 2);
+        assert_eq!(body["data"][0]["id"], "claude-opus-5-5");
+        assert_eq!(
+            body["data"][0]["display_name"],
+            "GITHUB / Opus <{{ provider }}>"
+        );
+        assert_eq!(body["data"][0]["supports_1m"], true);
+        assert_eq!(body["data"][1]["id"], "claude-haiku-4-5");
+        assert_eq!(
+            body["data"][1]["display_name"],
+            "CLAUDE (ANTHROPIC) / Claude Haiku 4.5"
+        );
+        assert_eq!(body["data"][1]["supports_1m"], false);
+    }
+
+    #[tokio::test]
+    async fn a_template_that_renders_empty_for_a_real_model_fails_the_catalog() {
+        let (mut config, state) = state().await;
+        config.anthropic.catalog = Config::from_yaml(
+            r#"
+anthropic:
+  catalog:
+    name_format: '{% if model == "model" %}{{ model }}{% endif %}'
+"#,
+        )
+        .unwrap()
+        .anthropic
+        .catalog;
+        state.config.store(Arc::new(config));
+        let headers = HeaderMap::from_iter([(
+            "anthropic-version".parse().unwrap(),
+            "2023-06-01".parse().unwrap(),
+        )]);
+
+        let anthropic = list_models(State(state.clone()), headers)
+            .await
+            .into_response();
+        let openai = list_models(State(state), HeaderMap::new())
+            .await
+            .into_response();
+
+        assert_eq!(anthropic.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(openai.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let anthropic: Value =
+            serde_json::from_slice(&to_bytes(anthropic.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        let openai: Value =
+            serde_json::from_slice(&to_bytes(openai.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(anthropic["type"], "error");
+        assert_eq!(openai["error"]["code"], "internal_error");
+        assert!(
+            anthropic["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("anthropic.catalog.name_format must render a nonempty name")
+        );
+        assert_eq!(anthropic["error"]["message"], openai["error"]["message"]);
     }
 }

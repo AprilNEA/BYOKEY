@@ -9,21 +9,21 @@ use std::sync::Arc;
 use super::forward::{end_with, forward, forward_response};
 use crate::{AppState, error::ApiError, exchange::Exchange};
 
-pub(super) fn copilot_upstream(state: &AppState) -> CopilotUpstream {
-    let config = state
-        .config
-        .load()
-        .providers
-        .get(&ProviderId::Copilot)
-        .cloned()
-        .unwrap_or_default();
-    CopilotUpstream::builder()
+pub(super) fn copilot_upstream(state: &AppState) -> Result<CopilotUpstream, ByokError> {
+    let config = state.config.load();
+    let provider = config.providers.get("copilot");
+    Ok(CopilotUpstream::builder()
         .http(state.http.clone())
         .auth(state.auth.clone())
-        .maybe_api_key(config.api_key)
-        .maybe_base_url(config.base_url)
+        .maybe_api_key(
+            provider
+                .and_then(|p| p.api_key.as_ref())
+                .map(byokey_config::ConfigValue::resolve)
+                .transpose()?,
+        )
+        .maybe_base_url(provider.and_then(|p| p.base_url.clone()))
         .identity(CopilotIdentity::clone(&state.copilot_identity.load()))
-        .build()
+        .build())
 }
 
 pub(super) fn copilot_request(
@@ -66,7 +66,7 @@ pub(super) async fn send_to_copilot(
         conversation,
         headers,
     } = call;
-    let copilot = copilot_upstream(state);
+    let copilot = copilot_upstream(state)?;
     let accounts = state
         .auth
         .list_accounts(ProviderId::Copilot)

@@ -1,6 +1,6 @@
 //! `byokey route`: which provider serves each Anthropic model.
 //!
-//! The routes live in the config file's `routes` section, which the running
+//! The routes live in the config file's `anthropic.routes` section, which the running
 //! server reloads on change. Listing asks the server, which knows what each
 //! signed-in provider offers.
 
@@ -83,14 +83,12 @@ pub async fn cmd_route(
         Some(RouteAction::Set { target, provider }) => (target.into(), Some(provider)),
         Some(RouteAction::Unset { target }) => (target.into(), None),
     };
-    let mut settings = read(&path)?;
-    let mut routes = match settings.get("routes") {
-        Some(routes) => serde_json::from_value(routes.clone())
-            .with_context(|| format!("invalid `routes` in {}", path.display()))?,
-        None => Routes::default(),
-    };
+    let settings = read(&path)?;
+    let config: Config = serde_json::from_value(Value::Object(settings.clone()))
+        .with_context(|| format!("invalid config in {}", path.display()))?;
+    config.validate()?;
+    let mut routes = config.anthropic.routes;
     apply(&mut routes, key, provider);
-    drop_claude_backend(&mut settings);
     save(&path, settings, &routes)?;
     if let Some(provider) = provider {
         let config = load(&path)?;
@@ -110,7 +108,7 @@ pub(crate) async fn unusable(
     config: &Config,
     provider: ProviderId,
 ) -> Option<String> {
-    let pc = config.providers.get(&provider);
+    let pc = config.providers.get(&provider.to_string());
     if pc.is_some_and(|c| !c.enabled) {
         return Some(format!("{provider} is disabled in the config"));
     }
@@ -141,24 +139,6 @@ fn apply(routes: &mut Routes, key: RouteKey, provider: Option<ProviderId>) {
     }
 }
 
-/// Remove `providers.claude.backend`, which `routes.default` replaced and
-/// which the server refuses to load.
-fn drop_claude_backend(settings: &mut Map<String, Value>) {
-    let Some(claude) = settings
-        .get_mut("providers")
-        .and_then(|p| p.get_mut("claude"))
-        .and_then(Value::as_object_mut)
-    else {
-        return;
-    };
-    claude.remove("backend");
-    if claude.is_empty()
-        && let Some(providers) = settings.get_mut("providers").and_then(Value::as_object_mut)
-    {
-        providers.remove("claude");
-    }
-}
-
 fn load(path: &Path) -> Result<Config> {
     if !path.exists() {
         return Ok(Config::default());
@@ -170,7 +150,7 @@ fn load(path: &Path) -> Result<Config> {
 fn read(path: &Path) -> Result<Map<String, Value>> {
     if path.extension().is_none_or(|e| e != "json") {
         bail!(
-            "`byokey route` edits JSON config files only; set `routes` in {} by hand",
+            "`byokey route` edits JSON config files only; set `anthropic.routes` in {} by hand",
             path.display()
         );
     }
@@ -184,10 +164,18 @@ fn read(path: &Path) -> Result<Map<String, Value>> {
 
 /// Write `settings` with `routes` to `path`.
 fn save(path: &Path, mut settings: Map<String, Value>, routes: &Routes) -> Result<()> {
+    let anthropic = settings
+        .entry("anthropic")
+        .or_insert_with(|| Value::Object(Map::new()))
+        .as_object_mut()
+        .expect("Anthropic settings validated before editing");
     if *routes == Routes::default() {
-        settings.remove("routes");
+        anthropic.remove("routes");
     } else {
-        settings.insert("routes".into(), serde_json::to_value(routes)?);
+        anthropic.insert("routes".into(), serde_json::to_value(routes)?);
+    }
+    if anthropic.is_empty() {
+        settings.remove("anthropic");
     }
     let mut bytes = serde_json::to_vec_pretty(&settings)?;
     bytes.push(b'\n');
@@ -289,12 +277,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn actions_keep_other_settings_and_retire_the_claude_backend() {
+    async fn actions_keep_catalog_providers_and_other_protocol_routes() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         std::fs::write(
             &path,
-            r#"{"port": 9000, "providers": {"copilot": {}, "claude": {"backend": "copilot"}}}"#,
+            r#"{"port":9000,"providers":{"copilot":{"display_name":"GitHub"}},"anthropic":{"catalog":{"name_format":"{{ model }} / {{ provider }}"}},"responses":{"routes":{"default":"copilot"}}}"#,
         )
         .unwrap();
         let db = dir.path().join("tokens.db");
@@ -314,7 +302,7 @@ mod tests {
         let config = load(&path).unwrap();
         assert_eq!(config.port, 9000);
         assert_eq!(
-            config.routes,
+            config.anthropic.routes,
             Routes {
                 default: Some(ProviderId::Copilot),
                 families: [(ClaudeFamily::Opus, ProviderId::Cursor)].into(),
@@ -322,7 +310,11 @@ mod tests {
             },
             "`claude` pins a model to Anthropic"
         );
-        assert!(!config.providers.contains_key(&ProviderId::Claude));
+        assert_eq!(
+            config.providers["copilot"].display_name.as_deref(),
+            Some("GitHub")
+        );
+        assert_eq!(config.responses.routes.default, "copilot");
 
         for args in [
             &["unset", "--model", "claude-opus-5-5"][..],
@@ -332,7 +324,18 @@ mod tests {
             run(args).await.unwrap();
         }
         let settings: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert!(settings.get("routes").is_none(), "empty routes are removed");
+        assert!(
+            settings["anthropic"].get("routes").is_none(),
+            "empty routes are removed"
+        );
+        assert_eq!(
+            settings["anthropic"]["catalog"]["name_format"],
+            "{{ model }} / {{ provider }}"
+        );
+        assert!(
+            settings.get("routes").is_none(),
+            "root routes are never written"
+        );
 
         let yaml = dir.path().join("settings.yaml");
         let unset = parse(&["unset", "--default"]).unwrap();
@@ -341,5 +344,24 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn invalid_configuration_is_not_rewritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let original = r#"{"providers":{"claude":{"backend":"copilot"}}}"#;
+        std::fs::write(&path, original).unwrap();
+
+        let result = cmd_route(
+            Some(parse(&["unset", "--default"]).unwrap()),
+            Some(path.clone()),
+            None,
+            None,
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), original);
     }
 }

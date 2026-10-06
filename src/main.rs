@@ -278,7 +278,7 @@ async fn run(command: Commands) -> Result<()> {
             url,
             db,
         } => route::cmd_route(action, config, url, db).await,
-        Commands::Claude { action } => claude::cmd_claude(action),
+        Commands::Claude { action } => claude::cmd_claude(action).await,
         Commands::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "byokey", &mut std::io::stdout());
             Ok(())

@@ -31,7 +31,7 @@ impl rt::RoutesService for RoutesServiceImpl {
     ) -> ServiceResult<rt::ListRoutesResponse> {
         let config = self.0.config.load();
         let catalog = Catalog::fetch(&self.0, &config).await;
-        let routes = &config.routes;
+        let routes = &config.anthropic.routes;
         let mut offered = catalog.models();
         for &model in routes.models.keys() {
             offered.entry(model).or_default();

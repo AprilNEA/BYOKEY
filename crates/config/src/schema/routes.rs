@@ -10,14 +10,16 @@ use std::collections::BTreeMap;
 /// request regardless.
 ///
 /// ```yaml
-/// routes:
-///   default: copilot
-///   families:
-///     opus: cursor
-///   models:
-///     claude-opus-5-5: copilot
+/// anthropic:
+///   routes:
+///     default: copilot
+///     families:
+///       opus: cursor
+///     models:
+///       claude-opus-5-5: copilot
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Routes {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<ProviderId>,
@@ -80,16 +82,17 @@ mod tests {
     fn a_model_beats_its_family_which_beats_the_default() {
         let c = Config::from_yaml(
             r"
-routes:
-  default: copilot
-  families:
-    opus: cursor
-  models:
-    claude-opus-5.5: claude
+anthropic:
+  routes:
+    default: copilot
+    families:
+      opus: cursor
+    models:
+      claude-opus-5.5: claude
 ",
         )
         .unwrap();
-        let resolve = |id| c.routes.resolve(model(id));
+        let resolve = |id| c.anthropic.routes.resolve(model(id));
         assert_eq!(
             resolve("claude-opus-5-5"),
             (ProviderId::Claude, RouteSource::Model),
@@ -112,9 +115,9 @@ routes:
     #[test]
     fn routes_name_claude_models_families_and_known_providers() {
         for yaml in [
-            "routes:\n  models:\n    gpt-5.4: copilot\n",
-            "routes:\n  models:\n    claude-opus-5-5: codex\n",
-            "routes:\n  families:\n    claude-opus: copilot\n",
+            "anthropic:\n  routes:\n    models:\n      gpt-5.4: copilot\n",
+            "anthropic:\n  routes:\n    models:\n      claude-opus-5-5: codex\n",
+            "anthropic:\n  routes:\n    families:\n      claude-opus: copilot\n",
         ] {
             assert!(Config::from_yaml(yaml).is_err(), "{yaml}");
         }

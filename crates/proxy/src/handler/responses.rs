@@ -16,7 +16,7 @@ use axum::{
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::Response,
 };
-use byokey_config::schema::responses::ResponsesUpstream;
+use byokey_config::ProviderConfig;
 use byokey_provider::{Conversation, CopilotUpstream};
 use byokey_types::{ByokError, ProviderId};
 use serde_json::Value;
@@ -47,7 +47,7 @@ pub(crate) async fn responses(
         .ok_or_else(|| ByokError::InvalidRequest("model must be a string".into()))?
         .to_owned();
     let config = state.config.load_full();
-    let (upstream, model) = config.responses.route(&requested)?;
+    let (upstream, model) = config.response_route(&requested)?;
     body["model"] = Value::String(model.to_owned());
     match upstream {
         "chatgpt" => {
@@ -59,7 +59,7 @@ pub(crate) async fn responses(
             let exchange = Exchange::start(&state.usage, "chatgpt", model, account);
             let request = state
                 .http
-                .post(endpoint(&config.responses.chatgpt_base_url, "responses"))
+                .post(endpoint(config.chatgpt_base_url(), "responses"))
                 .headers(chatgpt_headers(headers))
                 .json(&body);
             let response = match send(request, &exchange).await {
@@ -69,24 +69,21 @@ pub(crate) async fn responses(
             // Authentication failures return to the client so its own refresh flow runs.
             forward::response(response, exchange, stream, forward::StreamMode::Passthrough).await
         }
-        "copilot" => {
-            if config
-                .providers
-                .get(&ProviderId::Copilot)
-                .is_some_and(|c| !c.enabled)
-            {
-                return Err(ByokError::UnsupportedProvider("copilot is disabled".into()).into());
-            }
-            copilot_responses(&state, &headers, body, stream).await
-        }
+        "copilot" => copilot_responses(&state, &headers, body, stream).await,
         name => {
-            let upstream = &config.responses.upstreams[name];
+            let upstream = &config.providers[name];
             if let Some(tier) = &upstream.service_tier {
                 body["service_tier"] = Value::String(tier.clone());
             }
             let request = state
                 .http
-                .post(endpoint(&upstream.base_url, "responses"))
+                .post(endpoint(
+                    upstream
+                        .base_url
+                        .as_deref()
+                        .expect("custom provider URL validated on load"),
+                    "responses",
+                ))
                 .headers(custom_headers(upstream, &headers)?)
                 .json(&body);
             let exchange = Exchange::start(&state.usage, name, model, "configured");
@@ -105,7 +102,7 @@ async fn copilot_responses(
     body: Value,
     stream: bool,
 ) -> Result<Response, ApiError> {
-    let upstream = copilot_upstream(state);
+    let upstream = copilot_upstream(state)?;
     let model = body["model"]
         .as_str()
         .expect("model was validated at ingress");
@@ -184,10 +181,7 @@ fn chatgpt_headers(mut headers: HeaderMap) -> HeaderMap {
     headers
 }
 
-fn custom_headers(
-    upstream: &ResponsesUpstream,
-    incoming: &HeaderMap,
-) -> Result<HeaderMap, ByokError> {
+fn custom_headers(upstream: &ProviderConfig, incoming: &HeaderMap) -> Result<HeaderMap, ByokError> {
     let mut headers = protocol_headers(incoming);
     if let Some(key) = &upstream.api_key {
         let mut value = HeaderValue::from_str(&format!("Bearer {}", key.resolve()?))

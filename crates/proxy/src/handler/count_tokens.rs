@@ -51,7 +51,7 @@ async fn serve_count_tokens(
         }
         ProviderId::Copilot => {
             strip_copilot_unsupported(&mut body);
-            let copilot = copilot_upstream(state);
+            let copilot = copilot_upstream(state)?;
             let creds = copilot.credentials().await?;
             let conversation = Conversation::from_messages(&[]);
             copilot_request(
