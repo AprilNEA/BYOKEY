@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.0](https://github.com/AprilNEA/BYOKEY/compare/v4.1.0...v4.2.0) - 2026-10-06
+
+### Added
+
+- *(config)* unify provider settings and Claude model labels
+
 ## [4.1.0](https://github.com/AprilNEA/BYOKEY/compare/v4.0.0...v4.1.0) - 2026-10-05
 
 ### Deprecated
