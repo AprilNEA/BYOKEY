@@ -9,22 +9,25 @@ use serde::{Deserialize, Serialize};
 pub struct AnthropicConfig {
     /// Provider selection by model, family, then default.
     pub routes: super::Routes,
-    /// Display names for `/v1/models` and Claude Desktop's model picker.
+    /// Display names and context variants for `/v1/models` and Claude Desktop.
     pub catalog: AnthropicCatalog,
 }
 
-/// Model picker names without changing standard Anthropic model IDs.
+/// Model picker names and context variants without changing standard Anthropic model IDs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AnthropicCatalog {
     /// Plain-text `MiniJinja` template with `model` and `provider` variables.
     pub name_format: String,
+    /// Hide the additional 1M picker entry for native 1M models. Defaults to true.
+    pub merge_native_1m: bool,
 }
 
 impl Default for AnthropicCatalog {
     fn default() -> Self {
         Self {
             name_format: "{{ model }} · {{ provider }}".into(),
+            merge_native_1m: true,
         }
     }
 }

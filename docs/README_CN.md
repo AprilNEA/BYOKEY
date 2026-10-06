@@ -329,7 +329,7 @@ Windows 上使用 SCM。`install` 接受与 `serve` 相同的选项；未指定 
 改用 BYOKEY，官方 profile 不会被改动。启动前读取 BYOKEY 的模型目录，将标准模型 ID、
 显示名称和可选的 1M 上下文标志写入 `inferenceModels`，显示名称使用 `labelOverride`，例如
 「Claude Opus 5.5 · Copilot」。已确认原生支持 1M 的模型（包括 Opus 5.5、Fable 5/5.1）
-只显示一项，不再添加单独的「1M」选项；其他模型在上游声明支持时保留可选的 1M 选项。
+默认只显示一项，不再添加单独的「1M」选项；其他模型在上游声明支持时保留可选的 1M 选项。
 此规则只改变列表展示，不改变上游模型的上下文上限。标准 ID 保留 Desktop 识别 effort 的依据；
 对于 Desktop 无法识别的模型 ID，不保证 Effort 控件可用。
 修改路由、显示设置或可用模型后，退出 BYOKEY Desktop 实例，再运行此命令刷新列表和名称；
@@ -395,11 +395,14 @@ providers:
 anthropic:
   catalog:
     name_format: "{{ model }} · {{ provider }}"
+    merge_native_1m: true
 ```
 
-`name_format` 复用 Responses 目录的 MiniJinja 语法和校验，支持 `model`、`provider` 两个纯文本变量及过滤器。例如 `"{{ provider | upper }} / {{ model }}"` 会把 Provider 名称大写并放在前面。默认格式为 `"{{ model }} · {{ provider }}"`。`providers.<name>.display_name` 与 Responses 目录共用，默认名称为 `Claude (Anthropic)`、`Copilot` 和 `Cursor`。Anthropic 的 `model_overrides` 以标准 Anthropic ID（如 `claude-opus-5-5`）为键，不使用 Provider 前缀或 Provider 自己的写法（如 `claude-opus-5.5`），在该 Provider 提供此模型时生效；未覆盖的模型保留标准友好名称。这些设置仅影响 `display_name` 和 Desktop 的 `labelOverride`，不改变模型 ID、路由、effort 或上下文能力。
+`name_format` 复用 Responses 目录的 MiniJinja 语法和校验，支持 `model`、`provider` 两个纯文本变量及过滤器。例如 `"{{ provider | upper }} / {{ model }}"` 会把 Provider 名称大写并放在前面。默认格式为 `"{{ model }} · {{ provider }}"`。`providers.<name>.display_name` 与 Responses 目录共用，默认名称为 `Claude (Anthropic)`、`Copilot` 和 `Cursor`。Anthropic 的 `model_overrides` 以标准 Anthropic ID（如 `claude-opus-5-5`）为键，不使用 Provider 前缀或 Provider 自己的写法（如 `claude-opus-5.5`），在该 Provider 提供此模型时生效；未覆盖的模型保留标准友好名称。这些名称设置仅影响 `display_name` 和 Desktop 的 `labelOverride`，不改变模型 ID、路由、effort 或上下文能力。
 
-服务器会热重载这些设置。无效模板或空名称会使配置加载失败；重载失败时保留上次有效配置。模板在实际模型数据上渲染失败时，目录请求直接报错，不替换成默认名称。修改显示设置后，退出 BYOKEY Desktop 实例，再运行 `byokey claude desktop` 刷新已保存的标签。
+`anthropic.catalog.merge_native_1m` 默认为 `true`：原生 1M 模型只保留标准选项。设为 `false` 后，只要上游声明支持，就会额外提供「1M」选项，包括原生 1M 模型。此开关不改变模型 ID、路由、effort、上游上下文上限或 Responses 目录。
+
+服务器会热重载这些设置。无效模板或空名称会使配置加载失败；重载失败时保留上次有效配置。模板在实际模型数据上渲染失败时，目录请求直接报错，不替换成默认名称。修改目录设置后，退出 BYOKEY Desktop 实例，再运行 `byokey claude desktop` 刷新已保存的模型列表和标签。
 
 **Copilot** 请求保留客户端选择的模型，包括普通无工具聊天和 compaction。
 在 Claude Code 客户端选择后台模型：

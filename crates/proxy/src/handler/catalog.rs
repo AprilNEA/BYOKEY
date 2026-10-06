@@ -93,13 +93,19 @@ impl Catalog {
             )
         };
         let (copilot, cursor) = tokio::join!(copilot, cursor);
-        Self::new(usable.contains(&ProviderId::Claude), copilot, cursor)
+        Self::new(
+            usable.contains(&ProviderId::Claude),
+            copilot,
+            cursor,
+            config.anthropic.catalog.merge_native_1m,
+        )
     }
 
     fn new(
         anthropic: bool,
         copilot: Option<Vec<CopilotModel>>,
         cursor: Option<Vec<CursorModel>>,
+        merge_native_1m: bool,
     ) -> Self {
         let mut providers = BTreeMap::new();
         if anthropic {
@@ -129,7 +135,8 @@ impl Catalog {
                 );
                 let offer = Offer {
                     name: Some(m.name),
-                    supports_1m: !native_1m && m.context_window >= Some(LONG_CONTEXT_TOKENS),
+                    supports_1m: !(merge_native_1m && native_1m)
+                        && m.context_window >= Some(LONG_CONTEXT_TOKENS),
                 };
                 Some((model, offer))
             });
@@ -270,6 +277,7 @@ mod tests {
                 cursor("claude-sonnet-4-6"),
                 cursor("composer-2.5"),
             ]),
+            true,
         )
     }
 
@@ -289,7 +297,7 @@ mod tests {
             [ProviderId::Claude, ProviderId::Copilot, ProviderId::Cursor]
         );
         assert_eq!(
-            Catalog::new(false, None, None).offers(ProviderId::Claude),
+            Catalog::new(false, None, None, true).offers(ProviderId::Claude),
             None,
             "a provider that may not be used offers nothing"
         );
@@ -311,7 +319,7 @@ mod tests {
         ];
         let models = ids.map(|id| copilot(id, true, Some(1_000_000))).into();
 
-        let catalog = Catalog::new(false, Some(models), None);
+        let catalog = Catalog::new(false, Some(models), None, true);
         let offers = catalog.offers(ProviderId::Copilot).unwrap();
 
         assert_eq!(offers.len(), ids.len());
@@ -329,12 +337,34 @@ mod tests {
                 copilot("claude-haiku-4.5", true, None),
             ]),
             None,
+            true,
         );
         let offers = catalog.offers(ProviderId::Copilot).unwrap();
 
         assert!(offers[&model("claude-sonnet-4-5")].supports_1m);
         assert!(!offers[&model("claude-opus-4-5")].supports_1m);
         assert!(offers[&model("claude-opus-6")].supports_1m);
+        assert!(!offers[&model("claude-haiku-4-5")].supports_1m);
+    }
+
+    #[test]
+    fn disabling_native_1m_merging_still_respects_upstream_limits() {
+        let catalog = Catalog::new(
+            false,
+            Some(vec![
+                copilot("claude-opus-5.5", true, Some(1_000_000)),
+                copilot("claude-fable-5.1", true, Some(200_000)),
+                copilot("claude-sonnet-4.5", true, Some(1_000_000)),
+                copilot("claude-haiku-4.5", true, None),
+            ]),
+            None,
+            false,
+        );
+        let offers = catalog.offers(ProviderId::Copilot).unwrap();
+
+        assert!(offers[&model("claude-opus-5-5")].supports_1m);
+        assert!(!offers[&model("claude-fable-5-1")].supports_1m);
+        assert!(offers[&model("claude-sonnet-4-5")].supports_1m);
         assert!(!offers[&model("claude-haiku-4-5")].supports_1m);
     }
 

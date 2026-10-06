@@ -389,7 +389,7 @@ never modified. Before launch, the command fetches BYOKEY's routed models
 and writes an explicit `inferenceModels` list. Each entry keeps its standard
 Anthropic ID, with a provider-labelled `labelOverride` such as
 `Claude Opus 5.5 · Copilot`. Models documented as native 1M, including
-Opus 5.5 and Fable 5/5.1, appear once without an additional `1M` entry.
+Opus 5.5 and Fable 5/5.1, appear once by default without an additional `1M` entry.
 Other models retain the optional 1M entry when the upstream advertises support.
 This changes the picker, not the upstream model's context limit, and preserves Desktop's effort
 recognition without adding provider prefixes to model IDs; Desktop's Effort
@@ -461,11 +461,14 @@ providers:
 anthropic:
   catalog:
     name_format: "{{ model }} · {{ provider }}"
+    merge_native_1m: true
 ```
 
-`name_format` reuses the Responses catalog's MiniJinja syntax and validation, with the plain-text variables `model` and `provider`. Filters work here too: `"{{ provider | upper }} / {{ model }}"` puts the provider first. The default format is `"{{ model }} · {{ provider }}"`. `providers.<name>.display_name` is shared with the Responses catalog; labels default to `Claude (Anthropic)`, `Copilot` and `Cursor`. Anthropic `model_overrides` keys are canonical standard Anthropic IDs such as `claude-opus-5-5`, not provider-prefixed IDs or the provider's own spelling such as `claude-opus-5.5`. The override applies when that provider serves the model. Without an override, the model keeps its standard friendly name. These settings change only `display_name` and Desktop's `labelOverride`, not IDs, routing, effort or context capabilities. Each model still appears once, labelled with its routed provider.
+`name_format` reuses the Responses catalog's MiniJinja syntax and validation, with the plain-text variables `model` and `provider`. Filters work here too: `"{{ provider | upper }} / {{ model }}"` puts the provider first. The default format is `"{{ model }} · {{ provider }}"`. `providers.<name>.display_name` is shared with the Responses catalog; labels default to `Claude (Anthropic)`, `Copilot` and `Cursor`. Anthropic `model_overrides` keys are canonical standard Anthropic IDs such as `claude-opus-5-5`, not provider-prefixed IDs or the provider's own spelling such as `claude-opus-5.5`. The override applies when that provider serves the model. Without an override, the model keeps its standard friendly name. These naming settings change only `display_name` and Desktop's `labelOverride`, not IDs, routing, effort or context capabilities. Each model still appears once, labelled with its routed provider.
 
-The server hot-reloads these settings. Invalid templates or empty names reject configuration loading; failed reloads retain the last valid configuration. A template that fails with actual model data fails the catalog request rather than substituting a name. After changing display settings, quit the BYOKEY Desktop instance and rerun `byokey claude desktop` to refresh its saved labels.
+`anthropic.catalog.merge_native_1m` defaults to `true`: native 1M models keep only their standard picker entry. Set it to `false` to offer an additional `1M` entry when the upstream advertises support, including for native 1M models. This setting does not change model IDs, routing, effort, upstream context limits or the Responses catalog.
+
+The server hot-reloads these settings. Invalid templates or empty names reject configuration loading; failed reloads retain the last valid configuration. A template that fails with actual model data fails the catalog request rather than substituting a name. After changing catalog settings, quit the BYOKEY Desktop instance and rerun `byokey claude desktop` to refresh its saved model list and labels.
 
 **Copilot** requests keep the client-selected model, including ordinary chat
 without tools and compaction. Select Claude Code's background model in the

@@ -11,8 +11,8 @@
 //! Anthropic clients (Claude Code, Claude Desktop) send `anthropic-version`
 //! and get Anthropic's list shape; everyone else gets the `OpenAI` one.
 //! Claude Desktop reads `supports_1m` and offers the `<id>[1m]` variant of
-//! such models in its picker. Models with a native 1M context keep only their
-//! standard entry; they do not need this opt-in variant.
+//! such models in its picker. By default, native 1M models keep only their
+//! standard entry; `anthropic.catalog.merge_native_1m` controls this behavior.
 //!
 //! Pickers keep list order, so models are listed in lineup order (see
 //! [`lineup`]), dated with their release.
@@ -341,6 +341,40 @@ mod tests {
             json!([{
                 "id": "claude-opus-5-5", "object": "model", "created": 1_790_035_200,
                 "owned_by": "claude", "display_name": "Claude Opus 5.5 · Claude (Anthropic)"
+            }])
+        );
+    }
+
+    #[tokio::test]
+    async fn native_context_merging_can_be_disabled_on_reload() {
+        let (mut config, state) = state().await;
+        let list = || async {
+            let response = list_models(State(state.clone()), HeaderMap::new())
+                .await
+                .unwrap();
+            serde_json::from_slice::<Value>(
+                &to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+            )
+            .unwrap()
+        };
+        let before = list().await;
+
+        config.anthropic.catalog =
+            Config::from_yaml("anthropic: { catalog: { merge_native_1m: false } }")
+                .unwrap()
+                .anthropic
+                .catalog;
+        state.config.store(Arc::new(config));
+        let after = list().await;
+
+        assert_eq!(before["data"][0]["id"], "claude-opus-5-5");
+        assert!(before["data"][0].get("supports_1m").is_none());
+        assert_eq!(
+            after["data"],
+            json!([{
+                "id": "claude-opus-5-5", "object": "model", "created": 1_790_035_200,
+                "owned_by": "copilot", "display_name": "Claude Opus 5.5 · Copilot",
+                "supports_1m": true
             }])
         );
     }
