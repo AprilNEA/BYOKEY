@@ -398,6 +398,11 @@ routes, display settings or available models, quit the BYOKEY Desktop instance a
 command again to refresh its list and labels. Server-side routes still
 hot-reload; labels describe the routes at the last launch through this command.
 If the catalog request fails or lists no models, Desktop settings stay unchanged.
+The generated profile sets `coworkEgressAllowedHosts: ["*"]`, allowing tool
+connections to any outbound host in Cowork and Code. This removes Desktop's
+default network policy that locks **Local sandbox** on; it does not turn the
+sandbox off or override other managed policies. To apply this to an existing
+profile, quit the BYOKEY Desktop instance and run the command again.
 While the BYOKEY instance runs it can switch Desktop's saved mode, so a cold
 launch from the Dock may open it instead of the official one; the command
 warns about this. macOS only.
