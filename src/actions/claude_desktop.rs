@@ -177,6 +177,8 @@ async fn gateway_config(url: &str) -> Result<Value> {
         "inferenceGatewayAuthScheme": "bearer",
         "modelDiscoveryEnabled": false,
         "inferenceModels": models,
+        // Without an explicit wildcard, Desktop restricts egress and locks Local sandbox on.
+        "coworkEgressAllowedHosts": ["*"],
     }))
 }
 
@@ -336,6 +338,7 @@ mod tests {
             read_object(&dir.path().join(format!("configLibrary/{ENTRY_ID}.json"))).unwrap();
         assert_eq!(entry["inferenceGatewayBaseUrl"], url);
         assert_eq!(entry["modelDiscoveryEnabled"], false);
+        assert_eq!(entry["coworkEgressAllowedHosts"], json!(["*"]));
         assert_eq!(
             entry["inferenceModels"],
             json!([
