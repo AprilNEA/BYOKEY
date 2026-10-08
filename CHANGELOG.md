@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.0](https://github.com/AprilNEA/BYOKEY/compare/v4.3.0...v4.4.0) - 2026-10-08
+
+### Added
+
+- *(config)* allow native Claude Desktop settings
+
+### Fixed
+
+- *(claude)* keep Desktop sandbox user-configurable
+
 ## [4.3.0](https://github.com/AprilNEA/BYOKEY/compare/v4.2.0...v4.3.0) - 2026-10-06
 
 ### Added
