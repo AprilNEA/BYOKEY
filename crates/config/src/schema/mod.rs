@@ -1,12 +1,14 @@
 pub mod anthropic;
 mod catalog;
 pub mod claude_code;
+pub mod claude_desktop;
 pub mod provider;
 pub mod responses;
 pub mod routes;
 pub mod runtime;
 
 pub use claude_code::ClaudeCodeConfig;
+pub use claude_desktop::ClaudeDesktopConfig;
 pub use provider::{ConfigValue, ModelOverride, ProviderConfig};
 pub use routes::{RouteSource, Routes};
 pub use runtime::{LogConfig, LogFormat, TelemetryConfig};
@@ -44,6 +46,9 @@ pub struct Config {
     /// Claude Code CLI integration configuration.
     #[serde(default)]
     pub claude_code: ClaudeCodeConfig,
+    /// Claude Desktop third-party integration configuration.
+    #[serde(default)]
+    pub claude_desktop: ClaudeDesktopConfig,
     /// Global upstream proxy URL (e.g. "socks5://user:pass@host:port").
     /// All upstream requests will go through this proxy.
     #[serde(default)]
@@ -65,6 +70,7 @@ impl Default for Config {
             anthropic: anthropic::AnthropicConfig::default(),
             responses: responses::ResponsesConfig::default(),
             claude_code: ClaudeCodeConfig::default(),
+            claude_desktop: ClaudeDesktopConfig::default(),
             proxy_url: None,
             log: LogConfig::default(),
             telemetry: TelemetryConfig::default(),
@@ -103,16 +109,17 @@ impl Config {
             .unwrap_or("https://chatgpt.com/backend-api/codex")
     }
 
-    /// Validate provider definitions and protocol settings without resolving credentials.
+    /// Validate provider, protocol, and client settings without resolving credentials.
     ///
     /// # Errors
-    /// Returns an error for invalid provider metadata, templates, or route targets.
+    /// Returns an error for invalid provider metadata, templates, route targets, or client settings.
     pub fn validate(&self) -> Result<()> {
         for (name, provider) in &self.providers {
             provider.validate(name)?;
         }
         self.anthropic.catalog.validate()?;
-        self.validate_responses()
+        self.validate_responses()?;
+        self.claude_desktop.validate()
     }
 
     /// Parses configuration from a YAML string, merged with defaults.

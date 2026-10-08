@@ -398,7 +398,7 @@ routes, display settings or available models, quit the BYOKEY Desktop instance a
 command again to refresh its list and labels. Server-side routes still
 hot-reload; labels describe the routes at the last launch through this command.
 If the catalog request fails or lists no models, Desktop settings stay unchanged.
-The generated profile sets `coworkEgressAllowedHosts: ["*"]`, allowing tool
+By default, the generated profile sets `coworkEgressAllowedHosts: ["*"]`, allowing tool
 connections to any outbound host in Cowork and Code. This removes Desktop's
 default network policy that locks **Local sandbox** on; it does not turn the
 sandbox off or override other managed policies. To apply this to an existing
@@ -406,6 +406,32 @@ profile, quit the BYOKEY Desktop instance and run the command again.
 While the BYOKEY instance runs it can switch Desktop's saved mode, so a cold
 launch from the Dock may open it instead of the official one; the command
 warns about this. macOS only.
+
+Configure native Desktop third-party settings in the BYOKEY config:
+
+```yaml
+claude_desktop:
+  settings:
+    coworkEgressAllowedHosts: ["*"]
+```
+
+`claude_desktop.settings` overrides generated behavior defaults by top-level key.
+Arrays and nested objects are copied unchanged; an explicit empty list replaces
+the default list. Restricting outbound hosts can lock **Local sandbox** on again.
+Use Desktop's native setting names and value types; BYOKEY does not validate the
+Desktop schema. These settings are separate from `claude_code.settings`.
+
+BYOKEY reserves `inferenceProvider`, `inferenceGatewayBaseUrl`,
+`inferenceCredentialKind`, `inferenceGatewayApiKey`, `inferenceGatewayAuthScheme`,
+`modelDiscoveryEnabled`, and `inferenceModels`. Defining any of these in
+`claude_desktop.settings` fails configuration loading before Desktop files change.
+Use `--url` for the gateway address and BYOKEY routes for model selection.
+
+After editing the config, quit the BYOKEY Desktop instance and run
+`byokey claude desktop --config path/to/settings.yaml` (JSON also works).
+Server hot reload does not apply Desktop settings. The command rebuilds its
+profile entry each launch, so keep overrides in the BYOKEY config rather than
+editing the generated entry.
 
 All three accept `--url <URL>` to use a BYOKEY other than the configured one.
 
@@ -441,7 +467,7 @@ anthropic:
 ```
 
 All fields are optional; unspecified providers are enabled by default and use
-the login stored in the database. Unknown fields fail configuration loading. `providers` is the single provider map for both protocols; see [ChatGPT.app / Codex](#chatgptapp--codex) for custom Responses providers. Anthropic routes accept only `claude`, `copilot` and `cursor`.
+the login stored in the database. Unknown fields fail configuration loading, except for native client settings inside `claude_code.settings` and `claude_desktop.settings`. `providers` is the single provider map for both protocols; see [ChatGPT.app / Codex](#chatgptapp--codex) for custom Responses providers. Anthropic routes accept only `claude`, `copilot` and `cursor`.
 Setting `providers.<name>.enabled: false` hides that provider's models and
 rejects Messages and token-count requests routed to it with HTTP 400, including
 explicit `copilot/` or `cursor/` prefixes. Requests do not fall back to another provider.

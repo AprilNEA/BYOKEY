@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use super::claude::{Target, write_atomic};
+use super::claude::{Resolved, Target, write_atomic};
 
 const APP: &str = "/Applications/Claude.app";
 const BUNDLE_ID: &str = "com.anthropic.claudefordesktop";
@@ -48,12 +48,12 @@ pub async fn desktop(args: DesktopArgs) -> Result<()> {
     if !Path::new(APP).exists() {
         bail!("Claude Desktop is not installed at {APP}");
     }
-    let url = args.target.resolve()?.url;
+    let Resolved { config, url } = args.target.resolve()?;
     let profile = profile_dir()?;
     if third_party_running(&profile) {
         bail!("a BYOKEY Claude Desktop is already open; quit it to open one with new settings");
     }
-    let gateway = gateway_config(&url).await?;
+    let gateway = gateway_config(&url, config.claude_desktop.settings).await?;
     // Undo a `3p` the previous BYOKEY instance wrote back, whatever happens next.
     set_mode(&profile, DeploymentMode::Official)?;
     let log = log_path()?;
@@ -127,7 +127,7 @@ fn log_path() -> Result<PathBuf> {
 }
 
 /// Snapshot the routed catalog before writing any Desktop settings.
-async fn gateway_config(url: &str) -> Result<Value> {
+async fn gateway_config(url: &str, settings: Map<String, Value>) -> Result<Value> {
     #[derive(Deserialize)]
     struct Catalog {
         data: Vec<Model>,
@@ -168,7 +168,7 @@ async fn gateway_config(url: &str) -> Result<Value> {
             })
         })
         .collect();
-    Ok(json!({
+    let mut gateway = json!({
         "inferenceProvider": "gateway",
         "inferenceGatewayBaseUrl": url,
         "inferenceCredentialKind": "static",
@@ -179,7 +179,11 @@ async fn gateway_config(url: &str) -> Result<Value> {
         "inferenceModels": models,
         // Without an explicit wildcard, Desktop restricts egress and locks Local sandbox on.
         "coworkEgressAllowedHosts": ["*"],
-    }))
+    });
+    for (key, value) in settings {
+        gateway[key] = value;
+    }
+    Ok(gateway)
 }
 
 /// Point `profile`'s config library at BYOKEY, keeping other entries.
@@ -331,7 +335,7 @@ mod tests {
         let url = format!("{}/gateway/", serve(app).await);
         let dir = tempfile::tempdir().unwrap();
 
-        let gateway = gateway_config(&url).await.unwrap();
+        let gateway = gateway_config(&url, Map::new()).await.unwrap();
         write_profile(dir.path(), &gateway).unwrap();
 
         let entry =
@@ -350,6 +354,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn profile_rewrites_apply_configured_settings_instead_of_saved_values() {
+        let app = axum::Router::new().route(
+            "/v1/models",
+            axum::routing::get(|| async {
+                axum::Json(json!({"data": [
+                    {"id": "claude-sonnet-4-6", "display_name": "Sonnet · Copilot"}
+                ]}))
+            }),
+        );
+        let url = serve(app).await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.yaml");
+        std::fs::write(
+            &path,
+            r"
+claude_desktop:
+  settings:
+    coworkEgressAllowedHosts: [docs.example.com, packages.example.com]
+    futureDesktopSetting:
+      enabled: false
+      limits: [3, 11]
+      label: Engineering
+",
+        )
+        .unwrap();
+        let profile = dir.path().join("profile");
+        write_profile(
+            &profile,
+            &json!({"coworkEgressAllowedHosts": ["*"], "removedSetting": true}),
+        )
+        .unwrap();
+        let config = byokey_config::Config::from_file(&path).unwrap();
+
+        let gateway = gateway_config(&url, config.claude_desktop.settings)
+            .await
+            .unwrap();
+        write_profile(&profile, &gateway).unwrap();
+
+        let entry = read_object(&profile.join(format!("configLibrary/{ENTRY_ID}.json"))).unwrap();
+        assert_eq!(
+            Value::Object(entry),
+            json!({
+                "inferenceProvider": "gateway",
+                "inferenceGatewayBaseUrl": url,
+                "inferenceCredentialKind": "static",
+                "inferenceGatewayApiKey": "byokey",
+                "inferenceGatewayAuthScheme": "bearer",
+                "modelDiscoveryEnabled": false,
+                "inferenceModels": [{
+                    "name": "claude-sonnet-4-6",
+                    "labelOverride": "Sonnet · Copilot",
+                    "supports1m": false
+                }],
+                "coworkEgressAllowedHosts": ["docs.example.com", "packages.example.com"],
+                "futureDesktopSetting": {"enabled": false, "limits": [3, 11], "label": "Engineering"}
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_egress_override_does_not_restore_the_wildcard() {
+        let app = axum::Router::new().route(
+            "/v1/models",
+            axum::routing::get(|| async {
+                axum::Json(json!({"data": [
+                    {"id": "claude-opus-5-5", "display_name": "Opus · Cursor"}
+                ]}))
+            }),
+        );
+        let url = serve(app).await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(
+            &path,
+            r#"{"claude_desktop":{"settings":{"coworkEgressAllowedHosts":[]}}}"#,
+        )
+        .unwrap();
+        let config = byokey_config::Config::from_file(&path).unwrap();
+
+        let gateway = gateway_config(&url, config.claude_desktop.settings)
+            .await
+            .unwrap();
+        write_profile(dir.path(), &gateway).unwrap();
+
+        let entry =
+            read_object(&dir.path().join(format!("configLibrary/{ENTRY_ID}.json"))).unwrap();
+        assert_eq!(entry["coworkEgressAllowedHosts"], json!([]));
+    }
+
+    #[tokio::test]
     async fn catalog_http_errors_prevent_desktop_configuration() {
         let app = axum::Router::new().route(
             "/v1/models",
@@ -357,7 +451,7 @@ mod tests {
         );
         let url = serve(app).await;
 
-        let error = gateway_config(&url).await.unwrap_err();
+        let error = gateway_config(&url, Map::new()).await.unwrap_err();
 
         assert_eq!(
             error.downcast_ref::<reqwest::Error>().unwrap().status(),
@@ -373,7 +467,7 @@ mod tests {
         );
         let url = serve(app).await;
 
-        let error = gateway_config(&url).await.unwrap_err();
+        let error = gateway_config(&url, Map::new()).await.unwrap_err();
 
         assert!(error.to_string().contains("no routed Claude models"));
     }
