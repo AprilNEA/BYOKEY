@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.0](https://github.com/AprilNEA/BYOKEY/compare/v4.3.0...v4.4.0) - 2026-10-08
+
+### Added
+
+- Configure native Claude Desktop third-party settings with `claude_desktop.settings` in YAML or JSON. Settings override generated behavior defaults by top-level key, including restrictive or empty outbound-host lists. BYOKEY-managed gateway connection, credential, discovery, and model fields cannot be overridden. Existing 4.3.0 configuration files require no migration.
+
+### Fixed
+
+- Default generated Desktop profiles to `coworkEgressAllowedHosts: ["*"]`. This permits connections to any outbound host and removes the network policy that locks Local sandbox on. The setting does not disable the sandbox or override other managed policies. Configure a restricted host list in `claude_desktop.settings` if required; restrictions can force the sandbox on again.
+
+After upgrading or editing Desktop settings, quit the BYOKEY Desktop instance and rerun `byokey claude desktop --config <FILE>`. Server hot reload does not apply Desktop settings. Keep overrides in the BYOKEY configuration; the command replaces its generated profile entry on each launch.
+
 ## [4.3.0](https://github.com/AprilNEA/BYOKEY/compare/v4.2.0...v4.3.0) - 2026-10-06
 
 ### Added
