@@ -3,7 +3,6 @@
 //! settings the API rejects, the `[1m]` model suffix and beta headers.
 
 use axum::http::HeaderMap;
-use byokey_provider::claude::ANTHROPIC_BETA;
 use byokey_types::ThinkingCapability;
 use serde_json::Value;
 
@@ -248,14 +247,14 @@ pub(super) fn take_long_context_suffix(body: &mut Value) -> bool {
 pub(super) fn build_beta_header(
     body: &mut Value,
     client_headers: &HeaderMap,
+    base: &str,
     extra: Option<&str>,
 ) -> String {
-    let mut betas = ANTHROPIC_BETA.to_string();
+    let mut betas: Vec<&str> = base.split(',').filter(|beta| !beta.is_empty()).collect();
     if let Some(extra) = extra
-        && !betas.contains(extra)
+        && !betas.contains(&extra)
     {
-        betas.push(',');
-        betas.push_str(extra);
+        betas.push(extra);
     }
 
     // Merge from client's `anthropic-beta` HTTP header (comma-separated).
@@ -265,9 +264,8 @@ pub(super) fn build_beta_header(
     {
         for token in hv.split(',') {
             let token = token.trim();
-            if !token.is_empty() && !betas.contains(token) {
-                betas.push(',');
-                betas.push_str(token);
+            if !token.is_empty() && !betas.contains(&token) {
+                betas.push(token);
             }
         }
     }
@@ -276,13 +274,14 @@ pub(super) fn build_beta_header(
     if let Some(arr) = body.get("betas").and_then(Value::as_array) {
         for b in arr {
             if let Some(s) = b.as_str()
-                && !betas.contains(s)
+                && !s.is_empty()
+                && !betas.contains(&s)
             {
-                betas.push(',');
-                betas.push_str(s);
+                betas.push(s);
             }
         }
     }
+    let betas = betas.join(",");
     // Strip `betas` — it's a client-to-proxy field, not a valid API field.
     if let Some(obj) = body.as_object_mut() {
         obj.remove("betas");
@@ -304,6 +303,7 @@ mod tests {
         let beta = build_beta_header(
             &mut body,
             &HeaderMap::new(),
+            "",
             long_context.then_some(CONTEXT_1M_BETA),
         );
         let betas: Vec<&str> = beta.split(',').collect();
@@ -314,7 +314,7 @@ mod tests {
         let mut body = json!({"model": "claude-sonnet-5"});
         assert!(!take_long_context_suffix(&mut body));
         assert_eq!(body["model"], "claude-sonnet-5");
-        let beta = build_beta_header(&mut body, &HeaderMap::new(), None);
+        let beta = build_beta_header(&mut body, &HeaderMap::new(), "", None);
         assert!(!beta.contains(CONTEXT_1M_BETA));
 
         let mut body = json!({"max_tokens": 1});

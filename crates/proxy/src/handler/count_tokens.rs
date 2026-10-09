@@ -11,7 +11,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use byokey_provider::Conversation;
-use byokey_provider::claude::ANTHROPIC_VERSION;
+use byokey_provider::claude::{ANTHROPIC_BETA, ANTHROPIC_VERSION};
 use byokey_types::ByokError;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -41,12 +41,17 @@ async fn serve_count_tokens(
 ) -> Result<Response, ApiError> {
     let config = state.config.load();
     let (provider, long_context) = route(&config, &mut body)?;
-    let beta = build_beta_header(&mut body, headers, long_context.then_some(CONTEXT_1M_BETA));
-    if config
+    let custom = config
         .providers
         .get(&provider)
-        .is_none_or(|p| p.anthropic.is_none())
-    {
+        .and_then(|p| p.anthropic.as_ref());
+    let beta = build_beta_header(
+        &mut body,
+        headers,
+        if custom.is_some() { "" } else { ANTHROPIC_BETA },
+        long_context.then_some(CONTEXT_1M_BETA),
+    );
+    if custom.is_none() {
         sanitize_system(&mut body);
     }
     let resp = match provider.as_str() {
@@ -80,11 +85,8 @@ async fn serve_count_tokens(
                 .send()
                 .await
         }
-        name => {
-            let upstream = config.providers[name]
-                .anthropic
-                .as_ref()
-                .expect("Messages provider validated by route");
+        _ => {
+            let upstream = custom.expect("Messages provider validated by route");
             super::custom_messages::request(
                 &state.http,
                 upstream,

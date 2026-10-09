@@ -318,17 +318,74 @@ async fn native_messages_keep_signatures_and_unknown_fields_with_only_configured
         headers["x-from-environment"],
         std::env::var("PATH").unwrap()
     );
-    assert!(
-        headers["anthropic-beta"]
-            .to_str()
-            .unwrap()
-            .contains("client-beta")
-    );
+    assert_eq!(headers["anthropic-beta"], "client-beta");
     assert!(!headers.contains_key("authorization"));
     assert!(!headers.contains_key("cookie"));
     assert!(!headers.contains_key("x-specified-llm-provider-name"));
     assert!(!headers.contains_key("x-hop"));
     assert_eq!(state.usage.snapshot().input_tokens, 17);
+}
+
+#[tokio::test]
+async fn custom_messages_and_counting_omit_unrequested_betas() {
+    let mut upstream = Upstream::start(StatusCode::OK, MESSAGE).await;
+    let app = crate::make_router(state(upstream.config()));
+    let body = json!({
+        "model":"claude-opus-5-5[llm-router]", "max_tokens":32,
+        "messages":[{"role":"user","content":"hi"}]
+    });
+    let mut message = request("/v1/messages", &body);
+    message.headers_mut().remove("anthropic-beta");
+    let mut count = request("/v1/messages/count_tokens", &body);
+    count.headers_mut().remove("anthropic-beta");
+
+    let response = app.clone().oneshot(message).await.unwrap();
+    let counted = app.oneshot(count).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(counted.status(), StatusCode::OK);
+    let (path, headers, _) = upstream.received.recv().await.unwrap();
+    assert_eq!(path, "/api/v1/messages");
+    assert!(!headers.contains_key("anthropic-beta"));
+    let (path, headers, _) = upstream.received.recv().await.unwrap();
+    assert_eq!(path, "/api/v1/messages/count_tokens");
+    assert!(!headers.contains_key("anthropic-beta"));
+}
+
+#[tokio::test]
+async fn configured_beta_header_replaces_client_and_long_context_betas() {
+    let mut upstream = Upstream::start(StatusCode::OK, MESSAGE).await;
+    let mut config = upstream.config();
+    config
+        .providers
+        .get_mut("llm-router")
+        .unwrap()
+        .anthropic
+        .as_mut()
+        .unwrap()
+        .headers
+        .insert(
+            "Anthropic-Beta".into(),
+            byokey_config::ConfigValue::Literal("gateway-beta".into()),
+        );
+    let app = crate::make_router(state(config));
+
+    let response = app
+        .oneshot(request(
+            "/v1/messages",
+            &json!({
+                "model":"claude-opus-5-5[llm-router][1m]", "max_tokens":32,
+                "messages":[{"role":"user","content":"hi"}], "betas":["body-beta"]
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_, headers, body) = upstream.received.recv().await.unwrap();
+    assert_eq!(headers["anthropic-beta"], "gateway-beta");
+    assert_eq!(headers.get_all("anthropic-beta").iter().count(), 1);
+    assert!(body.get("betas").is_none());
 }
 
 #[tokio::test]
@@ -367,6 +424,13 @@ async fn tagged_models_keep_effort_and_fast_separate_from_the_copilot_default() 
     assert_eq!(body["model"], "claude-opus-5-5");
     assert_eq!(body["output_config"]["effort"], "low");
     assert!(body.get("speed").is_none());
+    assert!(
+        headers["anthropic-beta"]
+            .to_str()
+            .unwrap()
+            .split(',')
+            .any(|beta| beta == "oauth-2025-04-20")
+    );
     assert!(!headers.contains_key("x-request-resource-group"));
     let (path, headers, body) = upstream.received.recv().await.unwrap();
     assert_eq!(path, "/api/v1/messages");
@@ -374,12 +438,15 @@ async fn tagged_models_keep_effort_and_fast_separate_from_the_copilot_default() 
     assert_eq!(body["thinking"], json!({"type":"adaptive"}));
     assert_eq!(body["output_config"]["effort"], "max");
     assert_eq!(body["speed"], "fast");
-    assert!(
+    assert_eq!(
         headers["anthropic-beta"]
             .to_str()
             .unwrap()
-            .contains("fast-mode-2026-02-01")
+            .split(',')
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["client-beta", "fast-mode-2026-02-01"])
     );
+    assert!(body.get("betas").is_none());
     assert_eq!(headers["x-request-resource-group"], "5");
     assert_eq!(headers["x-api-key"], "configured-message-key");
     assert!(!headers.contains_key("authorization"));
@@ -515,20 +582,24 @@ async fn qualified_models_resolve_before_auto_thinking_and_long_context() {
     let (_, headers, payload) = upstream.received.recv().await.unwrap();
     assert_eq!(payload["model"], "claude-opus-5-5");
     assert_eq!(payload["thinking"], json!({"type":"adaptive"}));
-    assert!(
+    assert_eq!(
         headers["anthropic-beta"]
             .to_str()
             .unwrap()
-            .contains("context-1m-2025-08-07")
+            .split(',')
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["context-1m-2025-08-07", "client-beta"])
     );
     let (path, headers, payload) = upstream.received.recv().await.unwrap();
     assert_eq!(path, "/api/v1/messages/count_tokens");
     assert_eq!(payload["model"], "claude-opus-5-5");
-    assert!(
+    assert_eq!(
         headers["anthropic-beta"]
             .to_str()
             .unwrap()
-            .contains("context-1m-2025-08-07")
+            .split(',')
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["context-1m-2025-08-07", "client-beta"])
     );
 }
 
