@@ -98,6 +98,13 @@ pub(crate) async fn models(
     }
     add_custom_models(&state.http, &config, &originals, &mut output).await?;
     add_aliases(&config, &originals, &copilot, &mut output)?;
+    if settings.auto_review_follow_provider {
+        for (slug, metadata) in &mut output {
+            if config.response_route(slug)?.0 != "chatgpt" {
+                metadata["auto_review_model_override"] = json!(slug);
+            }
+        }
+    }
     present_models(&config, &mut output)?;
     Ok(Json(
         json!({"models": output.into_values().collect::<Vec<_>>()}),

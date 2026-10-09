@@ -14,7 +14,8 @@ fn catalog_request() -> Request<Body> {
 async fn copilot_catalog_server() -> Server {
     serve(Router::new()
         .route("/chatgpt/models", get(|| async { Json(json!({"models": [
-            {"slug": "gpt-6-astra", "display_name": "GPT-6-Astra", "visibility": "list", "context_window": 400_000},
+            {"slug": "gpt-6-astra", "display_name": "GPT-6-Astra", "visibility": "list", "context_window": 400_000,
+             "auto_review_model_override": "codex-auto-review", "multi_agent_version": "v2"},
             {"slug": "gpt-6-sol", "display_name": "GPT-6-Sol", "visibility": "list", "context_window": 64_000}
         ]})) }))
         .route("/models", get(|| async { Json(json!({"data": [
@@ -86,6 +87,9 @@ async fn provider_names_are_consistent_and_legacy_aliases_remain_routable_but_hi
     assert_eq!(models[0]["display_name"], "GPT-6 Astra (LLM Router)");
     assert_eq!(models[1]["context_window"], 128_000);
     assert_eq!(models[3]["context_window"], 400_000);
+    assert_eq!(models[0]["auto_review_model_override"], "codex-auto-review");
+    assert_eq!(models[1]["auto_review_model_override"], "codex-auto-review");
+    assert_eq!(models[3]["auto_review_model_override"], "codex-auto-review");
 
     let response = app
         .oneshot(request(
@@ -100,6 +104,103 @@ async fn provider_names_are_consistent_and_legacy_aliases_remain_routable_but_hi
     let (_, headers, payload) = received.recv().await.unwrap();
     assert_eq!(payload["model"], "gpt-6-astra");
     assert!(!headers.contains_key("authorization"));
+}
+
+#[tokio::test]
+async fn auto_review_follows_resolved_providers_and_preserves_review_errors() {
+    const ERROR: &str =
+        r#"{"error":{"type":"rate_limit_error","message":"review quota exhausted"}}"#;
+    let catalog = copilot_catalog_server().await;
+    let (router, mut received) = capture(StatusCode::TOO_MANY_REQUESTS, ERROR);
+    let upstream = serve(router.route(
+        "/models",
+        get(|| async { Json(json!({"data": [{"id": "deployment"}, {"id": "vendor/nested"}]})) }),
+    ))
+    .await;
+    let config = Config::from_yaml(&format!(
+        r"
+providers:
+  chatgpt:
+    base_url: {}/chatgpt
+  copilot:
+    base_url: {}
+    api_key: {}
+  company:
+    base_url: {}
+    models_url: {}/models
+    api_key: company-key
+    model_overrides:
+      deployment: {{ catalog_model: gpt-6-astra }}
+      vendor/nested: {{ catalog_model: gpt-6-astra }}
+responses:
+  auto_review_follow_provider: true
+  routes:
+    default: copilot
+    models:
+      friendly: {{ provider: company, model: deployment }}
+      copilot/alias: {{ provider: company, model: vendor/nested }}
+      native: {{ provider: chatgpt, model: gpt-6-astra }}
+",
+        catalog.url,
+        catalog.url,
+        uuid::Uuid::new_v4(),
+        upstream.url,
+        upstream.url,
+    ))
+    .unwrap();
+    let app = crate::make_router(state(config));
+
+    let response = app.clone().oneshot(catalog_request()).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let models = body["models"].as_array().unwrap();
+    let reviewers: Vec<_> = models
+        .iter()
+        .map(|m| {
+            (
+                m["slug"].as_str().unwrap(),
+                m["auto_review_model_override"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        reviewers,
+        [
+            ("company/deployment", "company/deployment"),
+            ("company/vendor/nested", "company/vendor/nested"),
+            ("copilot/alias", "copilot/alias"),
+            ("copilot/gpt-6-astra", "copilot/gpt-6-astra"),
+            ("friendly", "friendly"),
+            ("gpt-6-astra", "gpt-6-astra"),
+            ("native", "codex-auto-review"),
+        ]
+    );
+    assert!(models.iter().all(|m| m["multi_agent_version"] == "v2"));
+
+    let response = app
+        .oneshot(request(&json!({
+            "model": models[2]["auto_review_model_override"],
+            "input": "Review a planned read-only command.",
+            "stream": true,
+        })))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        response.headers()["retry-after"],
+        "Fri, 02 Oct 2026 12:00:00 GMT"
+    );
+    assert_eq!(
+        to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+        ERROR
+    );
+    let (_, headers, payload) = received.recv().await.unwrap();
+    assert_eq!(payload["model"], "vendor/nested");
+    assert_eq!(headers["authorization"], "Bearer company-key");
+    assert!(!headers.contains_key("chatgpt-account-id"));
 }
 
 #[tokio::test]
