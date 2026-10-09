@@ -11,7 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- *(proxy)* add custom Messages providers with Desktop effort ([#130](https://github.com/AprilNEA/BYOKEY/pull/130))
+- Add custom native Anthropic Messages providers alongside Copilot, Claude and Cursor. Configure each provider's independent Messages URL, credentials and extra headers under `providers.<name>.anthropic`. Native request fields, thinking signatures, response JSON and SSE are preserved without Chat Completions translation.
+- Select a fixed model catalog with `anthropic.enabled_models`, or use the same list to filter discovery when `anthropic.models_url` is configured. Effort-suffixed upstream aliases are not required: send the selected effort in `output_config.effort`.
+
+### Fixed
+
+- Keep custom providers separately selectable in Claude Desktop without losing base-model Effort recognition. Custom catalog IDs use tags such as `claude-opus-5-5[llm-router]`; existing `llm-router/claude-opus-5-5` requests still route correctly. Verified with Desktop 2.31226.0.
+
+After upgrading, quit the BYOKEY Desktop instance and rerun `byokey claude desktop` to refresh the saved model list. Fast request parameters pass through; actual Fast availability still depends on the upstream model and account permissions.
 
 ## [4.4.0](https://github.com/AprilNEA/BYOKEY/compare/v4.3.0...v4.4.0) - 2026-10-08
 
