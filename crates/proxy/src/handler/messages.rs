@@ -11,7 +11,7 @@
 //! [`super::forward`]).
 
 use axum::{extract::State, http::HeaderMap, response::Response};
-use byokey_provider::claude::{ANTHROPIC_VERSION, fingerprint_headers};
+use byokey_provider::claude::{ANTHROPIC_BETA, ANTHROPIC_VERSION, fingerprint_headers};
 use byokey_provider::cloak::{derive_cc_entrypoint, inject_billing_header};
 use byokey_types::{ByokError, ClaudeModel, ProviderId};
 use serde_json::Value;
@@ -61,18 +61,23 @@ async fn serve_messages(
     let (provider, long_context) = route(&config, &mut body)?;
     sanitize_thinking(&mut body);
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
-    let beta = build_beta_header(&mut body, &headers, long_context.then_some(CONTEXT_1M_BETA));
+    let custom = config
+        .providers
+        .get(&provider)
+        .and_then(|p| p.anthropic.as_ref());
+    let beta = build_beta_header(
+        &mut body,
+        &headers,
+        if custom.is_some() { "" } else { ANTHROPIC_BETA },
+        long_context.then_some(CONTEXT_1M_BETA),
+    );
     let accept = if stream {
         "text/event-stream"
     } else {
         "application/json"
     };
 
-    if let Some(upstream) = config
-        .providers
-        .get(&provider)
-        .and_then(|p| p.anthropic.as_ref())
-    {
+    if let Some(upstream) = custom {
         let request =
             super::custom_messages::request(&state.http, upstream, "/v1/messages", &beta)?
                 .header("accept", accept)

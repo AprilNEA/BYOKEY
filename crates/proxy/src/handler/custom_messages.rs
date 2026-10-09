@@ -85,10 +85,11 @@ pub(super) fn request(
     beta: &str,
 ) -> Result<reqwest::RequestBuilder, ByokError> {
     let mut headers = headers(upstream)?;
-    if !upstream
-        .headers
-        .keys()
-        .any(|name| name.eq_ignore_ascii_case("anthropic-beta"))
+    if !beta.is_empty()
+        && !upstream
+            .headers
+            .keys()
+            .any(|name| name.eq_ignore_ascii_case("anthropic-beta"))
     {
         headers.insert(
             "anthropic-beta",

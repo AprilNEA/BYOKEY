@@ -318,6 +318,8 @@ Explicit `<model>[<provider>]` IDs select that provider, as do existing `<provid
 
 The custom Messages path preserves native request fields, thinking signatures, tools, response JSON and SSE; it strips the provider qualifier and applies BYOKEY's thinking and beta normalization. It does not translate through Chat Completions or apply Claude OAuth tool-name remapping. `/v1/messages/count_tokens` is appended to the Messages base URL; if the gateway does not implement counting, its error is returned without an estimate or provider fallback.
 
+Custom Messages requests forward only explicitly requested betas: the client's `anthropic-beta` header, its JSON `betas` array and the `[1m]` suffix. BYOKEY does not inject Claude Code's default beta list into custom upstreams. Without requested betas, BYOKEY omits the header. A configured `anthropic.headers.anthropic-beta` replaces the requested list for both generation and token counting; use only beta values your gateway supports.
+
 ```sh
 byokey claude start --model 'claude-sonnet-4-6[llm-router]'
 ```
