@@ -9,7 +9,7 @@ pub mod runtime;
 
 pub use claude_code::ClaudeCodeConfig;
 pub use claude_desktop::ClaudeDesktopConfig;
-pub use provider::{ConfigValue, ModelOverride, ProviderConfig};
+pub use provider::{AnthropicProviderConfig, ConfigValue, ModelOverride, ProviderConfig};
 pub use routes::{RouteSource, Routes};
 pub use runtime::{LogConfig, LogFormat, TelemetryConfig};
 
@@ -117,7 +117,7 @@ impl Config {
         for (name, provider) in &self.providers {
             provider.validate(name)?;
         }
-        self.anthropic.catalog.validate()?;
+        self.validate_anthropic()?;
         self.validate_responses()?;
         self.claude_desktop.validate()
     }

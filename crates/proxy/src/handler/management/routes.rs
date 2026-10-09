@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use byokey_config::RouteSource;
 use byokey_types::ClaudeModel;
-use connectrpc::{RequestContext, Response, ServiceRequest, ServiceResult};
+use connectrpc::{ConnectError, RequestContext, Response, ServiceRequest, ServiceResult};
 
 use byokey_proto::byokey::routes as rt;
 
@@ -30,33 +30,37 @@ impl rt::RoutesService for RoutesServiceImpl {
         _: ServiceRequest<'_, rt::ListRoutesRequest>,
     ) -> ServiceResult<rt::ListRoutesResponse> {
         let config = self.0.config.load();
-        let catalog = Catalog::fetch(&self.0, &config).await;
+        let catalog = Catalog::fetch(&self.0, &config)
+            .await
+            .map_err(|error| ConnectError::internal(error.error.to_string()))?;
         let routes = &config.anthropic.routes;
         let mut offered = catalog.models();
         for &model in routes.models.keys() {
-            offered.entry(model).or_default();
+            offered.entry(model.to_string()).or_default();
         }
-        let mut models: Vec<(ClaudeModel, Vec<_>)> = offered.into_iter().collect();
-        lineup::sort(&mut models, |(m, _)| *m);
+        let mut models: Vec<_> = offered.into_iter().collect();
+        lineup::sort(&mut models, |(m, _)| {
+            ClaudeModel::parse_id(m).map(|id| id.model)
+        });
         Response::ok(rt::ListRoutesResponse {
             models: models
                 .into_iter()
                 .map(|(model, offered_by)| {
-                    let (provider, source) = routes.resolve(model);
+                    let (provider, source) = routes.resolve_id(&model);
                     rt::ModelRoute {
-                        model: model.to_string(),
+                        model,
                         provider: provider.to_string(),
                         source: wire_source(source).into(),
-                        offered_by: offered_by.iter().map(ToString::to_string).collect(),
+                        offered_by,
                         ..Default::default()
                     }
                 })
                 .collect(),
-            default_provider: routes.default.map(|p| p.to_string()),
+            default_provider: routes.default.clone(),
             families: routes
                 .families
                 .iter()
-                .map(|(f, p)| (f.to_string(), p.to_string()))
+                .map(|(f, p)| (f.to_string(), p.clone()))
                 .collect(),
             ..Default::default()
         })

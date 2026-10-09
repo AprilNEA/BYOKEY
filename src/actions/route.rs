@@ -21,8 +21,8 @@ pub enum RouteAction {
     Set {
         #[command(flatten)]
         target: Target,
-        /// `claude` (Anthropic), `copilot` or `cursor`.
-        provider: ProviderId,
+        /// `claude`, `copilot`, `cursor`, or a configured Messages provider.
+        provider: String,
     },
     /// Remove a route; its models fall back to the next broader one.
     Unset {
@@ -84,17 +84,17 @@ pub async fn cmd_route(
         Some(RouteAction::Unset { target }) => (target.into(), None),
     };
     let settings = read(&path)?;
-    let config: Config = serde_json::from_value(Value::Object(settings.clone()))
+    let mut config: Config = serde_json::from_value(Value::Object(settings.clone()))
         .with_context(|| format!("invalid config in {}", path.display()))?;
     config.validate()?;
-    let mut routes = config.anthropic.routes;
-    apply(&mut routes, key, provider);
-    save(&path, settings, &routes)?;
+    apply(&mut config.anthropic.routes, key, provider.clone());
+    config.validate()?;
+    save(&path, settings, &config.anthropic.routes)?;
     if let Some(provider) = provider {
         let config = load(&path)?;
         let store = Arc::new(crate::open_store(db).await?);
         let auth = AuthManager::new(store, reqwest::Client::new());
-        if let Some(reason) = unusable(&auth, &config, provider).await {
+        if let Some(reason) = unusable(&auth, &config, &provider).await {
             eprintln!("warning: {reason}; requests on this route will fail until then");
         }
     }
@@ -106,13 +106,16 @@ pub async fn cmd_route(
 pub(crate) async fn unusable(
     auth: &AuthManager,
     config: &Config,
-    provider: ProviderId,
+    provider: &str,
 ) -> Option<String> {
-    let pc = config.providers.get(&provider.to_string());
+    let pc = config.providers.get(provider);
     if pc.is_some_and(|c| !c.enabled) {
         return Some(format!("{provider} is disabled in the config"));
     }
-    if pc.is_some_and(|c| c.api_key.is_some()) || auth.is_authenticated(provider).await {
+    let Ok(builtin) = provider.parse::<ProviderId>() else {
+        return None; // Custom providers use configured headers, not stored logins.
+    };
+    if pc.is_some_and(|c| c.api_key.is_some()) || auth.is_authenticated(builtin).await {
         return None;
     }
     Some(format!(
@@ -121,7 +124,7 @@ pub(crate) async fn unusable(
 }
 
 /// Route `key` to `provider`, or remove its route when `None`.
-fn apply(routes: &mut Routes, key: RouteKey, provider: Option<ProviderId>) {
+fn apply(routes: &mut Routes, key: RouteKey, provider: Option<String>) {
     match (key, provider) {
         (RouteKey::Model(m), Some(p)) => {
             routes.models.insert(m, p);
@@ -304,9 +307,9 @@ mod tests {
         assert_eq!(
             config.anthropic.routes,
             Routes {
-                default: Some(ProviderId::Copilot),
-                families: [(ClaudeFamily::Opus, ProviderId::Cursor)].into(),
-                models: [(model("claude-opus-5-5"), ProviderId::Claude)].into(),
+                default: Some("copilot".into()),
+                families: [(ClaudeFamily::Opus, "cursor".into())].into(),
+                models: [(model("claude-opus-5-5"), "claude".into())].into(),
             },
             "`claude` pins a model to Anthropic"
         );
@@ -344,6 +347,25 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_provider_does_not_replace_a_valid_route() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let original = r#"{"anthropic":{"routes":{"default":"copilot"}}}"#;
+        std::fs::write(&path, original).unwrap();
+
+        let result = cmd_route(
+            Some(parse(&["set", "--default", "unconfigured-router"]).unwrap()),
+            Some(path.clone()),
+            None,
+            None,
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), original);
     }
 
     #[tokio::test]

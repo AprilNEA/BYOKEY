@@ -116,6 +116,9 @@ responses:
         let error = Config::from_yaml("anthropic:\n  routes:\n    default: chatgpt").unwrap_err();
 
         assert!(error.to_string().contains("chatgpt"), "{error}");
-        assert!(error.to_string().contains("unknown variant"), "{error}");
+        assert!(
+            error.to_string().contains("unsupported provider"),
+            "{error}"
+        );
     }
 }

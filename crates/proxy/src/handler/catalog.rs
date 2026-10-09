@@ -3,25 +3,26 @@
 //!
 //! Copilot and Cursor publish live catalogs under their own spellings
 //! (`claude-opus-5.5`); Anthropic's models come from the static registry.
-//! Only Claude models that `/v1/messages` can reach are kept, by
-//! [`ClaudeModel`], so every provider's offer is comparable.
+//! Built-in offers use [`ClaudeModel`]. Custom Messages catalogs retain raw
+//! Claude IDs, including variants that have no standard spelling.
 //!
 //! The live catalogs are fetched side by side. Claude Desktop gives up on
-//! `/v1/models` after 10 s and then reports the gateway unreachable, so a
-//! catalog that fails or misses [`CATALOG_DEADLINE`] is used as last
-//! fetched; a late fetch still lands for the next listing.
+//! `/v1/models` after 10 s. Built-in catalogs that fail or miss
+//! [`CATALOG_DEADLINE`] use the last fetch; late fetches refill that cache.
+//! Custom discovery failures propagate rather than hide a provider.
 
 use byokey_config::{Config, Routes};
 use byokey_provider::{CopilotModel, CursorModel, CursorUpstream, all_models};
 use byokey_types::{ClaudeFamily as Family, ClaudeModel, ProviderId};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
     time::Duration,
 };
 use tracing::Instrument;
 
-use crate::AppState;
+use super::custom_messages;
+use crate::{ApiError, AppState};
 
 /// Tokens of context from which a model counts as long-context.
 const LONG_CONTEXT_TOKENS: u64 = 1_000_000;
@@ -43,13 +44,16 @@ pub(crate) struct Offer {
     pub supports_1m: bool,
 }
 
-/// Each provider's Claude models, for the providers that may be used:
-/// enabled, and signed in or keyed.
+/// Enabled providers' Claude models. Built-ins also require a login or key;
+/// custom providers use their configured Messages connection.
 #[derive(Debug, Default)]
-pub(crate) struct Catalog(BTreeMap<ProviderId, BTreeMap<ClaudeModel, Offer>>);
+pub(crate) struct Catalog {
+    builtin: BTreeMap<ProviderId, BTreeMap<ClaudeModel, Offer>>,
+    pub(super) custom: BTreeMap<String, Vec<custom_messages::Model>>,
+}
 
 impl Catalog {
-    pub(crate) async fn fetch(state: &Arc<AppState>, config: &Config) -> Self {
+    pub(crate) async fn fetch(state: &Arc<AppState>, config: &Config) -> Result<Self, ApiError> {
         let mut usable = Vec::new();
         for provider in ProviderId::all() {
             if self::usable(state, config, provider).await {
@@ -92,13 +96,25 @@ impl Catalog {
                 .await,
             )
         };
-        let (copilot, cursor) = tokio::join!(copilot, cursor);
-        Self::new(
+        let custom = futures_util::future::try_join_all(config.providers.iter().filter_map(
+            |(name, provider)| {
+                let upstream = provider.anthropic.as_ref().filter(|_| provider.enabled)?;
+                Some(async move {
+                    custom_messages::models(&state.http, upstream)
+                        .await
+                        .map(|models| (name.clone(), models))
+                })
+            },
+        ));
+        let (copilot, cursor, custom) = tokio::join!(copilot, cursor, custom);
+        let mut catalog = Self::new(
             usable.contains(&ProviderId::Claude),
             copilot,
             cursor,
             config.anthropic.catalog.merge_native_1m,
-        )
+        );
+        catalog.custom = custom?.into_iter().collect();
+        Ok(catalog)
     }
 
     fn new(
@@ -153,20 +169,34 @@ impl Catalog {
             });
             providers.insert(ProviderId::Cursor, first_spelling(offers));
         }
-        Self(providers)
+        Self {
+            builtin: providers,
+            custom: BTreeMap::new(),
+        }
     }
 
     /// The models `provider` offers, or `None` when it may not be used.
     pub(crate) fn offers(&self, provider: ProviderId) -> Option<&BTreeMap<ClaudeModel, Offer>> {
-        self.0.get(&provider)
+        self.builtin.get(&provider)
     }
 
     /// Every model some usable provider offers, with who offers it.
-    pub(crate) fn models(&self) -> BTreeMap<ClaudeModel, Vec<ProviderId>> {
-        let mut models: BTreeMap<ClaudeModel, Vec<ProviderId>> = BTreeMap::new();
-        for (&provider, offers) in &self.0 {
+    pub(crate) fn models(&self) -> BTreeMap<String, Vec<String>> {
+        let mut models: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (&provider, offers) in &self.builtin {
             for &model in offers.keys() {
-                models.entry(model).or_default().push(provider);
+                models
+                    .entry(model.to_string())
+                    .or_default()
+                    .push(provider.to_string());
+            }
+        }
+        for (provider, offers) in &self.custom {
+            for model in offers {
+                models
+                    .entry(model.id.clone())
+                    .or_default()
+                    .push(provider.clone());
             }
         }
         models
@@ -175,10 +205,13 @@ impl Catalog {
     /// The models `/v1/messages` serves under `routes`: each model its
     /// provider offers, as that provider offers it.
     pub(crate) fn routed(&self, routes: &Routes) -> Vec<(ClaudeModel, ProviderId, &Offer)> {
-        self.models()
-            .into_keys()
+        self.builtin
+            .values()
+            .flat_map(|models| models.keys().copied())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
             .filter_map(|model| {
-                let provider = routes.provider(model);
+                let provider = routes.provider(model).parse().ok()?;
                 Some((model, provider, self.offers(provider)?.get(&model)?))
             })
             .collect()
@@ -293,8 +326,8 @@ mod tests {
         assert!(!copilot[&model("claude-opus-5-5")].supports_1m);
         assert!(!copilot[&model("claude-haiku-4-5")].supports_1m);
         assert_eq!(
-            catalog.models()[&model("claude-opus-5-5")],
-            [ProviderId::Claude, ProviderId::Copilot, ProviderId::Cursor]
+            catalog.models()["claude-opus-5-5"],
+            ["claude", "copilot", "cursor"]
         );
         assert_eq!(
             Catalog::new(false, None, None, true).offers(ProviderId::Claude),
@@ -372,8 +405,8 @@ mod tests {
     fn a_model_is_served_as_its_route_offers_it() {
         let catalog = catalog();
         let routes = Routes {
-            default: Some(ProviderId::Copilot),
-            models: [(model("claude-sonnet-4-6"), ProviderId::Cursor)].into(),
+            default: Some("copilot".into()),
+            models: [(model("claude-sonnet-4-6"), "cursor".into())].into(),
             ..Routes::default()
         };
         let served: Vec<(String, ProviderId)> = catalog

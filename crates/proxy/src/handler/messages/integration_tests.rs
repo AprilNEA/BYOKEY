@@ -59,7 +59,7 @@ impl Upstream {
 
     fn config(&self) -> Config {
         let mut config = Config::default();
-        config.anthropic.routes.default = Some(ProviderId::Copilot);
+        config.anthropic.routes.default = Some("copilot".into());
         config.providers.insert(
             ProviderId::Copilot.to_string(),
             ProviderConfig {

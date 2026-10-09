@@ -1,12 +1,13 @@
 //! `GET /v1/models`: the Anthropic models `/v1/messages` serves.
 //!
-//! Each model is listed once, under Anthropic's id, when the provider its
+//! Each built-in model is listed once, under Anthropic's id, when the provider its
 //! route names offers it (see [`super::catalog`]). Standard ids preserve
 //! Claude Desktop's effort recognition; display names identify the routed
 //! provider. `byokey claude desktop` uses these names as `labelOverride`.
-//! Which provider serves a model is set with `byokey route`; a
-//! `copilot/` or `cursor/` prefix still picks one per request, for models
-//! this list leaves out.
+//! Custom providers add separate entries with their upstream IDs. These IDs
+//! carry a `[provider]` suffix unless the model's route selects that provider.
+//! Desktop can match a tagged ID to its base model's effort capabilities.
+//! Provider qualifiers override `byokey route` settings for one request.
 //!
 //! Anthropic clients (Claude Code, Claude Desktop) send `anthropic-version`
 //! and get Anthropic's list shape; everyone else gets the `OpenAI` one.
@@ -26,7 +27,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use byokey_config::Config;
-use byokey_types::{ByokError, ProviderId};
+use byokey_types::{ByokError, ClaudeModel};
 use serde::{Serialize, Serializer};
 use std::sync::Arc;
 use time::{Date, OffsetDateTime};
@@ -37,7 +38,7 @@ use crate::{AppState, error::ApiError};
 /// A listed model.
 struct ModelEntry {
     id: String,
-    provider: ProviderId,
+    provider: String,
     display_name: String,
     released: Released,
     /// Clients should offer an additional `<id>[1m]` context mode.
@@ -119,7 +120,7 @@ struct OpenAiModel {
     object: &'static str,
     #[serde(serialize_with = "Released::serialize_unix")]
     created: Released,
-    owned_by: ProviderId,
+    owned_by: String,
     display_name: String,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     supports_1m: bool,
@@ -160,8 +161,10 @@ pub async fn list_models(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let config = state.config.load();
-    let catalog = Catalog::fetch(&state, &config).await;
     let anthropic = headers.contains_key("anthropic-version");
+    let catalog = Catalog::fetch(&state, &config)
+        .await
+        .map_err(|error| if anthropic { error.anthropic() } else { error })?;
     let models = listed(&catalog, &config).map_err(|error| {
         let error = ApiError::new(error);
         if anthropic { error.anthropic() } else { error }
@@ -176,9 +179,8 @@ pub async fn list_models(
 /// Routed models in lineup order, with provider-scoped display names.
 fn listed(catalog: &Catalog, config: &Config) -> Result<Vec<ModelEntry>, ByokError> {
     let format_name = config.anthropic.catalog.name_formatter()?;
-    let mut served = catalog.routed(&config.anthropic.routes);
-    lineup::sort(&mut served, |(m, _, _)| *m);
-    served
+    let mut entries = catalog
+        .routed(&config.anthropic.routes)
         .into_iter()
         .map(|(model, provider, offer)| {
             let id = model.to_string();
@@ -188,15 +190,51 @@ fn listed(catalog: &Catalog, config: &Config) -> Result<Vec<ModelEntry>, ByokErr
                 .and_then(|patch| patch.name.clone())
                 .unwrap_or_else(|| model.display_name());
             let label = config.provider_name(&provider_id);
+            let display_name = format_name(&name, label)?;
             Ok(ModelEntry {
                 id,
-                provider,
-                display_name: format_name(&name, label)?,
+                provider: provider_id,
+                display_name,
                 released: Released::from(lineup::released(model)),
                 supports_1m: offer.supports_1m,
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, ByokError>>()?;
+    for (provider, models) in &catalog.custom {
+        for model in models {
+            let canonical = ClaudeModel::from_id(&model.id);
+            let name = config
+                .model_override(provider, &model.id)
+                .and_then(|patch| patch.name.clone())
+                .or_else(|| model.display_name.clone())
+                .unwrap_or_else(|| {
+                    canonical.map_or_else(|| model.id.clone(), |model| model.display_name())
+                });
+            let id = if config.anthropic.routes.resolve_id(&model.id).0 == provider
+                && super::messages::qualified_model(&model.id).is_none()
+            {
+                model.id.clone()
+            } else if model.id.contains('/') {
+                // Prefixes take precedence in requests with an upstream slash.
+                format!("{provider}/{}", model.id)
+            } else {
+                format!("{}[{provider}]", model.id)
+            };
+            entries.push(ModelEntry {
+                id,
+                provider: provider.clone(),
+                display_name: format_name(&name, config.provider_name(provider))?,
+                released: Released::from(canonical.and_then(lineup::released)),
+                supports_1m: false,
+            });
+        }
+    }
+    lineup::sort(&mut entries, |entry| {
+        let model = super::messages::qualified_model(&entry.id)
+            .map_or(entry.id.as_str(), |(_, model)| model);
+        ClaudeModel::parse_id(model).map(|id| id.model)
+    });
+    Ok(entries)
 }
 
 #[cfg(test)]
@@ -213,14 +251,14 @@ mod tests {
         vec![
             ModelEntry {
                 id: "claude-opus-5-5".into(),
-                provider: ProviderId::Copilot,
+                provider: "copilot".into(),
                 display_name: "Claude Opus 5.5 · GitHub Copilot".into(),
                 released: Released::from(lineup::released(model("claude-opus-5-5"))),
                 supports_1m: false,
             },
             ModelEntry {
                 id: "claude-opus-4-1".into(),
-                provider: ProviderId::Claude,
+                provider: "claude".into(),
                 display_name: "Claude Opus 4.1 · Claude (Anthropic)".into(),
                 released: Released::from(lineup::released(model("claude-opus-4-1"))),
                 supports_1m: false,
@@ -325,7 +363,7 @@ mod tests {
             .anthropic
             .routes
             .models
-            .insert("claude-opus-5-5".parse().unwrap(), ProviderId::Claude);
+            .insert("claude-opus-5-5".parse().unwrap(), "claude".into());
         state.config.store(Arc::new(config));
         let after = list().await;
 
@@ -409,7 +447,7 @@ providers:
             .anthropic
             .routes
             .models
-            .insert("claude-haiku-4-5".parse().unwrap(), ProviderId::Claude);
+            .insert("claude-haiku-4-5".parse().unwrap(), "claude".into());
         state.config.store(Arc::new(config));
 
         let headers = HeaderMap::from_iter([(

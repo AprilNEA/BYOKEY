@@ -10,7 +10,7 @@
 
 **Bring Your Own Keys**<br>
 Run ChatGPT.app / Codex and Claude clients through a local gateway.<br>
-Responses supports your ChatGPT subscription, GitHub Copilot and custom upstreams; Anthropic Messages supports Copilot, Cursor and Claude.
+Responses supports your ChatGPT subscription, GitHub Copilot and custom upstreams; Anthropic Messages supports Copilot, Cursor, Claude and custom upstreams.
 
 [![ci](https://img.shields.io/github/actions/workflow/status/AprilNEA/BYOKEY/ci.yml?style=flat-square&labelColor=000&color=444&label=ci)](https://github.com/AprilNEA/BYOKEY/actions/workflows/ci.yml)
 &nbsp;
@@ -203,7 +203,7 @@ responses:
       company-fast: { provider: company, model: my-deployment }
 ```
 
-`providers` is one flat map for both protocols. `claude`, `copilot`, `cursor` and `chatgpt` are reserved built-in names; any other name defines a custom Responses provider and requires `base_url`. Connection settings and model metadata belong to the provider, so a route alias holds only `provider` and the `model` ID sent to it.
+`providers` is one flat map for both protocols. `claude`, `copilot`, `cursor` and `chatgpt` are reserved built-in names. Custom Responses connections require `base_url`; custom Messages connections use a separate `anthropic` block described below. A provider may support either or both protocols. Connection settings and model metadata belong to the provider, so a Responses route alias holds only `provider` and the `model` ID sent to it.
 
 `api_key` and header values accept a literal string or an explicit environment reference `{ env: NAME }`; BYOKEY never interprets a literal string as a variable or command. Export the referenced variables in the **BYOKEY server process**, not just the client. Missing variables fail the request. A configured `Authorization` header overrides `api_key`. `models_url`, `headers` and `service_tier` are accepted only on custom providers. `/responses` is appended to each `base_url`; custom providers must implement the Responses API themselves.
 
@@ -267,6 +267,49 @@ plain `claude` keeps using your own login. To make BYOKEY the default instead,
 run `byokey claude inject`. `byokey claude desktop` does the same for Claude
 Desktop (macOS). `byokey doctor` checks the whole setup. Any other Anthropic
 Messages client works with `ANTHROPIC_BASE_URL=http://127.0.0.1:8018`.
+
+### Copilot alongside a custom Messages gateway
+
+Keep Copilot as the default and add an independent Messages connection to the shared provider map:
+
+```yaml
+anthropic:
+  routes:
+    default: copilot
+
+providers:
+  llm-router:
+    display_name: LLM Router
+    anthropic:
+      base_url: https://router.example/api
+      enabled_models:
+        - claude-opus-5-5
+        - claude-sonnet-4-6
+      headers:
+        x-request-resource-group: your-group
+        x-request-task-type: claude
+        x-request-task-uid: { uuid_prefix: "byokey-" }
+        x-request-product-name: your-product
+        x-request-options: '{"account_details":"1"}'
+```
+
+Replace the URL and header values with your gateway's settings. This base URL sends generation requests to `/api/v1/messages`. Without `models_url`, `anthropic.enabled_models` supplies a fixed catalog without contacting the gateway. List exact upstream Claude IDs without BYOKEY provider qualifiers. BYOKEY does not verify account access while listing these models. If both fields are absent, the custom provider adds no picker entries, but explicit requests still work.
+
+For automatic discovery, set `anthropic.models_url` to an endpoint such as `https://router.example/v1/models` returning `{"data":[{"id":"claude-sonnet-4-6"}]}`; entries may include `display_name`. When discovery is configured, `enabled_models` filters the discovered IDs rather than supplying entries. Omit `enabled_models` to list all discovered Claude models. Discovery failures are returned to the client, not hidden behind a partial or fixed catalog.
+
+Both catalog modes retain `claude-` IDs, including provider-specific variants, and ignore other models. Use `enabled_models: []` to hide all entries from that provider. Catalog settings do not restrict explicit requests or change routes. BYOKEY neither rewrites effort-suffixed aliases nor derives effort parameters from them.
+
+The picker lists `claude-sonnet-4-6` as `Claude Sonnet 4.6 · Copilot` when Copilot offers it, and `claude-sonnet-4-6[llm-router]` as `Claude Sonnet 4.6 · LLM Router`. Desktop 2.31226.0 recognizes the base model's Effort capabilities through the bracket tag while keeping both entries and their effort selections distinct. Unrecognized upstream aliases do not gain Effort support from a tag.
+
+Explicit `<model>[<provider>]` IDs select that provider, as do existing `<provider>/<model>` IDs. A custom provider uses bare IDs when a model, family or default route selects that provider and the upstream ID has no provider qualifier. Custom variants retain their upstream spelling; IDs containing `/` keep the prefix form to avoid ambiguity. Messages provider names must not be `1m` or contain `[` or `]`. The reserved `[1m]` suffix still requests long context and may appear before or after the provider tag. Tagged custom entries do not advertise an additional 1M picker variant.
+
+`anthropic.headers` applies to discovery, generation and token counting. Values accept literals, `{ env: NAME }` and `{ uuid_prefix: "prefix-" }`. Optional `anthropic.api_key` sends `x-api-key`; an explicitly configured `x-api-key` header takes precedence. Messages never inherits the provider's Responses credentials or headers, stored Claude credentials, or client auth headers. Keep Responses settings such as `x-specified-llm-provider-name: openai` outside the `anthropic` block. Configure only trusted upstream URLs.
+
+The custom Messages path preserves native request fields, thinking signatures, tools, response JSON and SSE; it strips the provider qualifier and applies BYOKEY's thinking and beta normalization. It does not translate through Chat Completions or apply Claude OAuth tool-name remapping. `/v1/messages/count_tokens` is appended to the Messages base URL; if the gateway does not implement counting, its error is returned without an estimate or provider fallback.
+
+```sh
+byokey claude start --model 'claude-sonnet-4-6[llm-router]'
+```
 
 ## CLI Reference
 
@@ -346,7 +389,7 @@ Exits non-zero when a check fails.
 **`byokey route`** — Lists each Claude model, the provider serving it, the
 route that picked it, and the signed-in providers that offer it.
 `byokey route set <TARGET> <PROVIDER>` routes a target to `claude`
-(Anthropic), `copilot` or `cursor`, and `byokey route unset <TARGET>` removes
+(Anthropic), `copilot`, `cursor` or a configured Messages provider, and `byokey route unset <TARGET>` removes
 that route. The target is one of:
 
 - `--model <MODEL>`: one model, by Anthropic's id (`claude-opus-5-5`)
@@ -385,15 +428,14 @@ keeping its other settings. Override the target with `--settings <FILE>`.
 
 **`byokey claude desktop`** — Opens a second Claude Desktop in its
 third-party mode against BYOKEY, next to the official one, whose profile is
-never modified. Before launch, the command fetches BYOKEY's routed models
-and writes an explicit `inferenceModels` list. Each entry keeps its standard
+never modified. Before launch, the command fetches BYOKEY's model catalog
+and writes an explicit `inferenceModels` list. Each built-in entry keeps its standard
 Anthropic ID, with a provider-labelled `labelOverride` such as
 `Claude Opus 5.5 · Copilot`. Models documented as native 1M, including
 Opus 5.5 and Fable 5/5.1, appear once by default without an additional `1M` entry.
 Other models retain the optional 1M entry when the upstream advertises support.
-This changes the picker, not the upstream model's context limit, and preserves Desktop's effort
-recognition without adding provider prefixes to model IDs; Desktop's Effort
-control is not guaranteed for model IDs Desktop does not recognize. After changing
+This changes the picker, not the upstream model's context limit. Custom Messages entries use `[provider]` tags to preserve base-model Effort recognition and separate provider choices; see [custom Messages gateways](#copilot-alongside-a-custom-messages-gateway).
+After changing
 routes, display settings or available models, quit the BYOKEY Desktop instance and run the
 command again to refresh its list and labels. Server-side routes still
 hot-reload; labels describe the routes at the last launch through this command.
@@ -466,16 +508,15 @@ anthropic:
       claude-opus-5-5: copilot
 ```
 
-All fields are optional; unspecified providers are enabled by default and use
-the login stored in the database. Unknown fields fail configuration loading, except for native client settings inside `claude_code.settings` and `claude_desktop.settings`. `providers` is the single provider map for both protocols; see [ChatGPT.app / Codex](#chatgptapp--codex) for custom Responses providers. Anthropic routes accept only `claude`, `copilot` and `cursor`.
+Unspecified built-in providers are enabled by default and use the login stored in the database. Unknown fields fail configuration loading, except for native client settings inside `claude_code.settings` and `claude_desktop.settings`. `providers` is the single provider map for both protocols; see [ChatGPT.app / Codex](#chatgptapp--codex) for custom Responses providers. Anthropic routes accept `claude`, `copilot`, `cursor` and custom providers with an `anthropic` connection.
 Setting `providers.<name>.enabled: false` hides that provider's models and
 rejects Messages and token-count requests routed to it with HTTP 400, including
-explicit `copilot/` or `cursor/` prefixes. Requests do not fall back to another provider.
+explicit provider prefixes and suffixes. Requests do not fall back to another provider.
 
-`/v1/models` lists each Claude model once, under Anthropic's id
+`/v1/models` lists each routed built-in Claude model once, under Anthropic's id
 (`claude-opus-5-5`), when the provider its route names offers it. Display
 names identify the routed provider. Standard IDs preserve Claude Desktop's
-model and effort recognition; provider labels do not change request routing.
+model and effort recognition; provider labels do not change request routing. Custom providers add separately selectable entries, as described above.
 
 Provider and model display names live under `providers`; the Claude client name format in `anthropic.catalog` is independent of `responses.catalog`:
 
@@ -495,7 +536,7 @@ anthropic:
     merge_native_1m: true
 ```
 
-`name_format` reuses the Responses catalog's MiniJinja syntax and validation, with the plain-text variables `model` and `provider`. Filters work here too: `"{{ provider | upper }} / {{ model }}"` puts the provider first. The default format is `"{{ model }} · {{ provider }}"`. `providers.<name>.display_name` is shared with the Responses catalog; labels default to `Claude (Anthropic)`, `Copilot` and `Cursor`. Anthropic `model_overrides` keys are canonical standard Anthropic IDs such as `claude-opus-5-5`, not provider-prefixed IDs or the provider's own spelling such as `claude-opus-5.5`. The override applies when that provider serves the model. Without an override, the model keeps its standard friendly name. These naming settings change only `display_name` and Desktop's `labelOverride`, not IDs, routing, effort or context capabilities. Each model still appears once, labelled with its routed provider.
+`name_format` reuses the Responses catalog's MiniJinja syntax and validation, with the plain-text variables `model` and `provider`. Filters work here too: `"{{ provider | upper }} / {{ model }}"` puts the provider first. The default format is `"{{ model }} · {{ provider }}"`. `providers.<name>.display_name` is shared with the Responses catalog; labels default to `Claude (Anthropic)`, `Copilot` and `Cursor`. For built-ins, Anthropic `model_overrides` keys are canonical standard Anthropic IDs such as `claude-opus-5-5`. For custom Messages providers, keys are the exact upstream IDs, without BYOKEY provider qualifiers. The override applies when that provider serves the model. Without an override, built-ins use the standard friendly name; custom providers use the discovered display name, standard friendly name or raw ID. These naming settings change only `display_name` and Desktop's `labelOverride`, not IDs, routing, effort or context capabilities.
 
 `anthropic.catalog.merge_native_1m` defaults to `true`: native 1M models keep only their standard picker entry. Set it to `false` to offer an additional `1M` entry when the upstream advertises support, including for native 1M models. This setting does not change model IDs, routing, effort, upstream context limits or the Responses catalog.
 

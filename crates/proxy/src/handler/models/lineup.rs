@@ -84,10 +84,10 @@ impl Newest {
 }
 
 /// Sort `models` into lineup order. The sort is stable, so models that
-/// compare equal keep their order.
-pub(crate) fn sort<T>(models: &mut [T], model: impl Fn(&T) -> ClaudeModel) {
-    let newest = Newest::of(models.iter().map(&model));
-    models.sort_by_cached_key(|m| newest.lineup(model(m)));
+/// compare equal keep their order. Unrecognized model IDs go last.
+pub(crate) fn sort<T>(models: &mut [T], model: impl Fn(&T) -> Option<ClaudeModel>) {
+    let newest = Newest::of(models.iter().filter_map(&model));
+    models.sort_by_cached_key(|m| model(m).map_or(Lineup::Undated, |m| newest.lineup(m)));
 }
 
 #[cfg(test)]
@@ -96,7 +96,7 @@ mod tests {
 
     fn sorted(ids: &[&str]) -> Vec<String> {
         let mut v: Vec<ClaudeModel> = ids.iter().map(|id| id.parse().unwrap()).collect();
-        sort(&mut v, |m| *m);
+        sort(&mut v, |m| Some(*m));
         v.iter().map(ToString::to_string).collect()
     }
 
