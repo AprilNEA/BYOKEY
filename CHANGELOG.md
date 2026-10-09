@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.6.0](https://github.com/AprilNEA/BYOKEY/compare/v4.5.0...v4.6.0) - 2026-10-09
+
+### Added
+
+- *(responses)* let automatic reviews follow the provider ([#132](https://github.com/AprilNEA/BYOKEY/pull/132))
+
 ## [4.5.0](https://github.com/AprilNEA/BYOKEY/compare/v4.4.0...v4.5.0) - 2026-10-09
 
 ### Added
