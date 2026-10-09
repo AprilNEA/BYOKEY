@@ -237,6 +237,17 @@ These settings hot-reload. The next catalog request uses the new settings; the c
 
 Select a provider-labelled model in the client, or set a model ID such as `copilot-fast` or `company-fast` explicitly. Exact aliases take priority, followed by `chatgpt/<model>`, `copilot/<model>` or `<provider>/<model>`, followed by `responses.routes.default` for unqualified names. Copilot models must advertise `/responses`; BYOKEY does not translate Chat Completions or Anthropic requests on this path. Copilot uses BYOKEY's stored accounts or `providers.copilot.api_key`, never the client's ChatGPT credential.
 
+To make Codex automatic approval reviews use the selected non-ChatGPT model and its provider credentials, enable this setting in the BYOKEY config:
+
+```yaml
+responses:
+  auto_review_follow_provider: true
+```
+
+The default is `false`, which preserves upstream reviewer metadata. When enabled, `/codex/models` sets each non-ChatGPT entry's `auto_review_model_override` to its own slug. This also applies to aliases and unqualified IDs routed to a non-ChatGPT provider. ChatGPT entries retain their upstream reviewer selection. Codex must support this metadata field and refresh its model catalog; restart the client after changing the setting. The setting does not enable automatic approval by itself: keep `approvals_reviewer = "auto_review"` in the Codex configuration.
+
+Codex still supplies its approval policy, read-only reviewer tools and structured-output schema. The selected model must support these requests; its review quality may differ from the official reviewer, and review requests consume that provider's quota. BYOKEY does not convert review failures into approvals or retry them through ChatGPT. Multi-agent V2 metadata, actual quota data and error responses remain unchanged. This setting does not hide the desktop client's official-account quota banner.
+
 Copilot can change an output item's ID between stream events. BYOKEY retains the first ID for each output index so Codex updates one message instead of displaying a duplicate. Response IDs and tool `call_id` values remain unchanged. ChatGPT and custom providers retain their original stream payloads.
 
 The catalog borrows actual ChatGPT model metadata, including instructions and capabilities. When `model_messages.instructions_template` is present, BYOKEY omits the ignored legacy `base_instructions` copy to reduce catalog size. Each routed model needs a ChatGPT catalog entry with its ID or its `catalog_model`, or a complete Codex ModelInfo object in `model_overrides.<model>.catalog`. A missing match is an error. A custom default with complete catalog objects, no `models_url`, and no enabled Copilot credentials or routes needs no ChatGPT catalog access; otherwise catalog discovery needs the client's ChatGPT login. Alias upgrades are disabled so the client does not migrate an alias to a different route. The existing `/v1/models`, `byokey route`, and TUI route list remain Anthropic-only.

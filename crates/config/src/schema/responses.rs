@@ -16,6 +16,9 @@ pub struct ResponsesConfig {
     pub routes: ResponsesRoutes,
     /// Model picker presentation, independent of routing and capabilities.
     pub catalog: ResponsesCatalog,
+    /// Use each non-ChatGPT model's own route for Codex automatic approval reviews.
+    /// Defaults to false, preserving the upstream reviewer metadata.
+    pub auto_review_follow_provider: bool,
 }
 
 /// Exact aliases take precedence over provider prefixes, then the default.
