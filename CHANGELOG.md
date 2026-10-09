@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.6.1](https://github.com/AprilNEA/BYOKEY/compare/v4.6.0...v4.6.1) - 2026-10-09
+
+### Fixed
+
+- *(proxy)* isolate custom Messages beta headers ([#134](https://github.com/AprilNEA/BYOKEY/pull/134))
+
 ## [4.6.0](https://github.com/AprilNEA/BYOKEY/compare/v4.5.0...v4.6.0) - 2026-10-09
 
 ### Added
