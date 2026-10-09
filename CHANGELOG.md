@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.5.0](https://github.com/AprilNEA/BYOKEY/compare/v4.4.0...v4.5.0) - 2026-10-09
+
+### Added
+
+- *(proxy)* add custom Messages providers with Desktop effort ([#130](https://github.com/AprilNEA/BYOKEY/pull/130))
+
 ## [4.4.0](https://github.com/AprilNEA/BYOKEY/compare/v4.3.0...v4.4.0) - 2026-10-08
 
 ### Added
