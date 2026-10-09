@@ -226,11 +226,11 @@ async fn account(
 /// Whether every provider a route names can serve requests.
 async fn routes(auth: &AuthManager, config: &byokey_config::Config) -> Outcome {
     let r = &config.anthropic.routes;
-    let routed: std::collections::BTreeSet<ProviderId> = r
+    let routed: std::collections::BTreeSet<&String> = r
         .default
-        .into_iter()
-        .chain(r.families.values().copied())
-        .chain(r.models.values().copied())
+        .iter()
+        .chain(r.families.values())
+        .chain(r.models.values())
         .collect();
     let mut problems = Vec::new();
     for provider in routed {
@@ -241,7 +241,7 @@ async fn routes(auth: &AuthManager, config: &byokey_config::Config) -> Outcome {
     if !problems.is_empty() {
         return Outcome::Fail(problems.join("; "));
     }
-    match r.default {
+    match r.default.as_deref() {
         Some(p) => Outcome::Ok(format!("Claude models go to {p} unless routed otherwise")),
         None => Outcome::Ok("Claude models go to Anthropic unless routed otherwise".into()),
     }

@@ -237,8 +237,8 @@ mod tests {
         assert!(error.to_string().contains("unknown field"), "{error}");
         assert_eq!(watcher.load().port, 8123);
         assert_eq!(
-            watcher.load().anthropic.routes.default,
-            Some(byokey_types::ProviderId::Copilot)
+            watcher.load().anthropic.routes.default.as_deref(),
+            Some("copilot")
         );
         assert!(!reloads.has_changed().unwrap());
     }

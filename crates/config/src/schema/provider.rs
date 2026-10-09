@@ -1,7 +1,7 @@
 use byokey_types::{ByokError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn default_true() -> bool {
     true
@@ -30,6 +30,8 @@ pub struct ProviderConfig {
     pub headers: BTreeMap<String, ConfigValue>,
     /// Custom Responses service tier; absent preserves the client's value.
     pub service_tier: Option<String>,
+    /// Independent Messages connection for a custom provider.
+    pub anthropic: Option<AnthropicProviderConfig>,
 }
 
 impl Default for ProviderConfig {
@@ -43,8 +45,30 @@ impl Default for ProviderConfig {
             models_url: None,
             headers: BTreeMap::new(),
             service_tier: None,
+            anthropic: None,
         }
     }
+}
+
+/// A custom Messages upstream. Credentials never inherit from Responses or stored logins.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnthropicProviderConfig {
+    /// URL prefix to which `/v1/messages` and `/v1/messages/count_tokens` are appended.
+    pub base_url: String,
+    /// Discovery endpoint returning a `data` array of Claude model IDs.
+    #[serde(default)]
+    pub models_url: Option<String>,
+    /// Exact catalog IDs: filter discovery, or define entries without `models_url`.
+    /// An empty set hides all entries. Requests are not restricted.
+    #[serde(default)]
+    pub enabled_models: Option<BTreeSet<String>>,
+    /// Optional credential sent as `x-api-key`.
+    #[serde(default)]
+    pub api_key: Option<ConfigValue>,
+    /// Headers for discovery, generation and counting. Values resolve for each request.
+    #[serde(default)]
+    pub headers: BTreeMap<String, ConfigValue>,
 }
 
 /// Metadata patches applied after discovery, independent of route aliases.
@@ -101,6 +125,12 @@ impl ProviderConfig {
         }
         let builtin = matches!(name, "claude" | "copilot" | "cursor" | "chatgpt");
         if !builtin
+            && (self.anthropic.is_none()
+                || self.base_url.is_some()
+                || self.models_url.is_some()
+                || self.api_key.is_some()
+                || !self.headers.is_empty()
+                || self.service_tier.is_some())
             && self
                 .base_url
                 .as_deref()
@@ -121,6 +151,28 @@ impl ProviderConfig {
             return Err(ByokError::Config(format!(
                 "{path}: models_url, headers and service_tier require a custom Responses provider"
             )));
+        }
+        if let Some(anthropic) = &self.anthropic {
+            if builtin {
+                return Err(ByokError::Config(format!(
+                    "{path}.anthropic requires a custom provider"
+                )));
+            }
+            if name == "1m" || name.contains(['[', ']']) {
+                return Err(ByokError::Config(format!(
+                    "{path}: Messages provider names must not be 1m or contain brackets"
+                )));
+            }
+            if anthropic.base_url.trim().is_empty()
+                || anthropic
+                    .models_url
+                    .as_ref()
+                    .is_some_and(|url| url.trim().is_empty())
+            {
+                return Err(ByokError::Config(format!(
+                    "{path}.anthropic URLs must be nonempty"
+                )));
+            }
         }
         if self
             .display_name
@@ -206,6 +258,107 @@ providers:
     enabled: false
 ";
         assert!(Config::from_yaml(yaml).is_err());
+    }
+
+    #[test]
+    fn a_messages_only_provider_can_be_routed_without_becoming_a_responses_provider() {
+        let config = Config::from_yaml(
+            r"
+providers:
+  llm-router:
+    anthropic:
+      base_url: https://router.example/api
+      headers:
+        x-request-resource-group: '5'
+anthropic:
+  routes:
+    default: copilot
+    families: { sonnet: llm-router }
+",
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.anthropic.routes.resolve_id("claude-sonnet-4-6").0,
+            "llm-router"
+        );
+        assert_eq!(
+            config.anthropic.routes.resolve_id("claude-opus-5-5").0,
+            "copilot"
+        );
+        assert!(
+            config
+                .response_route("llm-router/claude-sonnet-4-6")
+                .is_err()
+        );
+        assert!(
+            config.providers["llm-router"]
+                .anthropic
+                .as_ref()
+                .unwrap()
+                .api_key
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn messages_connections_do_not_make_invalid_responses_settings_valid() {
+        let error = Config::from_yaml(
+            r"
+providers:
+  llm-router:
+    models_url: https://router.example/models
+    anthropic:
+      base_url: https://router.example/api
+",
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("providers.llm-router.base_url is required"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn builtins_cannot_replace_their_authentication_with_a_custom_messages_connection() {
+        let error = Config::from_yaml(
+            "providers: { claude: { anthropic: { base_url: https://router.example } } }",
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("requires a custom provider"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn messages_provider_names_cannot_conflict_with_model_suffixes() {
+        for name in ["1m", "router[team", "router]team"] {
+            let mut config = Config::default();
+            config.providers.insert(
+                name.into(),
+                ProviderConfig {
+                    anthropic: Some(AnthropicProviderConfig {
+                        base_url: "https://router.example/api".into(),
+                        models_url: None,
+                        enabled_models: None,
+                        api_key: None,
+                        headers: BTreeMap::new(),
+                    }),
+                    ..ProviderConfig::default()
+                },
+            );
+            assert!(
+                config
+                    .validate()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Messages provider names")
+            );
+        }
     }
 
     #[test]

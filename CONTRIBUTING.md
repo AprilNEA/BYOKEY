@@ -49,7 +49,7 @@ Anthropic Messages request  (Claude Code, Claude Desktop, …)
     │
     ▼
 byokey-proxy  (axum HTTP server)
-    │  `copilot/` or `cursor/` prefix, else `anthropic.routes`: the model's, its family's, the default; else Anthropic
+    │  provider qualifier, else `anthropic.routes`: the model's, its family's, the default; else Anthropic
     ▼
 byokey-provider  (Copilot credentials + catalog, Cursor agent client, Claude headers)
     │  get OAuth token (or api_key)
@@ -95,11 +95,13 @@ CLI entry point: `src/main.rs` (package = `byokey`, bin = `byokey`).
 | Any HTTP method | Other `/codex/*` paths | Raw HTTP forwarding to the configured ChatGPT backend; no WebSocket support |
 | `POST` | `/byokey.*.*Service/{Method}` | ConnectRPC management API (status, accounts, usage) |
 
-A `copilot/` or `cursor/` prefix on the `model` field picks the provider for
+An explicit `<provider>/<model>` or `<model>[<provider>]` on the `model` field picks a built-in or configured Messages provider for
 one request; otherwise `anthropic.routes.models` does for that Claude model, then
 `anthropic.routes.families` for its family, then `anthropic.routes.default`, and without any the
 request goes to Anthropic.
 `byokey route` edits the routes and lists them through the management API.
+
+Custom Messages providers use `providers.<name>.anthropic` for their URL, model discovery, credentials and headers. These settings are independent of Responses and stored logins. `handler/custom_messages.rs` builds native requests; the existing Anthropic forwarder handles responses. Custom requests retain thinking signatures and skip Claude OAuth remapping. The catalog keeps routed built-in IDs and adds custom `[provider]`-tagged IDs, or bare IDs when routed to that custom provider. The bracket tag preserves Desktop's base-model Effort recognition. Upstream IDs containing `/` retain provider prefixes. `messages::route` strips the provider qualifier and optional `[1m]` before thinking normalization and returns the long-context flag for both request handlers. HTTP tests in `handler/custom_messages/tests.rs` cover simultaneous catalogs, explicit effort, credential isolation, per-request headers, JSON, SSE, counting and errors.
 
 Responses routing is separate: an exact `responses.routes.models` alias takes priority over a provider prefix and `responses.routes.default`. Each alias names a `provider` and its `model`. The shared `providers` map owns connections, credentials, display names and model metadata overrides. The client owns ChatGPT credentials and refresh. Copilot reuses stored accounts, while custom providers use configured credentials. The Responses forwarder preserves JSON and SSE bytes and accounts for Responses terminal events; do not reuse the Anthropic terminal-event parser. HTTP mock tests in `crates/proxy/src/handler/responses/` cover credential isolation, model capabilities, aliases, errors and stream cancellation.
 

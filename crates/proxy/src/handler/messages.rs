@@ -2,8 +2,9 @@
 //!
 //! Accepts requests in native Anthropic format and forwards them to the
 //! provider [`route`] picks: `api.anthropic.com/v1/messages`, Copilot's own
-//! Messages endpoint (see [`super::copilot_messages`]) or Cursor (see
-//! [`super::cursor_messages`]). Request bodies are normalised first (see
+//! Messages endpoint (see [`super::copilot_messages`]), Cursor (see
+//! [`super::cursor_messages`]) or a configured Messages gateway (see
+//! [`super::custom_messages`]). Request bodies are normalised first (see
 //! [`super::normalize`]).
 //!
 //! The response (streaming SSE or complete JSON) is returned as-is (see
@@ -56,20 +57,40 @@ async fn serve_messages(
     headers: HeaderMap,
     mut body: Value,
 ) -> Result<Response, ApiError> {
-    let long_context = take_long_context_suffix(&mut body);
-    sanitize_system(&mut body);
+    let config = state.config.load();
+    let (provider, long_context) = route(&config, &mut body)?;
     sanitize_thinking(&mut body);
-    strip_invalid_thinking_signatures(&mut body);
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let beta = build_beta_header(&mut body, &headers, long_context.then_some(CONTEXT_1M_BETA));
+    let accept = if stream {
+        "text/event-stream"
+    } else {
+        "application/json"
+    };
 
-    let config = state.config.load();
-    match route(&config, &mut body)? {
-        ProviderId::Cursor => {
+    if let Some(upstream) = config
+        .providers
+        .get(&provider)
+        .and_then(|p| p.anthropic.as_ref())
+    {
+        let request =
+            super::custom_messages::request(&state.http, upstream, "/v1/messages", &beta)?
+                .header("accept", accept)
+                .header("accept-encoding", "identity")
+                .json(&body);
+        let model = body["model"].as_str().expect("model validated by route");
+        let exchange = Exchange::start(&state.usage, &provider, model, "configured");
+        let pending = exchange.track(request.send());
+        return forward(pending, stream, exchange, false).await;
+    }
+    sanitize_system(&mut body);
+    strip_invalid_thinking_signatures(&mut body);
+    match provider.as_str() {
+        "cursor" => {
             return super::cursor_messages::cursor_messages(&state, body, stream).await;
         }
-        ProviderId::Copilot => return copilot_messages(&state, body, stream, &beta).await,
-        ProviderId::Claude => {}
+        "copilot" => return copilot_messages(&state, body, stream, &beta).await,
+        _ => {}
     }
 
     // Default: passthrough to Anthropic API.
@@ -102,12 +123,6 @@ async fn serve_messages(
     }
 
     let upstream = AnthropicUpstream::resolve(&state, &config, &profile, &beta).await?;
-
-    let accept = if stream {
-        "text/event-stream"
-    } else {
-        "application/json"
-    };
 
     let builder = upstream
         .request(&state.http, "/v1/messages")
@@ -223,47 +238,62 @@ impl AnthropicUpstream {
     }
 }
 
-/// The provider that serves a Messages request.
+/// Split an explicit provider prefix or suffix from its upstream model ID.
+/// Prefixes take precedence so legacy requests can carry upstream bracket suffixes.
+pub(super) fn qualified_model(model: &str) -> Option<(&str, &str)> {
+    model.split_once('/').or_else(|| {
+        let (bare, provider) = model.strip_suffix(']')?.rsplit_once('[')?;
+        (provider != "1m").then_some((provider, bare))
+    })
+}
+
+/// The provider and long-context flag for a Messages request.
 ///
-/// A `copilot/` or `cursor/` model prefix picks it for this request and is
-/// stripped from `body.model`. A Claude model otherwise goes where
+/// A provider prefix or `[provider]` suffix selects the provider and is
+/// stripped from `body.model`, along with an optional `[1m]` suffix.
+/// A Claude model otherwise goes where
 /// `routes` sends it; any other model goes to `routes.default` (see
 /// [`Routes::fallback`](byokey_config::Routes::fallback)). Cursor knows a
 /// routed Claude model only by Anthropic's undated id, so `body.model`
 /// becomes that id for Cursor. Disabled providers reject requests,
-/// including requests with an explicit provider prefix.
+/// including requests with an explicit provider.
 pub(super) fn route(
     config: &byokey_config::Config,
     body: &mut Value,
-) -> Result<ProviderId, ByokError> {
+) -> Result<(String, bool), ByokError> {
+    let mut long_context = take_long_context_suffix(body);
     let model = body
         .get("model")
         .and_then(Value::as_str)
-        .unwrap_or_default();
-    let provider = if let (Some(provider @ (ProviderId::Copilot | ProviderId::Cursor)), bare) =
-        byokey_provider::parse_qualified_model(model)
-    {
+        .filter(|model| !model.is_empty())
+        .ok_or_else(|| ByokError::InvalidRequest("model must be a nonempty string".into()))?;
+    let provider = if let Some((provider, bare)) = qualified_model(model) {
+        let provider = provider.to_owned();
         body["model"] = Value::String(bare.to_owned());
+        // Accept `[1m]` on either side of the provider suffix.
+        long_context |= take_long_context_suffix(body);
+        if body["model"] == "" {
+            return Err(ByokError::InvalidRequest(
+                "model must be nonempty without the provider qualifier".into(),
+            ));
+        }
         provider
     } else if let Some(model) = ClaudeModel::from_id(model) {
         let provider = config.anthropic.routes.provider(model);
-        if provider == ProviderId::Cursor {
+        if provider == "cursor" {
             body["model"] = Value::String(model.to_string());
         }
-        provider
+        provider.to_owned()
     } else {
-        config.anthropic.routes.fallback().0
+        config.anthropic.routes.fallback().0.to_owned()
     };
-    if config
-        .providers
-        .get(&provider.to_string())
-        .is_some_and(|c| !c.enabled)
-    {
+    config.validate_anthropic_provider(&provider)?;
+    if config.providers.get(&provider).is_some_and(|c| !c.enabled) {
         return Err(ByokError::UnsupportedProvider(format!(
             "{provider} is disabled"
         )));
     }
-    Ok(provider)
+    Ok((provider, long_context))
 }
 
 #[cfg(test)]
@@ -279,60 +309,62 @@ mod tests {
         .unwrap();
         let route = |model: &str| {
             let mut body = json!({"model": model});
-            let provider = route(&config, &mut body).unwrap();
+            let (provider, _) = route(&config, &mut body).unwrap();
             (provider, body["model"].as_str().unwrap().to_owned())
         };
-        assert_eq!(route("cursor/opus"), (ProviderId::Cursor, "opus".into()));
+        assert_eq!(route("cursor/opus"), ("cursor".into(), "opus".into()));
         assert_eq!(
             route("copilot/claude-opus-5.5"),
-            (ProviderId::Copilot, "claude-opus-5.5".into())
+            ("copilot".into(), "claude-opus-5.5".into())
         );
         assert_eq!(
             route("claude-opus-5.5"),
-            (ProviderId::Cursor, "claude-opus-5-5".into()),
+            ("cursor".into(), "claude-opus-5-5".into()),
             "a model's route, whatever its spelling, under Anthropic's id for Cursor"
         );
         assert_eq!(
             route("claude-haiku-4-5-20251001"),
-            (ProviderId::Copilot, "claude-haiku-4-5-20251001".into()),
+            ("copilot".into(), "claude-haiku-4-5-20251001".into()),
             "Copilot takes the id as sent"
         );
         assert_eq!(
             route("claude-sonnet-5"),
-            (ProviderId::Claude, "claude-sonnet-5".into()),
+            ("claude".into(), "claude-sonnet-5".into()),
             "a family's route"
         );
         assert_eq!(
             route("claude-fable-5-1"),
-            (ProviderId::Copilot, "claude-fable-5-1".into())
+            ("copilot".into(), "claude-fable-5-1".into())
         );
         assert_eq!(
             route("claude-opus-4.8-fast"),
-            (ProviderId::Copilot, "claude-opus-4.8-fast".into()),
+            ("copilot".into(), "claude-opus-4.8-fast".into()),
             "a variant follows the default"
         );
-        assert_eq!(
-            route("codex/gpt-5.4"),
-            (ProviderId::Copilot, "codex/gpt-5.4".into())
-        );
+        assert!(super::route(&config, &mut json!({"model": "codex/gpt-5.4"})).is_err());
         let unrouted = byokey_config::Config::default();
         assert_eq!(
             super::route(&unrouted, &mut json!({"model": "claude-sonnet-5"})).unwrap(),
-            ProviderId::Claude
+            ("claude".into(), false)
         );
     }
 
     #[test]
     fn a_long_context_model_still_gets_its_thinking_and_provider_resolved() {
+        let config = byokey_config::Config::default();
         let mut body = json!({"model": "claude-opus-5-5[1m]", "thinking": {"type": "auto"}});
-        take_long_context_suffix(&mut body);
+        assert_eq!(route(&config, &mut body).unwrap(), ("claude".into(), true));
         sanitize_thinking(&mut body);
         assert_eq!(body["thinking"]["type"], "adaptive");
 
-        let mut body = json!({"model": "copilot/claude-opus-5.5[1m]"});
-        assert!(take_long_context_suffix(&mut body));
-        let provider = route(&byokey_config::Config::default(), &mut body).unwrap();
-        assert_eq!(provider, ProviderId::Copilot);
-        assert_eq!(body["model"], "claude-opus-5.5");
+        for model in [
+            "copilot/claude-opus-5.5[1m]",
+            "claude-opus-5.5[copilot][1m]",
+            "claude-opus-5.5[1m][copilot]",
+        ] {
+            let mut body = json!({"model": model});
+            assert_eq!(route(&config, &mut body).unwrap(), ("copilot".into(), true));
+            assert_eq!(body["model"], "claude-opus-5.5");
+        }
     }
 }

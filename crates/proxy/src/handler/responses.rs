@@ -24,6 +24,7 @@ use std::sync::Arc;
 
 use super::copilot::{copilot_request, copilot_upstream};
 use super::forward::end_with;
+use super::headers::{apply, strip_hop_headers};
 use crate::{ApiError, AppState, exchange::Exchange};
 
 pub(crate) async fn responses(
@@ -189,15 +190,7 @@ fn custom_headers(upstream: &ProviderConfig, incoming: &HeaderMap) -> Result<Hea
         value.set_sensitive(true);
         headers.insert("authorization", value);
     }
-    for (name, source) in &upstream.headers {
-        let name = HeaderName::from_bytes(name.as_bytes())
-            .map_err(|_| ByokError::Config(format!("invalid upstream header name: {name}")))?;
-        let mut value = HeaderValue::from_str(&source.resolve()?)
-            .map_err(|_| ByokError::Config(format!("invalid value for upstream header {name}")))?;
-        value.set_sensitive(true);
-        headers.insert(name, value);
-    }
-    strip_hop_headers(&mut headers);
+    apply(&mut headers, &upstream.headers)?;
     Ok(headers)
 }
 
@@ -218,32 +211,4 @@ fn protocol_headers(incoming: &HeaderMap) -> HeaderMap {
         }
     }
     headers
-}
-
-/// Remove connection-specific headers, including the fields named by Connection.
-fn strip_hop_headers(headers: &mut HeaderMap) {
-    let named: Vec<_> = headers
-        .get_all("connection")
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .flat_map(|v| v.split(',').map(str::trim))
-        .map(str::to_owned)
-        .collect();
-    for name in named {
-        headers.remove(name);
-    }
-    for name in [
-        "connection",
-        "keep-alive",
-        "proxy-authenticate",
-        "proxy-authorization",
-        "te",
-        "trailer",
-        "transfer-encoding",
-        "upgrade",
-        "host",
-        "content-length",
-    ] {
-        headers.remove(name);
-    }
 }

@@ -1,13 +1,12 @@
-use byokey_types::{ClaudeFamily, ClaudeModel, ProviderId};
+use byokey_types::{ByokError, ClaudeFamily, ClaudeModel, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Which provider serves each Anthropic model.
 ///
 /// A model goes to the provider set for that model, else the one set for its
-/// family, else `default`, and to Anthropic without any. A `copilot/` or
-/// `cursor/` prefix on the request's model picks the provider for that
-/// request regardless.
+/// family, else `default`, and to Anthropic without any. A provider prefix
+/// or `[provider]` suffix on the request's model takes precedence over these routes.
 ///
 /// ```yaml
 /// anthropic:
@@ -22,11 +21,11 @@ use std::collections::BTreeMap;
 #[serde(deny_unknown_fields)]
 pub struct Routes {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default: Option<ProviderId>,
+    pub default: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub families: BTreeMap<ClaudeFamily, ProviderId>,
+    pub families: BTreeMap<ClaudeFamily, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub models: BTreeMap<ClaudeModel, ProviderId>,
+    pub models: BTreeMap<ClaudeModel, String>,
 }
 
 /// Which setting of [`Routes`] picked a model's provider.
@@ -42,30 +41,67 @@ pub enum RouteSource {
 impl Routes {
     /// The provider serving `model`.
     #[must_use]
-    pub fn provider(&self, model: ClaudeModel) -> ProviderId {
+    pub fn provider(&self, model: ClaudeModel) -> &str {
         self.resolve(model).0
     }
 
     /// The provider serving `model`, and which setting picked it.
     #[must_use]
-    pub fn resolve(&self, model: ClaudeModel) -> (ProviderId, RouteSource) {
-        if let Some(&p) = self.models.get(&model) {
+    pub fn resolve(&self, model: ClaudeModel) -> (&str, RouteSource) {
+        if let Some(p) = self.models.get(&model) {
             (p, RouteSource::Model)
-        } else if let Some(&p) = self.families.get(&model.family) {
+        } else if let Some(p) = self.families.get(&model.family) {
             (p, RouteSource::Family)
         } else {
             self.fallback()
         }
     }
 
-    /// The provider for a model that names no Claude model, such as
-    /// `gpt-5.4`: `default`, since only Copilot and Cursor serve those.
+    /// Resolve an upstream model ID, including provider-specific variants.
     #[must_use]
-    pub fn fallback(&self) -> (ProviderId, RouteSource) {
-        match self.default {
+    pub fn resolve_id(&self, model: &str) -> (&str, RouteSource) {
+        ClaudeModel::from_id(model).map_or_else(|| self.fallback(), |model| self.resolve(model))
+    }
+
+    /// The provider for a model without a model or family route.
+    #[must_use]
+    pub fn fallback(&self) -> (&str, RouteSource) {
+        match self.default.as_deref() {
             Some(p) => (p, RouteSource::Default),
-            None => (ProviderId::Claude, RouteSource::Unset),
+            None => ("claude", RouteSource::Unset),
         }
+    }
+}
+
+impl super::Config {
+    /// Check that a provider can serve Messages, independently of its login state.
+    ///
+    /// # Errors
+    /// Rejects names that are neither Messages built-ins nor configured Messages providers.
+    pub fn validate_anthropic_provider(&self, name: &str) -> Result<()> {
+        if !matches!(name, "claude" | "copilot" | "cursor")
+            && self
+                .providers
+                .get(name)
+                .is_none_or(|p| p.anthropic.is_none())
+        {
+            return Err(ByokError::UnsupportedProvider(name.into()));
+        }
+        Ok(())
+    }
+
+    pub(super) fn validate_anthropic(&self) -> Result<()> {
+        self.anthropic.catalog.validate()?;
+        let routes = &self.anthropic.routes;
+        for name in routes
+            .default
+            .iter()
+            .chain(routes.families.values())
+            .chain(routes.models.values())
+        {
+            self.validate_anthropic_provider(name)?;
+        }
+        Ok(())
     }
 }
 
@@ -95,20 +131,17 @@ anthropic:
         let resolve = |id| c.anthropic.routes.resolve(model(id));
         assert_eq!(
             resolve("claude-opus-5-5"),
-            (ProviderId::Claude, RouteSource::Model),
+            ("claude", RouteSource::Model),
             "any spelling names the model"
         );
-        assert_eq!(
-            resolve("claude-opus-4-8"),
-            (ProviderId::Cursor, RouteSource::Family)
-        );
+        assert_eq!(resolve("claude-opus-4-8"), ("cursor", RouteSource::Family));
         assert_eq!(
             resolve("claude-sonnet-5"),
-            (ProviderId::Copilot, RouteSource::Default)
+            ("copilot", RouteSource::Default)
         );
         assert_eq!(
             Routes::default().resolve(model("claude-sonnet-5")),
-            (ProviderId::Claude, RouteSource::Unset)
+            ("claude", RouteSource::Unset)
         );
     }
 

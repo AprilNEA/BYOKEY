@@ -75,7 +75,12 @@ impl Config {
 
     fn validate_responses_provider(&self, name: &str) -> Result<()> {
         if matches!(name, "claude" | "cursor")
-            || (!matches!(name, "chatgpt" | "copilot") && !self.providers.contains_key(name))
+            || (!matches!(name, "chatgpt" | "copilot")
+                && self.providers.get(name).is_none_or(|p| {
+                    p.base_url
+                        .as_deref()
+                        .is_none_or(|url| url.trim().is_empty())
+                }))
         {
             return Err(ByokError::UnsupportedProvider(name.into()));
         }
