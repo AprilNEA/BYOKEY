@@ -8,7 +8,7 @@ With Nix and [devenv](https://devenv.sh/) installed, run:
 devenv shell
 ```
 
-The environment provides Rust, Cargo, Clippy, rustfmt, rust-analyzer, a C compiler, and `protoc`. Commit `devenv.lock` to keep the tool versions reproducible. Run `devenv update` to update the pinned inputs.
+The environment provides Rust, Cargo, Clippy, rustfmt, rust-analyzer, a C compiler, and `protoc`. It also provides Node.js and Biome for the [optional Surge integration](integrations/surge/README.md#development-checks). Commit `devenv.lock` to keep the tool versions reproducible. Run `devenv update` to update the pinned inputs.
 
 To run one command without opening a shell:
 

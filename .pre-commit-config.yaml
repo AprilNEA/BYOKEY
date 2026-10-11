@@ -20,3 +20,17 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
+
+      - id: surge-check
+        name: Surge script format and lint
+        entry: biome check biome.json integrations/surge
+        language: system
+        files: ^(biome\.json|integrations/surge/.*\.(js|mjs))$
+        pass_filenames: false
+
+      - id: surge-test
+        name: Surge module tests
+        entry: node --test integrations/surge/codex-hide-usage-banner.test.mjs
+        language: system
+        files: ^integrations/surge/.*\.(js|mjs|sgmodule)$
+        pass_filenames: false

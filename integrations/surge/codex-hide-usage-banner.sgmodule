@@ -1,0 +1,9 @@
+#!name=Codex Desktop Usage Banner
+#!desc=Hide the workspace member usage-limit banner in Codex Desktop for every model. Preserve real quotas and errors. Append chatgpt.com to MITM; review all effective hostnames before enabling MITM. Surge Logbook may retain authentication headers even without debug. Requires a trusted Surge CA and MITM enabled separately.
+#!system=mac
+
+[Script]
+codex-hide-usage-banner = type=http-response, pattern=^https://chatgpt\.com/backend-api/wham/usage(?:/subscriptions)?(?:\?.*)?$, script-path=codex-hide-usage-banner.js, requires-body=true, max-size=262144, timeout=5, engine=jsc
+
+[MITM]
+hostname = %APPEND% chatgpt.com

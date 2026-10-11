@@ -2,5 +2,9 @@
 
 {
   languages.rust.enable = true;
-  packages = [ pkgs.protobuf ];
+  packages = [
+    pkgs.protobuf
+    pkgs.nodejs
+    pkgs.biome
+  ];
 }
