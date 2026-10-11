@@ -196,6 +196,8 @@ responses:
 
 保持监听地址为 `127.0.0.1`，且只配置可信的上游地址。BYOKEY 不为已存储的 Copilot 或自定义上游凭据提供入站鉴权，不要向不可信网络暴露端口。
 
+[可选的 Surge for Mac 模块](../integrations/surge/README.md)可以隐藏 Codex Desktop 的工作区成员额度耗尽横幅，不修改真实额度或错误。模块对所有模型生效，包括官方 ChatGPT 模型。模块需要 HTTPS 解密；即使关闭调试，Surge Logbook 仍可能保存认证请求头。启用前必须阅读安全说明和安装步骤。BYOKEY 不会自动安装或启用模块。
+
 ### Claude Code / Claude Desktop
 
 ```sh
