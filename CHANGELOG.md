@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.7.0](https://github.com/AprilNEA/BYOKEY/compare/v4.6.1...v4.7.0) - 2026-10-11
+
+### Added
+
+- *(surge)* add optional Codex usage banner module ([#136](https://github.com/AprilNEA/BYOKEY/pull/136))
+
+### Other
+
+- *(surge)* pin downloads and explain local installation
+
 ## [4.6.1](https://github.com/AprilNEA/BYOKEY/compare/v4.6.0...v4.6.1) - 2026-10-09
 
 ### Fixed
