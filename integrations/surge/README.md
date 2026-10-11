@@ -20,7 +20,9 @@ Query strings are allowed. Requests must identify as `CodexBrowser …` or `Code
 
 ## Install
 
-1. Download [codex-hide-usage-banner.sgmodule](codex-hide-usage-banner.sgmodule) and [codex-hide-usage-banner.js](codex-hide-usage-banner.js) from the same repository revision. Use the raw file contents, not the GitHub HTML pages.
+These files are independent of BYOKEY release binaries. Both download links below are pinned to the same tested repository revision.
+
+1. Download [codex-hide-usage-banner.sgmodule](https://raw.githubusercontent.com/AprilNEA/BYOKEY/a976730339d8603d8f90d9f96e34a807b66d6add/integrations/surge/codex-hide-usage-banner.sgmodule) and [codex-hide-usage-banner.js](https://raw.githubusercontent.com/AprilNEA/BYOKEY/a976730339d8603d8f90d9f96e34a807b66d6add/integrations/surge/codex-hide-usage-banner.js). Save the raw contents with these exact filenames, not as HTML pages or `.txt` files.
 2. Open Surge's profile directory. Place both files beside the active profile, without an extra subdirectory. The module's relative `script-path` expects the JavaScript file there. Back up any existing files with these names before replacing them.
 3. Enable **Codex Desktop Usage Banner** in Surge's module list. Enable the **Scripting** switch.
 4. Configure and trust your own Surge MITM CA if you have not already done so. Reuse an existing trusted CA. Keep server certificate verification enabled.
@@ -28,6 +30,8 @@ Query strings are allowed. Requests must identify as `CodexBrowser …` or `Code
 6. After active tasks finish, fully quit Codex Desktop or ChatGPT.app with `⌘Q`, then reopen it to refresh usage data and HTTPS connections.
 
 The target banner should disappear while the composer and model, effort, and approval controls remain available. An absent banner does not prove that inference works or that the account has quota. Check real provider errors separately. If TLS errors appear, disable the module; do not turn off server certificate verification.
+
+To update, review the source changes and replace both files from the same repository revision. Installing a new BYOKEY binary does not update this module.
 
 ## Remove
 

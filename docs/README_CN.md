@@ -198,6 +198,16 @@ responses:
 
 [可选的 Surge for Mac 模块](../integrations/surge/README.md)可以隐藏 Codex Desktop 的工作区成员额度耗尽横幅，不修改真实额度或错误。模块对所有模型生效，包括官方 ChatGPT 模型。模块需要 HTTPS 解密；即使关闭调试，Surge Logbook 仍可能保存认证请求头。启用前必须阅读安全说明和安装步骤。BYOKEY 不会自动安装或启用模块。
 
+模块独立于 BYOKEY 二进制发布，无需等待新版本。安装步骤如下：
+
+1. 下载 [codex-hide-usage-banner.sgmodule](https://raw.githubusercontent.com/AprilNEA/BYOKEY/a976730339d8603d8f90d9f96e34a807b66d6add/integrations/surge/codex-hide-usage-banner.sgmodule) 和 [codex-hide-usage-banner.js](https://raw.githubusercontent.com/AprilNEA/BYOKEY/a976730339d8603d8f90d9f96e34a807b66d6add/integrations/surge/codex-hide-usage-banner.js)。两个链接固定到同一已验证提交。保存原文件名，不要追加 `.txt` 后缀。
+2. 将两个文件放在 Surge 当前 profile 的同级目录，不要再套一层文件夹。替换同名文件前先备份。
+3. 在模块列表中启用「Codex Desktop Usage Banner」。开启「脚本」总开关。
+4. 配置并信任你自己的 Surge CA。开启「MITM」前，检查完整的生效域名列表。模块会追加 `chatgpt.com`，并对整个域名解密，而不只是 usage 接口；总开关也会启用列表中的其他域名。保持服务器证书校验开启，不要添加通配符或 `debug=true`。
+5. 等待正在运行的任务结束。使用 `⌘Q` 完全退出 Codex Desktop 或 ChatGPT.app，然后重新打开，让客户端刷新 usage 数据。
+
+升级模块时，审查源码变更后再替换同一提交中的两个文件；升级 BYOKEY 不会自动更新模块。卸载时先停用模块，再删除两个文件并重启客户端。如果只为这个模块开启 MITM，关闭 MITM 总开关。停用模块不会删除已有的 Logbook 记录或受信任的 CA。
+
 ### Claude Code / Claude Desktop
 
 ```sh
