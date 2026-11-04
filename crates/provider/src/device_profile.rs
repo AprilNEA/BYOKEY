@@ -43,7 +43,7 @@ pub struct DeviceProfile {
 
 impl Default for DeviceProfile {
     fn default() -> Self {
-        :        Self::baseline()
+        Self::baseline()
     }
 }
 
