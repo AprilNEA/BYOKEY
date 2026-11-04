@@ -16,7 +16,7 @@ use uuid::Uuid;
 const PROFILE_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
 
 // ── Baseline defaults ───────────────────────────────────────────────
-const DEFAULT_USER_AGENT: &str = "claude-cli/2.1.109 (external, cli)";
+const DEFAULT_USER_AGENT: &str = "claude-cli/2.1.316 (external, cli)";
 const DEFAULT_PACKAGE_VERSION: &str = "0.74.0";
 const DEFAULT_RUNTIME_VERSION: &str = "v24.14.1";
 const DEFAULT_OS: &str = "MacOS";
@@ -25,7 +25,7 @@ const DEFAULT_ARCH: &str = "arm64";
 /// Snapshot of a device fingerprint used for Claude API headers.
 #[derive(Clone, Debug)]
 pub struct DeviceProfile {
-    /// Full `User-Agent` string (e.g. `claude-cli/2.1.109 (external, cli)`).
+    /// Full `User-Agent` string (e.g. `claude-cli/2.1.316 (external, cli)`).
     pub user_agent: String,
     /// `x-stainless-package-version` value.
     pub package_version: String,
@@ -81,7 +81,7 @@ impl DeviceProfileCache {
             inner: Mutex::new(HashMap::new()),
         }
     }
-
+    
     /// Return a cached profile for `scope_key`, creating one from baseline
     /// defaults if none exists or the TTL has elapsed.
     ///
