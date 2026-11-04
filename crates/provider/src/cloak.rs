@@ -24,7 +24,7 @@
 use sha2::{Digest as _, Sha256};
 
 /// Default CLI version for billing header and User-Agent.
-const DEFAULT_CLI_VERSION: &str = "2.1.109";
+const DEFAULT_CLI_VERSION: &str = "2.1.316";
 
 /// Salt used by Claude Code's fingerprint.ts — must match the backend validator.
 const FINGERPRINT_SALT: &str = "59cf53e54c78";
